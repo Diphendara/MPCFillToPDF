@@ -1,0 +1,50 @@
+# Examples and reference files (private/local only)
+examples/
+
+# Downloaded card images (generated at runtime)
+images/
+images_original/
+images_cropped/
+downloads/
+
+# Output PDFs (generated at runtime)
+output/
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables / secrets
+.env
+.env.*
+secrets.json
+client_secrets.json
+credentials.json
+token.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
