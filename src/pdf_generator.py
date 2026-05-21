@@ -97,29 +97,99 @@ def _draw_page(
                             width=IMAGE_W, height=IMAGE_H)
 
 
+# Maximum PDF size before splitting into multiple chunks (bytes).
+MAX_PDF_BYTES = 500 * 1024 * 1024
+
+
+def _pair_drive_ids(
+    page_slots: list[int],
+    front_slot_to_id: dict[int, str],
+    back_slot_to_id: dict[int, str],
+) -> set[str]:
+    ids: set[str] = set()
+    for slot in page_slots:
+        for slot_map in (front_slot_to_id, back_slot_to_id):
+            drive_id = slot_map.get(slot)
+            if drive_id:
+                ids.add(drive_id)
+    return ids
+
+
 def generate(
-    output_path: str | Path,
+    output_dir: str | Path,
+    base_name: str,
     ordered_slots: list[int],
     front_slot_to_id: dict[int, str],
     back_slot_to_id: dict[int, str],
     id_to_path: dict[str, Path],
-) -> None:
-    c = canvas.Canvas(str(output_path), pagesize=A4)
+    max_bytes: int = MAX_PDF_BYTES,
+    progress_callback=None,
+) -> list[Path]:
+    """Generate one or more PDFs in `output_dir`. A new chunk starts after
+    every front/back pair whose addition would push the cumulative image
+    bytes past `max_bytes` — i.e. we always cut on an even page so each
+    chunk is independently duplex-ready.
+
+    Output: `<base_name>.pdf` if a single chunk fits, otherwise
+    `<base_name>_1.pdf`, `<base_name>_2.pdf`, …
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     pages = [ordered_slots[i:i + CARDS_PER_PAGE]
              for i in range(0, len(ordered_slots), CARDS_PER_PAGE)]
 
+    def id_bytes(drive_id: str) -> int:
+        p = id_to_path.get(drive_id)
+        return p.stat().st_size if p and p.exists() else 0
+
+    chunks: list[list[list[int]]] = []
+    current: list[list[int]] = []
+    seen: set[str] = set()
+    current_bytes = 0
     for page_slots in pages:
-        padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
+        pair_ids = _pair_drive_ids(page_slots, front_slot_to_id, back_slot_to_id)
+        added = sum(id_bytes(i) for i in pair_ids - seen)
+        # Only split when this pair brings new bytes that push us past the
+        # cap. A pair that reuses images already in the chunk (added == 0)
+        # is free to attach even if the chunk is already at/over the cap.
+        if current and added > 0 and current_bytes + added > max_bytes:
+            chunks.append(current)
+            current = []
+            seen = set()
+            current_bytes = 0
+            added = sum(id_bytes(i) for i in pair_ids)
+        current.append(page_slots)
+        seen |= pair_ids
+        current_bytes += added
+    if current:
+        chunks.append(current)
 
-        _draw_page(c, padded, id_to_path, front_slot_to_id)
-        c.showPage()
+    multiple = len(chunks) > 1
+    outputs: list[Path] = []
+    total_pairs = sum(len(c) for c in chunks)
+    done_pairs = 0
+    for idx, chunk in enumerate(chunks, start=1):
+        suffix = f"_{idx}" if multiple else ""
+        path = output_dir / f"{base_name}{suffix}.pdf"
+        c = canvas.Canvas(str(path), pagesize=A4)
+        for page_slots in chunk:
+            padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
 
-        mirrored = []
-        for row in range(ROWS):
-            mirrored.extend(reversed(padded[row * COLS:(row + 1) * COLS]))
+            _draw_page(c, padded, id_to_path, front_slot_to_id)
+            c.showPage()
 
-        _draw_page(c, mirrored, id_to_path, back_slot_to_id)
-        c.showPage()
+            mirrored = []
+            for row in range(ROWS):
+                mirrored.extend(reversed(padded[row * COLS:(row + 1) * COLS]))
 
-    c.save()
+            _draw_page(c, mirrored, id_to_path, back_slot_to_id)
+            c.showPage()
+
+            done_pairs += 1
+            if progress_callback:
+                progress_callback(done_pairs, total_pairs)
+        c.save()
+        outputs.append(path)
+
+    return outputs

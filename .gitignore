@@ -7,9 +7,14 @@ images_original/
 images_cropped/
 downloads/
 
-# Output PDFs (generated at runtime)
+# Output PDFs (generated at runtime) — keep the out/ folder but not its contents
 output/
+out/*
+!out/.gitkeep
 *.pdf
+
+# Image / PDF workspace (cached downloads, crops, intermediate artifacts)
+workdir/
 
 # Python
 __pycache__/

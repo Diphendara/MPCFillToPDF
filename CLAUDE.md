@@ -50,20 +50,28 @@ MPCFillToPDF/
 │   ├── parser.py          # XML parsing → structured card data
 │   ├── downloader.py      # Google Drive image download
 │   ├── cropper.py         # Bleed removal (Pillow)
-│   ├── pdf_generator.py   # PDF layout (reportlab)
+│   ├── pdf_generator.py   # PDF layout + chunking (reportlab)
 │   └── pipeline.py        # Orchestrates the full flow
 ├── cli/
-│   └── main.py            # CLI entry point (argparse)
-├── gui/
-│   └── app.py             # Desktop GUI (TBD: tkinter or similar)
-├── web/
-│   └── app.py             # Web app (TBD: Flask or FastAPI)
+│   └── main.py            # CLI: batch-processes xml/*.xml into out/
+├── xml/                   # Drop .xml inputs here
+├── out/                   # Generated PDFs (gitignored)
+├── workdir/               # Cached downloads + intermediate images (gitignored)
 ├── examples/
 │   ├── example.xml        # Reference MPCFill project file
 │   ├── example.pdf        # Target PDF output (reference)
 │   └── imgsPdf/           # Screenshots of the reference PDF layout
 └── tests/
 ```
+
+### CLI usage
+- Run `python -m cli.main` to process every `xml/*.xml` and write its PDF(s) to `out/`.
+- Output names: `out/<xml_stem>.pdf`, or `out/<xml_stem>_1.pdf`, `out/<xml_stem>_2.pdf`, … when split.
+
+### Size-based splitting
+- Threshold: 500 MB per PDF (`MAX_PDF_BYTES` in `pdf_generator.py`).
+- The cut is taken after the next even page (back), so each chunk remains independently duplex-ready.
+- Per-pair size is estimated from the cropped image file sizes — reportlab embeds JPEGs verbatim, so this is a faithful proxy for the resulting PDF growth.
 
 ## Key implementation notes
 

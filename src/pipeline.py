@@ -8,16 +8,20 @@ from src.pdf_generator import generate
 
 def run(
     xml_path: str | Path,
-    output_pdf: str | Path,
+    output_dir: str | Path,
     work_dir: str | Path = "workdir",
     progress_callback=None,
-) -> None:
-    """Full pipeline: XML → PDF.
+) -> list[Path]:
+    """Full pipeline: XML → one or more PDFs in `output_dir`.
+
+    Output PDFs are named after the XML stem; if the result has to be split
+    (>500 MB), suffixes `_1`, `_2`, … are appended. Returns the list of
+    written paths.
 
     progress_callback(stage: str, done: int, total: int)
     """
     xml_path = Path(xml_path)
-    output_pdf = Path(output_pdf)
+    output_dir = Path(output_dir)
     work_dir = Path(work_dir)
 
     raw_dir  = work_dir / "raw"
@@ -65,5 +69,9 @@ def run(
 
     ordered_slots = sorted(front_slot_to_id.keys())
 
-    # 6. Generate PDF
-    generate(output_pdf, ordered_slots, front_slot_to_id, back_slot_to_id, id_to_bled)
+    # 6. Generate PDF (one or more chunks)
+    return generate(
+        output_dir, xml_path.stem, ordered_slots,
+        front_slot_to_id, back_slot_to_id, id_to_bled,
+        progress_callback=_cb("pdf"),
+    )
