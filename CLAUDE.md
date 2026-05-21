@@ -62,8 +62,6 @@ MPCFillToPDF/
 │   ├── example.xml        # Reference MPCFill project file
 │   ├── example.pdf        # Target PDF output (reference)
 │   └── imgsPdf/           # Screenshots of the reference PDF layout
-├── scripts/
-│   └── crop.py            # Original standalone crop script (reference)
 └── tests/
 ```
 
@@ -80,12 +78,14 @@ MPCFillToPDF/
 - Crop formula: `border_x = round(width * 0.042)`, `border_y = round(height * 0.031)`
 - Crop box: `(border_x, border_y, width - border_x, height - border_y)`
 
-### PDF layout (Copistería Soriano profile)
+### PDF layout (matches examples/example.pdf exactly)
 - Paper: A4 portrait (210mm × 297mm)
 - Grid: 3 columns × 3 rows = 9 cards per page
-- Card size after crop: standard poker 63mm × 88mm
-- Gap between cards: 2mm (sangrado/bleed from PNP Tool profile)
-- Crop marks in page margins (not between cards); mark length ~3mm, line width 0.25pt
+- Card trim size: 63.5mm × 88.9mm (PNP Tool / Copistería Soriano profile)
+- Bleed: 1mm kept around each trim (image size is 65.5 × 90.9mm)
+- Margin page-edge → trim: 5.75mm horizontal, 11.15mm vertical
+- Gap between trims: 4mm horizontal and vertical (= 2mm visible white between images)
+- Cut lines: thin black lines (0.5pt) extending from the page edges to the card corners and across the gaps, forming a continuous trim grid
 - Page 1 fronts slot order: left→right, top→bottom (slots 0–8)
 - Page 2 backs are horizontally mirrored: `col_back = 2 - col_front`, same row
   - Each slot uses its specific back if in `<backs>`, otherwise uses `<cardback>`
