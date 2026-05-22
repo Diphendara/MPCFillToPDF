@@ -38,8 +38,8 @@ Automated pipeline that converts an MPCFill XML project file into a print-ready 
 
 The project targets three delivery modes, built in this order:
 
-1. **CLI** — accepts XML path, outputs PDF path; basis for the other interfaces
-2. **Desktop GUI** — file picker + progress display; for end users on Windows/Mac/Linux
+1. **CLI** — accepts XML path, outputs PDF path; basis for the other interfaces ✅ v1
+2. **Desktop GUI** — file picker + progress display; for end users on Windows/Mac/Linux ✅ v2 (Tkinter, packaged with PyInstaller)
 3. **Web app** — upload XML → download PDF; hosted publicly so anyone can use it without installing anything
 
 ## Project structure
@@ -54,7 +54,11 @@ MPCFillToPDF/
 │   └── pipeline.py        # Orchestrates the full flow
 ├── cli/
 │   └── main.py            # CLI: batch-processes xml/*.xml into out/
-├── xml/                   # Drop .xml inputs here
+├── gui/
+│   ├── main.py            # Tkinter GUI entry point
+│   └── paths.py           # Resolves out/ and workdir/ next to the .exe when frozen
+├── build_exe.py           # PyInstaller build script (produces dist/MPCFillToPDF.exe)
+├── xml/                   # Drop .xml inputs here (CLI mode)
 ├── out/                   # Generated PDFs (gitignored)
 ├── workdir/               # Cached downloads + intermediate images (gitignored)
 ├── examples/
@@ -67,6 +71,17 @@ MPCFillToPDF/
 ### CLI usage
 - Run `python -m cli.main` to process every `xml/*.xml` and write its PDF(s) to `out/`.
 - Output names: `out/<xml_stem>.pdf`, or `out/<xml_stem>_1.pdf`, `out/<xml_stem>_2.pdf`, … when split.
+
+### GUI usage
+- Run `python -m gui.main` to launch the Tkinter window.
+- The user picks XML(s) via a file dialog, optionally toggles "Conservar caché", and clicks **Generar PDF(s)**.
+- The pipeline runs in a worker thread; UI updates via a `queue.Queue` drained from the Tk loop.
+- When done, the output folder opens automatically (`os.startfile` on Windows).
+- `gui/paths.py` resolves `out/` and `workdir/` next to `sys.executable` when frozen by PyInstaller, otherwise next to the project root.
+
+### Packaging (V2 → .exe)
+- `python build_exe.py` runs PyInstaller with `--onefile --windowed`, bundling `src/assets/` as data.
+- Output: `dist/MPCFillToPDF.exe`. The .exe is portable — drop it anywhere and it creates `out/` and `workdir/` next to itself on first run.
 
 ### Size-based splitting
 - Threshold: 500 MB per PDF (`MAX_PDF_BYTES` in `pdf_generator.py`).

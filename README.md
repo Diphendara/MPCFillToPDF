@@ -11,6 +11,27 @@ El XML de MPCFill referencia imágenes alojadas en Google Drive. Esta herramient
 
 ## Cómo usarlo
 
+Hay dos formas:
+
+### A) Interfaz gráfica (GUI)
+
+```
+python -m gui.main
+```
+
+Aparece una ventana con un botón **Seleccionar XMLs…**, una lista con los archivos en cola, una casilla **Conservar caché**, y un botón **Generar PDF(s)**. Cuando termina, abre automáticamente la carpeta `out/`.
+
+Para empaquetar como **.exe portable** (Windows):
+
+```
+pip install pyinstaller
+python build_exe.py
+```
+
+Genera `dist/MPCFillToPDF.exe`. El ejecutable es portable: en la carpeta donde lo dejes creará automáticamente `out/` y `workdir/` al ejecutarse.
+
+### B) Línea de comandos (CLI)
+
 1. **Coloca los XML en la carpeta `xml/`** (en la raíz del proyecto). Puedes poner uno o varios; se procesarán todos.
 2. **Ejecuta el comando**:
    ```
@@ -24,11 +45,12 @@ El XML de MPCFill referencia imágenes alojadas en Google Drive. Esta herramient
 
 ```
 MPCFillToPDF/
-├── xml/         ← pon aquí tus .xml de MPCFill
+├── xml/         ← pon aquí tus .xml de MPCFill (modo CLI)
 ├── out/         ← aquí aparecen los PDFs generados
-├── workdir/     ← caché temporal (descargas y recortes); se borra al terminar
-├── cli/
-└── src/
+├── workdir/     ← caché temporal (descargas y recortes); opcionalmente se borra al terminar
+├── cli/         ← entrada CLI
+├── gui/         ← entrada GUI (Tkinter)
+└── src/         ← pipeline (parser, downloader, cropper, pdf_generator)
 ```
 
 ### Opciones del CLI
