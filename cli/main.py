@@ -4,7 +4,15 @@ import sys
 import time
 from pathlib import Path
 
-from src.pipeline import run
+# Windows consoles default to cp1252 which can't encode characters like ← or •.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
+
+from src.pipeline import run, run_merged
+from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 
 _stage_started_at: dict[str, float] = {}
@@ -55,6 +63,10 @@ def main() -> None:
         "--test", action="store_true",
         help="No borrar workdir/raw ni workdir/bled al terminar; útil para iterar sin re-descargar/recortar.",
     )
+    parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Continuar sin pedir confirmación cuando alguna baraja no sea múltiplo de 9.",
+    )
     args = parser.parse_args()
 
     xml_dir = Path(args.xml_dir)
@@ -71,15 +83,46 @@ def main() -> None:
         return
 
     print(f"Encontrados {len(xmls)} XML(s) en '{xml_dir}'.")
+
+    reports = analyze(xmls)
+    for r in reports:
+        print(f"  - {r.path.name}: {r.cards} cartas"
+              + (f"  ({r.blanks} hueco(s) en blanco)" if r.has_blanks else ""))
+
+    plan_ = plan(reports)
+
+    merge_info = format_merge_info(plan_)
+    if merge_info:
+        print()
+        print(merge_info)
+
+    warning = format_warning(plan_)
+    if warning and not args.yes:
+        print()
+        print(warning)
+        ans = input("¿Continuar? [s/N]: ").strip().lower()
+        if ans not in ("s", "si", "sí", "y", "yes"):
+            print("Cancelado.")
+            return
+    print()
+
     overall_start = time.time()
 
-    for xml_path in xmls:
-        print(f"\nProcesando: {xml_path.name}")
+    for job in plan_.jobs:
+        label = job.base_name + (" (fusión)" if job.is_merged else "")
+        print(f"\nProcesando: {label}")
         _stage_started_at.clear()
-        pdfs = run(xml_path, out_dir, workdir, _progress)
+        if job.is_merged:
+            pdfs = run_merged(job.xml_paths, out_dir, job.base_name, workdir, _progress)
+        else:
+            pdfs = run(job.xml_paths[0], out_dir, workdir, _progress)
         for p in pdfs:
             size_mb = p.stat().st_size / (1024 * 1024)
             print(f"  -> {p}  ({size_mb:.1f} MB)")
+
+    manifest = write_manifest(plan_, reports, out_dir)
+    if manifest:
+        print(f"\nDetalle de fusiones escrito en: {manifest}")
 
     total_elapsed = time.time() - overall_start
     print(f"\nTiempo total: {total_elapsed:.1f}s")

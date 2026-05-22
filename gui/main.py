@@ -7,8 +7,9 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from gui.paths import app_base_dir, output_dir, work_dir
-from src.pipeline import run
+from gui.paths import output_dir, work_dir
+from src.pipeline import run, run_merged
+from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
@@ -28,7 +29,7 @@ class App:
         self.xml_paths: list[Path] = []
         self.events: queue.Queue = queue.Queue()
         self.worker: threading.Thread | None = None
-        self.keep_cache = tk.BooleanVar(value=True)
+        self.keep_cache = tk.BooleanVar(value=False)
 
         self._build_ui()
         self.root.after(80, self._drain_events)
@@ -111,27 +112,56 @@ class App:
     def _start(self) -> None:
         if not self.xml_paths or (self.worker and self.worker.is_alive()):
             return
+
+        try:
+            reports = analyze(self.xml_paths)
+        except Exception as e:
+            messagebox.showerror(APP_TITLE, f"No se pudo analizar el XML:\n{e}")
+            return
+
+        plan_ = plan(reports)
+
+        merge_info = format_merge_info(plan_)
+        if merge_info:
+            messagebox.showinfo(APP_TITLE, merge_info)
+
+        warning = format_warning(plan_)
+        if warning:
+            if not messagebox.askyesno(
+                APP_TITLE,
+                warning + "\n\n¿Continuar de todos modos?",
+                icon=messagebox.WARNING,
+            ):
+                return
+
         self.generate_btn.state(["disabled"])
         self.progress["value"] = 0
         self.status_var.set("Preparando…")
-        files = list(self.xml_paths)
-        self.worker = threading.Thread(target=self._work, args=(files,), daemon=True)
+        self.worker = threading.Thread(
+            target=self._work, args=(plan_, reports), daemon=True,
+        )
         self.worker.start()
 
-    def _work(self, files: list[Path]) -> None:
+    def _work(self, plan_, reports) -> None:
         out = output_dir()
         wd = work_dir()
         generated: list[Path] = []
         try:
-            for i, xml_path in enumerate(files, start=1):
-                self.events.put(("file", i, len(files), xml_path.name))
-                def cb(stage, done, total, _xml=xml_path.name):
-                    self.events.put(("progress", stage, done, total, _xml))
-                pdfs = run(xml_path, out, wd, cb)
+            jobs = plan_.jobs
+            for i, job in enumerate(jobs, start=1):
+                label = job.base_name + (" (fusión)" if job.is_merged else "")
+                self.events.put(("file", i, len(jobs), label))
+                def cb(stage, done, total, _label=label):
+                    self.events.put(("progress", stage, done, total, _label))
+                if job.is_merged:
+                    pdfs = run_merged(job.xml_paths, out, job.base_name, wd, cb)
+                else:
+                    pdfs = run(job.xml_paths[0], out, wd, cb)
                 generated.extend(pdfs)
+            manifest = write_manifest(plan_, reports, out)
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
-            self.events.put(("done", generated))
+            self.events.put(("done", generated, manifest))
         except Exception as e:
             self.events.put(("error", f"{e}\n\n{traceback.format_exc()}"))
 
@@ -165,9 +195,10 @@ class App:
             self.progress["value"] = pct
             self.status_var.set(f"{name} — {label}: {done}/{total}")
         elif kind == "done":
-            _, pdfs = ev
+            _, pdfs, manifest = ev
             self.progress["value"] = 100
-            self.status_var.set(f"Listo. {len(pdfs)} PDF(s) generados.")
+            extra = f" Manifest en {manifest.name}." if manifest else ""
+            self.status_var.set(f"Listo. {len(pdfs)} PDF(s) generados.{extra}")
             self._refresh_generate_state()
             self._open_output_folder()
         elif kind == "error":
