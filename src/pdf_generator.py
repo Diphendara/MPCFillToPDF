@@ -1,8 +1,11 @@
 from pathlib import Path
+from threading import Event
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+
+from src.cancellation import Cancelled
 
 # Card trim size
 CARD_W = 63.5 * mm
@@ -161,6 +164,7 @@ def generate(
     id_to_path: dict[str, Path],
     max_bytes: int = MAX_PDF_BYTES,
     progress_callback=None,
+    cancel_event: Event | None = None,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
@@ -207,10 +211,14 @@ def generate(
     done_pairs = 0
     pair_no = 0
     for idx, chunk in enumerate(chunks, start=1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise Cancelled()
         suffix = f"_{idx}" if multiple else ""
         path = output_dir / f"out_{base_name}{suffix}.pdf"
         c = canvas.Canvas(str(path), pagesize=A4)
         for page_slots in chunk:
+            if cancel_event is not None and cancel_event.is_set():
+                raise Cancelled()
             pair_no += 1
             padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
 
