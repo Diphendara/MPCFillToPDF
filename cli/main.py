@@ -12,8 +12,26 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
-from src.pipeline import run, run_merged
+from src.pipeline import run, run_merged, run_locals_only
 from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
+
+
+SUPPORTED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def _validate_local_images(paths: list[str], label: str) -> list[Path]:
+    out: list[Path] = []
+    for p in paths:
+        pp = Path(p)
+        if not pp.exists():
+            print(f"Error: {label}: no existe '{pp}'.", file=sys.stderr)
+            sys.exit(1)
+        if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
+            print(f"Error: {label}: extensión no soportada '{pp.suffix}' en '{pp.name}'.",
+                  file=sys.stderr)
+            sys.exit(1)
+        out.append(pp)
+    return out
 
 
 _stage_started_at: dict[str, float] = {}
@@ -68,64 +86,150 @@ def main() -> None:
         "--yes", "-y", action="store_true",
         help="Continuar sin pedir confirmación cuando alguna baraja no sea múltiplo de 9.",
     )
+    parser.add_argument(
+        "--local-fronts", nargs="+", default=[], metavar="IMG",
+        help="Imágenes locales adicionales a usar como fronts. Se añaden al final del último PDF generado.",
+    )
+    parser.add_argument(
+        "--local-backs", nargs="+", default=[], metavar="IMG",
+        help="Imágenes locales para los reversos de --local-fronts (emparejadas por orden). "
+             "Si hay menos backs que fronts, los faltantes usan el cardback por defecto.",
+    )
+    parser.add_argument(
+        "--local-cardback", default=None, metavar="IMG",
+        help="Imagen local que actúa como cardback (sustituye al <cardback> del XML para los fronts locales). "
+             "Obligatorio cuando no hay XMLs.",
+    )
+    parser.add_argument(
+        "--locals-base-name", default="locales", metavar="NAME",
+        help="Nombre base del PDF cuando se genera solo a partir de imágenes locales (default: locales).",
+    )
+    parser.add_argument(
+        "--local-needs-crop", action="store_true",
+        help="Aplicar el recorte de bleed MPC a las imágenes locales "
+             "(por defecto desactivado: se asume que ya están sin borde).",
+    )
     args = parser.parse_args()
+
+    local_fronts = _validate_local_images(args.local_fronts, "--local-fronts")
+    local_backs = _validate_local_images(args.local_backs, "--local-backs")
+    local_cardback = (
+        _validate_local_images([args.local_cardback], "--local-cardback")[0]
+        if args.local_cardback else None
+    )
+
+    if local_backs and not local_fronts:
+        print("Error: --local-backs requiere --local-fronts.", file=sys.stderr)
+        sys.exit(1)
+    if len(local_backs) > len(local_fronts):
+        print(f"Error: hay {len(local_backs)} --local-backs pero solo {len(local_fronts)} "
+              "--local-fronts. Los backs se emparejan por orden con los fronts.",
+              file=sys.stderr)
+        sys.exit(1)
 
     xml_dir = Path(args.xml_dir)
     out_dir = Path(args.out_dir)
     workdir = Path(args.workdir)
 
     if not xml_dir.exists():
-        print(f"Error: la carpeta '{xml_dir}' no existe. Créala y añade XMLs.", file=sys.stderr)
-        sys.exit(1)
-
-    xmls = sorted(xml_dir.glob("*.xml"))
-    if not xmls:
+        if not local_fronts:
+            print(f"Error: la carpeta '{xml_dir}' no existe. Créala y añade XMLs.", file=sys.stderr)
+            sys.exit(1)
+        # Locals-only run: skip the missing xml dir gracefully.
+        xmls: list[Path] = []
+    else:
+        xmls = sorted(xml_dir.glob("*.xml"))
+    if not xmls and not local_fronts:
         print(f"No hay archivos .xml en '{xml_dir}'.")
         return
+    if not xmls and local_fronts and local_cardback is None:
+        print("Error: sin XMLs, --local-cardback es obligatorio para definir el reverso por defecto.",
+              file=sys.stderr)
+        sys.exit(1)
 
     run_dir = out_dir / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Encontrados {len(xmls)} XML(s) en '{xml_dir}'.")
+    if xmls:
+        print(f"Encontrados {len(xmls)} XML(s) en '{xml_dir}'.")
+    else:
+        print(f"Sin XMLs: generando PDF solo con {len(local_fronts)} imagen(es) local(es).")
+    if local_fronts:
+        loc_msg = f"Imágenes locales: {len(local_fronts)} front(s)"
+        if local_backs:
+            loc_msg += f", {len(local_backs)} back(s) emparejados"
+        if local_cardback:
+            loc_msg += f", cardback local: {local_cardback.name}"
+        print(loc_msg)
     print(f"Carpeta de salida: {run_dir}")
 
-    reports = analyze(xmls)
+    reports = analyze(xmls) if xmls else []
     for r in reports:
         print(f"  - {r.path.name}: {r.cards} cartas"
               + (f"  ({r.blanks} hueco(s) en blanco)" if r.has_blanks else ""))
 
-    plan_ = plan(reports)
+    plan_ = plan(reports, local_count=len(local_fronts)) if reports else None
 
-    merge_info = format_merge_info(plan_)
-    if merge_info:
-        print()
-        print(merge_info)
+    if plan_ is not None:
+        merge_info = format_merge_info(plan_)
+        if merge_info:
+            print()
+            print(merge_info)
 
-    warning = format_warning(plan_)
-    if warning and not args.yes:
-        print()
-        print(warning)
-        ans = input("¿Continuar? [s/N]: ").strip().lower()
-        if ans not in ("s", "si", "sí", "y", "yes"):
-            print("Cancelado.")
-            return
+        warning = format_warning(plan_)
+        if warning and not args.yes:
+            print()
+            print(warning)
+            ans = input("¿Continuar? [s/N]: ").strip().lower()
+            if ans not in ("s", "si", "sí", "y", "yes"):
+                print("Cancelado.")
+                return
     print()
 
     overall_start = time.time()
 
-    for job in plan_.jobs:
-        label = job.base_name + (" (fusión)" if job.is_merged else "")
-        print(f"\nProcesando: {label}")
+    if plan_ is not None:
+        last_idx = len(plan_.jobs) - 1
+        for i, job in enumerate(plan_.jobs):
+            is_last = (i == last_idx)
+            label = job.base_name + (" (fusión)" if job.is_merged else "")
+            if is_last and local_fronts:
+                label += f" + {len(local_fronts)} local(es)"
+            print(f"\nProcesando: {label}")
+            _stage_started_at.clear()
+            kwargs = {}
+            if is_last and local_fronts:
+                kwargs["extra_fronts"] = local_fronts
+                if local_backs:
+                    kwargs["extra_backs"] = local_backs
+                kwargs["local_crop_map"] = {
+                    p: args.local_needs_crop
+                    for p in (*local_fronts, *local_backs)
+                }
+            if job.is_merged:
+                pdfs = run_merged(job.xml_paths, run_dir, job.base_name, workdir, _progress, **kwargs)
+            else:
+                pdfs = run(job.xml_paths[0], run_dir, workdir, _progress, **kwargs)
+            for p in pdfs:
+                size_mb = p.stat().st_size / (1024 * 1024)
+                print(f"  -> {p}  ({size_mb:.1f} MB)")
+    else:
+        # No XMLs: a single locals-only job.
+        print(f"\nProcesando: {args.locals_base_name} (solo imágenes locales)")
         _stage_started_at.clear()
-        if job.is_merged:
-            pdfs = run_merged(job.xml_paths, run_dir, job.base_name, workdir, _progress)
-        else:
-            pdfs = run(job.xml_paths[0], run_dir, workdir, _progress)
+        all_locals = [*local_fronts, *local_backs]
+        if local_cardback is not None:
+            all_locals.append(local_cardback)
+        pdfs = run_locals_only(
+            local_fronts, local_cardback, run_dir, args.locals_base_name,
+            workdir, _progress, extra_backs=local_backs or None,
+            local_crop_map={p: args.local_needs_crop for p in all_locals},
+        )
         for p in pdfs:
             size_mb = p.stat().st_size / (1024 * 1024)
             print(f"  -> {p}  ({size_mb:.1f} MB)")
 
-    manifest = write_manifest(plan_, reports, run_dir)
+    manifest = write_manifest(plan_, reports, run_dir) if plan_ is not None else None
     if manifest:
         print(f"\nResumen de fusiones escrito en: {manifest}")
 
