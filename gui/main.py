@@ -1,4 +1,5 @@
-"""MPCFillToPDF GUI — pick XML(s), run the pipeline, open the output folder."""
+"""MPCFillToPDF GUI — pick XML(s) and optional local images, run the pipeline,
+open the output folder."""
 import os
 import queue
 import shutil
@@ -11,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
-from src.pipeline import run, run_merged
+from src.pipeline import run, run_merged, run_locals_only
 from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 APP_TITLE = "MPCFillToPDF"
@@ -21,15 +22,39 @@ STAGE_LABELS = {
     "pdf":      "Generando PDF",
 }
 
+IMAGE_FILETYPES = [
+    ("Imágenes", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
+    ("Todos", "*.*"),
+]
+
+FRONT_NAME_WIDTH = 28  # chars shown before ellipsizing a front filename
+
+
+def _ellipsize(name: str, width: int) -> str:
+    if len(name) <= width:
+        return name
+    return name[: max(0, width - 1)] + "…"
+
 
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_TITLE)
-        root.geometry("600x460")
-        root.minsize(520, 420)
+        root.geometry("1200x760")
+        root.minsize(1000, 660)
 
         self.xml_paths: list[Path] = []
+        self.local_fronts: list[Path] = []
+        self.local_backs: list[Path] = []
+        # Per-front back assignment: None = use XML cardback fallback.
+        self.front_back_paths: list[Path | None] = []
+        # Per-card "needs MPC bleed crop?" — parallel to fronts/backs.
+        self.local_front_crop: list[bool] = []
+        self.local_back_crop: list[bool] = []
+        # Tk widgets per row (parallel to local_fronts / local_backs).
+        self._front_rows: list[dict] = []
+        self._back_rows: list[dict] = []
+
         self.events: queue.Queue = queue.Queue()
         self.worker: threading.Thread | None = None
         self.cancel_event = threading.Event()
@@ -39,54 +64,183 @@ class App:
         self._build_ui()
         self.root.after(80, self._drain_events)
 
+    # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 6}
+        # Contenedor principal que ocupa toda la ventana
         frm = ttk.Frame(self.root)
         frm.pack(fill=tk.BOTH, expand=True, **pad)
 
-        ttk.Label(frm, text="Archivos XML seleccionados:").pack(anchor=tk.W)
+        # 1. SECCIÓN INFERIOR (Controles y Progreso)
+        # La empaquetamos primero con side=tk.BOTTOM para que "reserve" su espacio
+        bottom_controls = ttk.Frame(frm)
+        bottom_controls.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
-        list_frame = ttk.Frame(frm)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=(2, 6))
-        self.listbox = tk.Listbox(list_frame, height=8, activestyle="none")
-        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
+        self.keep_cache_cb = ttk.Checkbutton(
+            bottom_controls, text="Conservar caché de imágenes entre ejecuciones",
+            variable=self.keep_cache,
+        )
+        self.keep_cache_cb.pack(anchor=tk.W)
+
+        ttk.Separator(bottom_controls, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+
+        self.generate_btn = ttk.Button(bottom_controls, text="Generar PDF(s)", command=self._start)
+        self.generate_btn.pack(fill=tk.X)
+        self.generate_btn.state(["disabled"])
+
+        self.stop_btn = ttk.Button(bottom_controls, text="Detener", command=self._request_stop)
+
+        self.status_var = tk.StringVar(value="Listo. Selecciona uno o más XML o imágenes locales.")
+        ttk.Label(bottom_controls, textvariable=self.status_var, anchor=tk.W).pack(fill=tk.X, pady=(10, 2))
+
+        self.progress = ttk.Progressbar(bottom_controls, mode="determinate", maximum=100)
+        self.progress.pack(fill=tk.X)
+
+        out_text = f"Carpeta de salida: {output_dir()}"
+        self.out_label = ttk.Label(bottom_controls, text=out_text, foreground="#666", anchor=tk.W)
+        self.out_label.pack(fill=tk.X, pady=(8, 0))
+
+        # 2. SECCIÓN SUPERIOR (Paneles de archivos)
+        # Usamos un frame intermedio que ocupará el RESTO del espacio
+        top = ttk.Frame(frm)
+        top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        top.columnconfigure(0, weight=1, uniform="cols")
+        top.columnconfigure(1, weight=1, uniform="cols")
+        top.rowconfigure(0, weight=1)
+
+        self._build_xml_pane(top)
+        self._build_locals_pane(top)
+
+    def _build_xml_pane(self, parent: ttk.Frame) -> None:
+        xml_frame = ttk.LabelFrame(parent, text="Archivos XML")
+        xml_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+
+        xml_list_frame = ttk.Frame(xml_frame)
+        xml_list_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        self.listbox = tk.Listbox(xml_list_frame, activestyle="none",
+                                  selectmode=tk.EXTENDED)
+        scroll = ttk.Scrollbar(xml_list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=scroll.set)
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        btn_row = ttk.Frame(frm)
-        btn_row.pack(fill=tk.X)
-        self.pick_btn = ttk.Button(btn_row, text="Seleccionar XMLs…", command=self._pick_xmls)
-        self.pick_btn.pack(side=tk.LEFT)
-        self.remove_btn = ttk.Button(btn_row, text="Quitar selección", command=self._remove_selected)
-        self.remove_btn.pack(side=tk.LEFT, padx=6)
-        self.clear_btn = ttk.Button(btn_row, text="Vaciar", command=self._clear)
-        self.clear_btn.pack(side=tk.LEFT)
+        xml_btn_row = ttk.Frame(xml_frame)
+        xml_btn_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+        ttk.Button(xml_btn_row, text="Seleccionar XMLs…",
+                   command=self._pick_xmls).pack(side=tk.LEFT)
+        ttk.Button(xml_btn_row, text="Quitar selección",
+                   command=self._remove_selected_xmls).pack(side=tk.LEFT, padx=6)
+        ttk.Button(xml_btn_row, text="Vaciar",
+                   command=self._clear_xmls).pack(side=tk.LEFT)
 
-        self.keep_cache_cb = ttk.Checkbutton(
-            frm, text="Conservar caché de imágenes entre ejecuciones",
-            variable=self.keep_cache,
+    def _build_locals_pane(self, parent: ttk.Frame) -> None:
+        local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
+        local_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        local_frame.columnconfigure(0, weight=1)
+        local_frame.rowconfigure(1, weight=1, uniform="locals")  # backs
+        local_frame.rowconfigure(3, weight=2, uniform="locals")  # fronts
+
+        # --- Backs (top) ----------------------------------------------
+        ttk.Label(local_frame, text="Traseras (numeradas 1, 2, …):").grid(
+            row=0, column=0, sticky="w", padx=6, pady=(6, 2))
+
+        backs_block = ttk.Frame(local_frame)
+        backs_block.grid(row=1, column=0, sticky="nsew", padx=6)
+        backs_block.columnconfigure(0, weight=1)
+        backs_block.rowconfigure(0, weight=1)
+
+        self.backs_canvas, self.backs_inner, self._backs_window = (
+            self._build_scrollable_rows(backs_block)
         )
-        self.keep_cache_cb.pack(anchor=tk.W, pady=(10, 0))
+        self.backs_canvas.bind("<Enter>",
+                               lambda _e: self._bind_mousewheel(self.backs_canvas, True))
+        self.backs_canvas.bind("<Leave>",
+                               lambda _e: self._bind_mousewheel(self.backs_canvas, False))
 
-        ttk.Separator(frm, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        self._backs_empty_label = ttk.Label(
+            self.backs_inner,
+            text="(sin traseras — usa “Seleccionar imágenes…”)",
+            foreground="#777", padding=(8, 10),
+        )
+        self._backs_empty_label.pack(anchor="w")
 
-        self.generate_btn = ttk.Button(frm, text="Generar PDF(s)", command=self._start)
-        self.generate_btn.pack(fill=tk.X)
-        self.generate_btn.state(["disabled"])
+        backs_btn_row = ttk.Frame(backs_block)
+        backs_btn_row.grid(row=1, column=0, sticky="ew", pady=(2, 6))
+        ttk.Button(backs_btn_row, text="Seleccionar imágenes…",
+                   command=self._pick_local_backs).pack(side=tk.LEFT)
+        ttk.Button(backs_btn_row, text="Vaciar",
+                   command=self._clear_local_backs).pack(side=tk.LEFT, padx=6)
 
-        # Stop button: only packed while a run is in progress.
-        self.stop_btn = ttk.Button(frm, text="Detener", command=self._request_stop)
+        ttk.Separator(local_frame, orient=tk.HORIZONTAL).grid(
+            row=2, column=0, sticky="ew", padx=6, pady=(4, 4))
 
-        self.status_var = tk.StringVar(value="Listo. Selecciona uno o más XML.")
-        ttk.Label(frm, textvariable=self.status_var, anchor=tk.W).pack(fill=tk.X, pady=(10, 2))
+        # --- Fronts (bottom, scrollable rows with per-front back combo) -----
+        fronts_block = ttk.Frame(local_frame)
+        fronts_block.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        fronts_block.columnconfigure(0, weight=1)
+        fronts_block.rowconfigure(1, weight=1)
 
-        self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.pack(fill=tk.X)
+        ttk.Label(
+            fronts_block,
+            text="Frontales (asignar trasera por carta):",
+        ).grid(row=0, column=0, sticky="w", pady=(2, 4))
 
-        out_text = f"Carpeta de salida: {output_dir()}"
-        ttk.Label(frm, text=out_text, foreground="#666", anchor=tk.W).pack(fill=tk.X, pady=(10, 0))
+        fronts_holder = ttk.Frame(fronts_block)
+        fronts_holder.grid(row=1, column=0, sticky="nsew")
+        fronts_holder.columnconfigure(0, weight=1)
+        fronts_holder.rowconfigure(0, weight=1)
 
+        self.fronts_canvas, self.fronts_inner, self._fronts_window = (
+            self._build_scrollable_rows(fronts_holder)
+        )
+        self.fronts_canvas.bind("<Enter>",
+                                lambda _e: self._bind_mousewheel(self.fronts_canvas, True))
+        self.fronts_canvas.bind("<Leave>",
+                                lambda _e: self._bind_mousewheel(self.fronts_canvas, False))
+
+        self._fronts_empty_label = ttk.Label(
+            self.fronts_inner,
+            text="(sin frontales — usa “Seleccionar imágenes…”)",
+            foreground="#777", padding=(8, 10),
+        )
+        self._fronts_empty_label.pack(anchor="w")
+
+        fronts_btn_row = ttk.Frame(fronts_block)
+        fronts_btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        ttk.Button(fronts_btn_row, text="Seleccionar imágenes…",
+                   command=self._pick_local_fronts).pack(side=tk.LEFT)
+        ttk.Button(fronts_btn_row, text="Vaciar",
+                   command=self._clear_local_fronts).pack(side=tk.LEFT, padx=6)
+
+    def _build_scrollable_rows(self, parent: ttk.Frame):
+        """Create a Canvas + inner Frame pair for a vertically scrolling list
+        of per-row widgets. Returns (canvas, inner_frame, window_id)."""
+        holder = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
+        holder.grid(row=0, column=0, sticky="nsew")
+        holder.columnconfigure(0, weight=1)
+        holder.rowconfigure(0, weight=1)
+        canvas = tk.Canvas(holder, highlightthickness=0, background="#ffffff")
+        scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(window_id, width=e.width),
+        )
+        return canvas, inner, window_id
+
+    # ------------------------------------------------------------------
+    # XML pickers
+    # ------------------------------------------------------------------
     def _pick_xmls(self) -> None:
         paths = filedialog.askopenfilenames(
             title="Selecciona archivos XML de MPCFill",
@@ -100,51 +254,341 @@ class App:
                 self.listbox.insert(tk.END, pp.name)
                 added += 1
         if added:
-            self.status_var.set(f"{len(self.xml_paths)} archivo(s) en cola.")
+            self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
         self._refresh_generate_state()
 
-    def _remove_selected(self) -> None:
+    def _remove_selected_xmls(self) -> None:
         for idx in reversed(self.listbox.curselection()):
             self.listbox.delete(idx)
             del self.xml_paths[idx]
         self._refresh_generate_state()
 
-    def _clear(self) -> None:
+    def _clear_xmls(self) -> None:
         self.listbox.delete(0, tk.END)
         self.xml_paths.clear()
-        self.status_var.set("Listo. Selecciona uno o más XML.")
         self._refresh_generate_state()
 
+    # ------------------------------------------------------------------
+    # Local back pickers
+    # ------------------------------------------------------------------
+    def _pick_local_backs(self) -> None:
+        paths = filedialog.askopenfilenames(
+            title="Selecciona imágenes locales (traseras)",
+            filetypes=IMAGE_FILETYPES,
+        )
+        was_empty = not self.local_backs
+        added = False
+        for p in paths:
+            pp = Path(p)
+            if pp not in self.local_backs:
+                self.local_backs.append(pp)
+                self.local_back_crop.append(False)
+                added = True
+        if added:
+            # Going from 0 → ≥1 backs: auto-assign the new first back to any
+            # fronts that don't already have an explicit pick.
+            if was_empty and self.local_backs:
+                first = self.local_backs[0]
+                for i, assigned in enumerate(self.front_back_paths):
+                    if assigned is None:
+                        self.front_back_paths[i] = first
+            self._refresh_back_rows()
+            self._refresh_front_rows()
+            self._refresh_generate_state()
+
+    def _remove_back(self, idx: int) -> None:
+        if not (0 <= idx < len(self.local_backs)):
+            return
+        removed_path = self.local_backs[idx]
+        del self.local_backs[idx]
+        del self.local_back_crop[idx]
+        for i, assigned in enumerate(self.front_back_paths):
+            if assigned == removed_path:
+                self.front_back_paths[i] = None
+        self._refresh_back_rows()
+        self._refresh_front_rows()
+        self._refresh_generate_state()
+
+    def _clear_local_backs(self) -> None:
+        if not self.local_backs:
+            return
+        self.local_backs.clear()
+        self.local_back_crop.clear()
+        # All explicit assignments are now invalid → fall back to default.
+        self.front_back_paths = [None] * len(self.front_back_paths)
+        self._refresh_back_rows()
+        self._refresh_front_rows()
+        self._refresh_generate_state()
+
+    def _on_back_crop_change(self, idx: int, var: tk.BooleanVar) -> None:
+        if 0 <= idx < len(self.local_back_crop):
+            self.local_back_crop[idx] = bool(var.get())
+
+    def _refresh_back_rows(self) -> None:
+        for row in self._back_rows:
+            row["frame"].destroy()
+        self._back_rows.clear()
+
+        if not self.local_backs:
+            self._backs_empty_label.pack(anchor="w")
+            return
+        self._backs_empty_label.pack_forget()
+
+        for i, back_path in enumerate(self.local_backs):
+            row = ttk.Frame(self.backs_inner)
+            row.pack(fill=tk.X, pady=1, padx=2)
+
+            ttk.Label(row, text=f"{i + 1:>3}.", width=4,
+                      anchor="e").pack(side=tk.LEFT)
+            ttk.Label(
+                row, text=_ellipsize(back_path.name, FRONT_NAME_WIDTH),
+                width=FRONT_NAME_WIDTH + 1, anchor="w",
+            ).pack(side=tk.LEFT, padx=(4, 8))
+
+            crop_var = tk.BooleanVar(value=self.local_back_crop[i])
+            ttk.Checkbutton(
+                row, text="Recortar bordes extra", variable=crop_var,
+                command=lambda idx=i, v=crop_var: self._on_back_crop_change(idx, v),
+            ).pack(side=tk.LEFT, padx=(4, 6))
+
+            ttk.Button(
+                row, text="✕", width=2,
+                command=lambda idx=i: self._remove_back(idx),
+            ).pack(side=tk.RIGHT)
+
+            self._back_rows.append({"frame": row, "crop_var": crop_var})
+
+        self.backs_inner.update_idletasks()
+        self.backs_canvas.configure(scrollregion=self.backs_canvas.bbox("all"))
+
+    # ------------------------------------------------------------------
+    # Local front pickers + per-row widgets
+    # ------------------------------------------------------------------
+    def _pick_local_fronts(self) -> None:
+        paths = filedialog.askopenfilenames(
+            title="Selecciona imágenes locales (frontales)",
+            filetypes=IMAGE_FILETYPES,
+        )
+        default_back = self.local_backs[0] if self.local_backs else None
+        added = False
+        for p in paths:
+            pp = Path(p)
+            if pp not in self.local_fronts:
+                self.local_fronts.append(pp)
+                self.front_back_paths.append(default_back)
+                self.local_front_crop.append(False)
+                added = True
+        if added:
+            self._refresh_front_rows()
+            self._refresh_generate_state()
+
+    def _clear_local_fronts(self) -> None:
+        if not self.local_fronts:
+            return
+        self.local_fronts.clear()
+        self.front_back_paths.clear()
+        self.local_front_crop.clear()
+        self._refresh_front_rows()
+        self._refresh_generate_state()
+
+    def _remove_front(self, idx: int) -> None:
+        if 0 <= idx < len(self.local_fronts):
+            del self.local_fronts[idx]
+            del self.front_back_paths[idx]
+            del self.local_front_crop[idx]
+            self._refresh_front_rows()
+            self._refresh_generate_state()
+
+    def _on_front_back_change(self, idx: int, var: tk.StringVar) -> None:
+        """Combobox callback: maps the displayed choice back to a Path or None."""
+        choice = var.get()
+        try:
+            n = int(choice)
+        except (TypeError, ValueError):
+            self.front_back_paths[idx] = None  # "—" = no explicit choice
+            return
+        if 1 <= n <= len(self.local_backs):
+            self.front_back_paths[idx] = self.local_backs[n - 1]
+
+    def _on_front_crop_change(self, idx: int, var: tk.BooleanVar) -> None:
+        if 0 <= idx < len(self.local_front_crop):
+            self.local_front_crop[idx] = bool(var.get())
+
+    def _refresh_front_rows(self) -> None:
+        """Tear down and rebuild the per-front rows so indices/combos stay in
+        sync with `self.local_fronts` and `self.local_backs`."""
+        for row in self._front_rows:
+            row["frame"].destroy()
+        self._front_rows.clear()
+
+        if not self.local_fronts:
+            self._fronts_empty_label.pack(anchor="w")
+            return
+        self._fronts_empty_label.pack_forget()
+
+        numbered = [str(i) for i in range(1, len(self.local_backs) + 1)]
+        combo_values = ["—", *numbered]
+        backs_present = bool(numbered)
+
+        for i, front_path in enumerate(self.local_fronts):
+            row = ttk.Frame(self.fronts_inner)
+            row.pack(fill=tk.X, pady=1, padx=2)
+
+            ttk.Label(row, text=f"{i + 1:>3}.", width=4,
+                      anchor="e").pack(side=tk.LEFT)
+            ttk.Label(
+                row, text=_ellipsize(front_path.name, FRONT_NAME_WIDTH),
+                width=FRONT_NAME_WIDTH + 1, anchor="w",
+            ).pack(side=tk.LEFT, padx=(4, 8))
+
+            ttk.Label(row, text="Trasera:").pack(side=tk.LEFT)
+
+            # If a previously picked back is no longer in the list, drop the
+            # assignment so the combo shows "—" (use XML cardback fallback).
+            assigned = self.front_back_paths[i]
+            if assigned is not None and assigned not in self.local_backs:
+                assigned = None
+                self.front_back_paths[i] = None
+            var = tk.StringVar()
+            if assigned is None:
+                var.set("—")
+            else:
+                var.set(str(self.local_backs.index(assigned) + 1))
+            combo = ttk.Combobox(
+                row, values=combo_values, textvariable=var,
+                state="readonly" if backs_present else "disabled",
+                width=4,
+            )
+            combo.bind(
+                "<<ComboboxSelected>>",
+                lambda _e, idx=i, v=var: self._on_front_back_change(idx, v),
+            )
+            combo.pack(side=tk.LEFT, padx=(4, 6))
+
+            crop_var = tk.BooleanVar(value=self.local_front_crop[i])
+            ttk.Checkbutton(
+                row, text="Recortar bordes extra", variable=crop_var,
+                command=lambda idx=i, v=crop_var: self._on_front_crop_change(idx, v),
+            ).pack(side=tk.LEFT, padx=(4, 6))
+
+            ttk.Button(
+                row, text="✕", width=2,
+                command=lambda idx=i: self._remove_front(idx),
+            ).pack(side=tk.RIGHT)
+
+            self._front_rows.append(
+                {"frame": row, "var": var, "combo": combo, "crop_var": crop_var},
+            )
+
+        # Keep scrollregion fresh after layout settles.
+        self.fronts_inner.update_idletasks()
+        self.fronts_canvas.configure(scrollregion=self.fronts_canvas.bbox("all"))
+
+    # ------------------------------------------------------------------
+    # Mousewheel scroll over the active row list
+    # ------------------------------------------------------------------
+    def _bind_mousewheel(self, canvas: tk.Canvas, on: bool) -> None:
+        if on:
+            self._active_scroll_canvas = canvas
+            canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+            canvas.bind_all("<Button-4>", self._on_mousewheel)
+            canvas.bind_all("<Button-5>", self._on_mousewheel)
+        else:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+            self._active_scroll_canvas = None
+
+    def _on_mousewheel(self, event) -> None:
+        canvas = getattr(self, "_active_scroll_canvas", None)
+        if canvas is None:
+            return
+        if event.num == 4:
+            canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            canvas.yview_scroll(1, "units")
+        else:
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    # ------------------------------------------------------------------
+    # Run controls
+    # ------------------------------------------------------------------
     def _refresh_generate_state(self) -> None:
-        if self.xml_paths and not self.running:
+        ready = False
+        if self.xml_paths:
+            ready = True
+        elif self.local_fronts and self.local_backs:
+            # locals-only requires at least one back (acts as the cardback)
+            ready = True
+        if ready and not self.running:
             self.generate_btn.state(["!disabled"])
         else:
             self.generate_btn.state(["disabled"])
 
+    def _resolve_extra_backs(self) -> list[Path | None]:
+        """One entry per local front: the explicit Path the user chose, or
+        `None` to fall back to the XML cardback (or `local_cardback` in
+        locals-only mode)."""
+        result: list[Path | None] = []
+        for i, _ in enumerate(self.local_fronts):
+            assigned = (
+                self.front_back_paths[i]
+                if i < len(self.front_back_paths)
+                else None
+            )
+            result.append(assigned)
+        return result
+
+    def _build_crop_map(self) -> dict[Path, bool]:
+        """Per-image crop setting for every local image. Same path appearing
+        as both a front and a back gets the front's setting last (overrides
+        the back's), which is fine — they map to the same on-disk file."""
+        m: dict[Path, bool] = {}
+        for p, c in zip(self.local_backs, self.local_back_crop):
+            m[p] = c
+        for p, c in zip(self.local_fronts, self.local_front_crop):
+            m[p] = c
+        return m
+
     def _start(self) -> None:
-        if not self.xml_paths or self.running:
+        if self.running:
             return
 
-        try:
-            reports = analyze(self.xml_paths)
-        except Exception as e:
-            messagebox.showerror(APP_TITLE, f"No se pudo analizar el XML:\n{e}")
+        if not self.xml_paths and not self.local_fronts:
+            messagebox.showerror(APP_TITLE, "Selecciona al menos un XML o imágenes locales.")
             return
 
-        plan_ = plan(reports)
-
-        merge_info = format_merge_info(plan_)
-        if merge_info:
-            messagebox.showinfo(APP_TITLE, merge_info)
-
-        warning = format_warning(plan_)
-        if warning:
-            if not messagebox.askyesno(
+        if not self.xml_paths and not self.local_backs:
+            messagebox.showerror(
                 APP_TITLE,
-                warning + "\n\n¿Continuar de todos modos?",
-                icon=messagebox.WARNING,
-            ):
+                "Sin XMLs se necesita al menos un back local "
+                "(el primero actúa como reverso por defecto).",
+            )
+            return
+
+        reports = []
+        plan_ = None
+        if self.xml_paths:
+            try:
+                reports = analyze(self.xml_paths)
+            except Exception as e:
+                messagebox.showerror(APP_TITLE, f"No se pudo analizar el XML:\n{e}")
                 return
+
+            plan_ = plan(reports, local_count=len(self.local_fronts))
+
+            merge_info = format_merge_info(plan_)
+            if merge_info:
+                messagebox.showinfo(APP_TITLE, merge_info)
+
+            warning = format_warning(plan_)
+            if warning:
+                if not messagebox.askyesno(
+                    APP_TITLE,
+                    warning + "\n\n¿Continuar de todos modos?",
+                    icon=messagebox.WARNING,
+                ):
+                    return
 
         self.running = True
         self.cancel_event.clear()
@@ -172,26 +616,55 @@ class App:
         run_dir.mkdir(parents=True, exist_ok=True)
         generated: list[Path] = []
         try:
-            jobs = plan_.jobs
-            for i, job in enumerate(jobs, start=1):
-                if self.cancel_event.is_set():
-                    raise Cancelled()
-                label = job.base_name + (" (fusión)" if job.is_merged else "")
-                self.events.put(("file", i, len(jobs), label))
-                def cb(stage, done, total, _label=label):
+            extra_backs = self._resolve_extra_backs()
+            crop_map = self._build_crop_map()
+            if plan_ is not None:
+                jobs = plan_.jobs
+                last_idx = len(jobs) - 1
+                for i, job in enumerate(jobs, start=1):
+                    if self.cancel_event.is_set():
+                        raise Cancelled()
+                    is_last = (i - 1 == last_idx)
+                    extra_label = (
+                        f" + {len(self.local_fronts)} local(es)"
+                        if is_last and self.local_fronts else ""
+                    )
+                    label = job.base_name + (" (fusión)" if job.is_merged else "") + extra_label
+                    self.events.put(("file", i, len(jobs), label))
+                    def cb(stage, done, total, _label=label):
+                        self.events.put(("progress", stage, done, total, _label))
+                    extra_kwargs = {}
+                    if is_last and self.local_fronts:
+                        extra_kwargs["extra_fronts"] = list(self.local_fronts)
+                        extra_kwargs["extra_backs"] = list(extra_backs)
+                        extra_kwargs["local_crop_map"] = dict(crop_map)
+                    if job.is_merged:
+                        pdfs = run_merged(
+                            job.xml_paths, run_dir, job.base_name, wd, cb,
+                            cancel_event=self.cancel_event, **extra_kwargs,
+                        )
+                    else:
+                        pdfs = run(
+                            job.xml_paths[0], run_dir, wd, cb,
+                            cancel_event=self.cancel_event, **extra_kwargs,
+                        )
+                    generated.extend(pdfs)
+                manifest = write_manifest(plan_, reports, run_dir)
+            else:
+                # Locals-only run. Back #1 acts as the default cardback.
+                base = "locales"
+                self.events.put(("file", 1, 1, f"{base} (solo imágenes locales)"))
+                def cb(stage, done, total, _label=base):
                     self.events.put(("progress", stage, done, total, _label))
-                if job.is_merged:
-                    pdfs = run_merged(
-                        job.xml_paths, run_dir, job.base_name, wd, cb,
-                        cancel_event=self.cancel_event,
-                    )
-                else:
-                    pdfs = run(
-                        job.xml_paths[0], run_dir, wd, cb,
-                        cancel_event=self.cancel_event,
-                    )
+                pdfs = run_locals_only(
+                    list(self.local_fronts), self.local_backs[0],
+                    run_dir, base, wd, cb,
+                    cancel_event=self.cancel_event,
+                    extra_backs=list(extra_backs),
+                    local_crop_map=dict(crop_map),
+                )
                 generated.extend(pdfs)
-            manifest = write_manifest(plan_, reports, run_dir)
+                manifest = None
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.events.put(("done", generated, manifest, run_dir))
@@ -242,9 +715,7 @@ class App:
             self._open_output_folder(run_dir)
         elif kind == "cancelled":
             _, run_dir, wd = ev
-            # Always drop the run_dir so partial PDFs don't confuse the user.
             self._cleanup_run_dir(run_dir)
-            # Drop cached raw/bled images only if the user didn't ask to keep them.
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.progress["value"] = 0

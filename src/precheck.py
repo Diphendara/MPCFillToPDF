@@ -28,10 +28,32 @@ class PdfJob:
     xml_paths: list[Path]
     base_name: str
     cards: int
+    extra_locals: int = 0  # local fronts appended to this job (only on the last job)
 
     @property
     def is_merged(self) -> bool:
         return len(self.xml_paths) > 1
+
+    @property
+    def total_cards(self) -> int:
+        return self.cards + self.extra_locals
+
+    @property
+    def blanks(self) -> int:
+        rem = self.total_cards % CARDS_PER_PAGE
+        return (CARDS_PER_PAGE - rem) if rem else 0
+
+    @property
+    def has_blanks(self) -> bool:
+        return self.blanks > 0
+
+    @property
+    def display_name(self) -> str:
+        if self.is_merged:
+            return self.base_name
+        if self.xml_paths:
+            return self.xml_paths[0].name
+        return self.base_name
 
 
 def analyze(xml_paths: list[str | Path]) -> list[XmlReport]:
@@ -50,44 +72,51 @@ def analyze(xml_paths: list[str | Path]) -> list[XmlReport]:
 class Plan:
     jobs: list[PdfJob]
     merged_xmls: list[XmlReport]   # which XMLs got fused into a merge job
-    residual_blanks: list[XmlReport]  # XMLs that still produce PDFs with blanks
 
     @property
     def has_merge(self) -> bool:
         return any(j.is_merged for j in self.jobs)
 
     @property
+    def residual_blanks(self) -> list[PdfJob]:
+        return [j for j in self.jobs if j.has_blanks]
+
+    @property
     def has_blanks(self) -> bool:
         return bool(self.residual_blanks)
 
 
-def plan(reports: list[XmlReport]) -> Plan:
+def plan(reports: list[XmlReport], local_count: int = 0) -> Plan:
     """Decide how XMLs map to PDFs.
 
     - Each XML whose deck is already a multiple of 9 becomes a solo job.
     - All unaligned XMLs are checked: if their combined total is a multiple
       of 9 they are fused into a single merged job (named `<a>_<b>_..._union`).
-    - Otherwise each unaligned XML becomes a solo job and `residual_blanks`
-      lists those that will print blank slots.
+    - Otherwise each unaligned XML becomes a solo job.
+    - `local_count` is the number of local fronts that will be appended to the
+      LAST job — included in that job's blank-slot calculation.
     """
     aligned   = [r for r in reports if not r.has_blanks]
     unaligned = [r for r in reports if r.has_blanks]
 
     jobs = [PdfJob([r.path], r.path.stem, r.cards) for r in aligned]
+    merged_xmls: list[XmlReport] = []
 
-    if not unaligned:
-        return Plan(jobs, [], [])
+    if unaligned:
+        total_unaligned = sum(r.cards for r in unaligned)
+        if total_unaligned % CARDS_PER_PAGE == 0:
+            ordered = sorted(unaligned, key=lambda r: -r.cards)
+            base = "_".join(r.path.stem for r in ordered) + "_union"
+            jobs.append(PdfJob([r.path for r in ordered], base, total_unaligned))
+            merged_xmls = ordered
+        else:
+            for r in unaligned:
+                jobs.append(PdfJob([r.path], r.path.stem, r.cards))
 
-    total_unaligned = sum(r.cards for r in unaligned)
-    if total_unaligned % CARDS_PER_PAGE == 0:
-        ordered = sorted(unaligned, key=lambda r: -r.cards)
-        base = "_".join(r.path.stem for r in ordered) + "_union"
-        jobs.append(PdfJob([r.path for r in ordered], base, total_unaligned))
-        return Plan(jobs, ordered, [])
+    if local_count > 0 and jobs:
+        jobs[-1].extra_locals = local_count
 
-    for r in unaligned:
-        jobs.append(PdfJob([r.path], r.path.stem, r.cards))
-    return Plan(jobs, [], unaligned)
+    return Plan(jobs, merged_xmls)
 
 
 def format_merge_info(plan_: Plan) -> str | None:
@@ -102,24 +131,26 @@ def format_merge_info(plan_: Plan) -> str | None:
     return "\n".join(lines)
 
 
-def format_warning(reports_or_plan) -> str | None:
-    """Warning about blank slots that will be printed. Accepts either a list
-    of reports (legacy) or a Plan (new)."""
-    if isinstance(reports_or_plan, Plan):
-        bad = reports_or_plan.residual_blanks
-    else:
-        bad = [r for r in reports_or_plan if r.has_blanks]
+def format_warning(plan_: Plan) -> str | None:
+    """Warning about blank slots that will be printed."""
+    bad = plan_.residual_blanks
     if not bad:
         return None
     lines = [
-        "Aviso: las siguientes barajas no son múltiplos de 9.",
-        "La última página de cada PDF tendrá huecos en blanco "
+        "Aviso: los siguientes PDF(s) no son múltiplos de 9.",
+        "La última página tendrá huecos en blanco "
         "(la imprenta cobra la página entera aunque no esté llena):",
         "",
     ]
-    for r in bad:
-        s = "hueco" if r.blanks == 1 else "huecos"
-        lines.append(f"  • {r.path.name}: {r.cards} cartas → {r.blanks} {s} en blanco")
+    for j in bad:
+        s = "hueco" if j.blanks == 1 else "huecos"
+        if j.extra_locals:
+            cards_info = (
+                f"{j.total_cards} cartas ({j.cards} XML + {j.extra_locals} local(es))"
+            )
+        else:
+            cards_info = f"{j.total_cards} cartas"
+        lines.append(f"  • {j.display_name}: {cards_info} → {j.blanks} {s} en blanco")
     return "\n".join(lines)
 
 

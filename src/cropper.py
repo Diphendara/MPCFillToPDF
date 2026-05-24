@@ -41,8 +41,16 @@ def _add_mirror_bleed(img: Image.Image, bx: int, by: int) -> Image.Image:
     return out
 
 
-def process_for_pdf(input_path: str | Path, output_path: str | Path) -> Path:
-    """Crop MPC bleed, then add mirror bleed. Result is what gets placed in the PDF.
+def process_for_pdf(
+    input_path: str | Path,
+    output_path: str | Path,
+    crop_borders: bool = True,
+) -> Path:
+    """Optionally crop MPC bleed, then add mirror bleed. Result is what gets
+    placed in the PDF.
+
+    `crop_borders=False` skips the MPC-bleed crop — used for user-supplied
+    local images that don't carry the MPC border.
 
     Skips work when `output_path` already exists and is newer than `input_path`,
     matching the downloader's cache-on-disk behavior.
@@ -52,7 +60,7 @@ def process_for_pdf(input_path: str | Path, output_path: str | Path) -> Path:
     if output_path.exists() and output_path.stat().st_mtime >= input_path.stat().st_mtime:
         return output_path
     img = Image.open(input_path).convert("RGB")
-    trimmed = _crop_to_trim(img)
+    trimmed = _crop_to_trim(img) if crop_borders else img
     cw, ch = trimmed.size
     bx = round(cw * BLEED_MM / CARD_W_MM)
     by = round(ch * BLEED_MM / CARD_H_MM)
