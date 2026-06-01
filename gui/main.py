@@ -12,7 +12,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
-from src.pipeline import run, run_merged, run_locals_only
+from src.downloader import DownloadPermissionError, DownloadTimeoutError
+from src.pipeline import run_plan, run_locals_only
 from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 APP_TITLE = "MPCFillToPDF"
@@ -36,6 +37,38 @@ def _ellipsize(name: str, width: int) -> str:
     return name[: max(0, width - 1)] + "…"
 
 
+_PB_DOWNLOAD_COLOR = "#0078d4"  # Windows blue
+_PB_CROP_COLOR     = "#2e7d32"  # dark green
+
+
+class _XmlPb(tk.Canvas):
+    """Canvas progress bar with centered text overlay — works on all themes."""
+    _W = 130
+    _H = 18
+    _TROUGH = "#dde5f0"
+    _BORDER = "#9aafc7"
+    _TEXT   = "#f0f0f0"
+
+    def __init__(self, parent, **kw):
+        super().__init__(
+            parent, width=self._W, height=self._H,
+            bg=self._TROUGH, highlightthickness=1, highlightbackground=self._BORDER,
+            **kw,
+        )
+        self._bar = self.create_rectangle(0, 0, 0, self._H, fill=_PB_DOWNLOAD_COLOR, outline="")
+        self._lbl = self.create_text(
+            self._W // 2, self._H // 2, text="",
+            fill=self._TEXT, font=("Segoe UI", 8),
+        )
+
+    def set_progress(self, pct: float, text: str = "", color: str | None = None) -> None:
+        if color is not None:
+            self.itemconfigure(self._bar, fill=color)
+        filled = int(self._W * max(0.0, min(100.0, pct)) / 100)
+        self.coords(self._bar, 0, 0, filled, self._H)
+        self.itemconfigure(self._lbl, text=text)
+
+
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -44,6 +77,7 @@ class App:
         root.minsize(1000, 660)
 
         self.xml_paths: list[Path] = []
+        self._xml_rows: list[dict] = []
         self.local_fronts: list[Path] = []
         self.local_backs: list[Path] = []
         # Per-front back assignment: None = use XML cardback fallback.
@@ -116,24 +150,35 @@ class App:
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         xml_frame = ttk.LabelFrame(parent, text="Archivos XML")
         xml_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        xml_frame.columnconfigure(0, weight=1)
+        xml_frame.rowconfigure(0, weight=1)
 
         xml_list_frame = ttk.Frame(xml_frame)
-        xml_list_frame.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
-        self.listbox = tk.Listbox(xml_list_frame, activestyle="none",
-                                  selectmode=tk.EXTENDED)
-        scroll = ttk.Scrollbar(xml_list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
-        self.listbox.configure(yscrollcommand=scroll.set)
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        xml_list_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=(6, 2))
+        xml_list_frame.columnconfigure(0, weight=1)
+        xml_list_frame.rowconfigure(0, weight=1)
+
+        self.xml_canvas, self.xml_inner, self._xml_window = (
+            self._build_scrollable_rows(xml_list_frame)
+        )
+        self.xml_canvas.bind("<Enter>",
+                             lambda _e: self._bind_mousewheel(self.xml_canvas, True))
+        self.xml_canvas.bind("<Leave>",
+                             lambda _e: self._bind_mousewheel(self.xml_canvas, False))
+
+        self._xml_empty_label = ttk.Label(
+            self.xml_inner,
+            text="(sin XMLs — usa “Seleccionar XMLs…”)",
+            foreground="#777", padding=(8, 10),
+        )
+        self._xml_empty_label.pack(anchor="w")
 
         xml_btn_row = ttk.Frame(xml_frame)
-        xml_btn_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+        xml_btn_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
         ttk.Button(xml_btn_row, text="Seleccionar XMLs…",
                    command=self._pick_xmls).pack(side=tk.LEFT)
-        ttk.Button(xml_btn_row, text="Quitar selección",
-                   command=self._remove_selected_xmls).pack(side=tk.LEFT, padx=6)
         ttk.Button(xml_btn_row, text="Vaciar",
-                   command=self._clear_xmls).pack(side=tk.LEFT)
+                   command=self._clear_xmls).pack(side=tk.LEFT, padx=6)
 
     def _build_locals_pane(self, parent: ttk.Frame) -> None:
         local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
@@ -251,22 +296,90 @@ class App:
             pp = Path(p)
             if pp not in self.xml_paths:
                 self.xml_paths.append(pp)
-                self.listbox.insert(tk.END, pp.name)
                 added += 1
         if added:
+            self._refresh_xml_rows()
             self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
         self._refresh_generate_state()
 
-    def _remove_selected_xmls(self) -> None:
-        for idx in reversed(self.listbox.curselection()):
-            self.listbox.delete(idx)
+    def _remove_xml(self, idx: int) -> None:
+        if 0 <= idx < len(self.xml_paths):
             del self.xml_paths[idx]
-        self._refresh_generate_state()
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
 
     def _clear_xmls(self) -> None:
-        self.listbox.delete(0, tk.END)
         self.xml_paths.clear()
+        self._refresh_xml_rows()
         self._refresh_generate_state()
+
+    def _refresh_xml_rows(self) -> None:
+        for row in self._xml_rows:
+            row["frame"].destroy()
+        self._xml_rows.clear()
+
+        if not self.xml_paths:
+            self._xml_empty_label.pack(anchor="w")
+            return
+        self._xml_empty_label.pack_forget()
+
+        for i, xml_path in enumerate(self.xml_paths):
+            frame = ttk.Frame(self.xml_inner)
+            frame.pack(fill=tk.X, pady=1, padx=2)
+            frame.columnconfigure(0, weight=1)
+
+            ttk.Label(
+                frame, text=_ellipsize(xml_path.name, 32), anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=(4, 8))
+
+            pb = _XmlPb(frame)
+            pb.grid(row=0, column=1, padx=(0, 4))
+            pb.grid_remove()
+
+            count_var = tk.StringVar(value="")
+            count_lbl = ttk.Label(frame, textvariable=count_var, width=9, anchor="e")
+            count_lbl.grid(row=0, column=2, padx=(0, 4))
+            count_lbl.grid_remove()
+
+            ttk.Button(
+                frame, text="✕", width=2,
+                command=lambda idx=i: self._remove_xml(idx),
+            ).grid(row=0, column=3, padx=(0, 2))
+
+            self._xml_rows.append({
+                "frame": frame, "pb": pb,
+                "count_var": count_var, "count_lbl": count_lbl,
+            })
+
+        self.xml_inner.update_idletasks()
+        self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))
+
+    def _show_xml_download_progress(self, xml_name: str, done: int, total: int) -> None:
+        for xml_path, row in zip(self.xml_paths, self._xml_rows):
+            if xml_path.name == xml_name:
+                pct = (done / total * 100.0) if total else 100.0
+                row["pb"].set_progress(pct, "Descargando", color=_PB_DOWNLOAD_COLOR)
+                row["count_var"].set(f"{done}/{total}")
+                row["pb"].grid()
+                row["count_lbl"].grid()
+                break
+
+    def _show_xml_crop_progress(self, xml_name: str, done: int, total: int) -> None:
+        for xml_path, row in zip(self.xml_paths, self._xml_rows):
+            if xml_path.name == xml_name:
+                pct = (done / total * 100.0) if total else 100.0
+                row["pb"].set_progress(pct, "Recortando", color=_PB_CROP_COLOR)
+                row["count_var"].set(f"{done}/{total}")
+                row["pb"].grid()
+                row["count_lbl"].grid()
+                break
+
+    def _reset_xml_download_progress(self) -> None:
+        for row in self._xml_rows:
+            row["pb"].set_progress(0, "")
+            row["count_var"].set("")
+            row["pb"].grid_remove()
+            row["count_lbl"].grid_remove()
 
     # ------------------------------------------------------------------
     # Local back pickers
@@ -597,6 +710,7 @@ class App:
         self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.generate_btn)
         self.progress["value"] = 0
         self.status_var.set("Preparando…")
+        self._reset_xml_download_progress()
         self.worker = threading.Thread(
             target=self._work, args=(plan_, reports), daemon=True,
         )
@@ -610,45 +724,47 @@ class App:
         self.status_var.set("Cancelando…")
 
     def _work(self, plan_, reports) -> None:
-        out = output_dir()
-        wd = work_dir()
-        run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        generated: list[Path] = []
+        run_dir = None
+        wd = None
         try:
+            out = output_dir()
+            wd = work_dir()
+            run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
+            run_dir.mkdir(parents=True, exist_ok=True)
+            generated: list[Path] = []
             extra_backs = self._resolve_extra_backs()
             crop_map = self._build_crop_map()
             if plan_ is not None:
-                jobs = plan_.jobs
-                last_idx = len(jobs) - 1
-                for i, job in enumerate(jobs, start=1):
-                    if self.cancel_event.is_set():
-                        raise Cancelled()
-                    is_last = (i - 1 == last_idx)
-                    extra_label = (
-                        f" + {len(self.local_fronts)} local(es)"
-                        if is_last and self.local_fronts else ""
-                    )
-                    label = job.base_name + (" (fusión)" if job.is_merged else "") + extra_label
-                    self.events.put(("file", i, len(jobs), label))
-                    def cb(stage, done, total, _label=label):
-                        self.events.put(("progress", stage, done, total, _label))
-                    extra_kwargs = {}
-                    if is_last and self.local_fronts:
-                        extra_kwargs["extra_fronts"] = list(self.local_fronts)
-                        extra_kwargs["extra_backs"] = list(extra_backs)
-                        extra_kwargs["local_crop_map"] = dict(crop_map)
-                    if job.is_merged:
-                        pdfs = run_merged(
-                            job.xml_paths, run_dir, job.base_name, wd, cb,
-                            cancel_event=self.cancel_event, **extra_kwargs,
-                        )
-                    else:
-                        pdfs = run(
-                            job.xml_paths[0], run_dir, wd, cb,
-                            cancel_event=self.cancel_event, **extra_kwargs,
-                        )
-                    generated.extend(pdfs)
+                # label shown during download/crop (global phases)
+                _pdf_label = [""]
+
+                def cb(stage, done, total):
+                    name = _pdf_label[0] if stage == "pdf" else "Todas las imágenes"
+                    self.events.put(("progress", stage, done, total, name))
+
+                def on_job_pdf_start(job_idx, total_jobs, job_name):
+                    job = next((j for j in plan_.jobs if j.base_name == job_name), None)
+                    label = job_name + (" (fusión)" if job and job.is_merged else "")
+                    _pdf_label[0] = label
+                    self.events.put(("file", job_idx, total_jobs, label))
+
+                def on_xml_download_progress(xml_name, done, total):
+                    self.events.put(("xml_download_progress", xml_name, done, total))
+
+                def on_xml_crop_progress(xml_name, done, total):
+                    self.events.put(("xml_crop_progress", xml_name, done, total))
+
+                pdfs = run_plan(
+                    plan_.jobs, run_dir, wd, cb,
+                    cancel_event=self.cancel_event,
+                    extra_fronts=list(self.local_fronts) or None,
+                    extra_backs=list(extra_backs) or None,
+                    local_crop_map=dict(crop_map) or None,
+                    on_job_pdf_start=on_job_pdf_start,
+                    on_xml_download_progress=on_xml_download_progress,
+                    on_xml_crop_progress=on_xml_crop_progress,
+                )
+                generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
             else:
                 # Locals-only run. Back #1 acts as the default cardback.
@@ -668,6 +784,10 @@ class App:
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.events.put(("done", generated, manifest, run_dir))
+        except DownloadPermissionError as e:
+            self.events.put(("permission_error", e.card_name, e.xml_name, e.position))
+        except DownloadTimeoutError as e:
+            self.events.put(("timeout_error", e.card_name, e.xml_name, e.position))
         except Cancelled:
             self.events.put(("cancelled", run_dir, wd))
         except Exception as e:
@@ -713,14 +833,55 @@ class App:
             self.status_var.set(f"Listo. {len(pdfs)} PDF(s) generados en {run_dir.name}.{extra}")
             self._finish_running()
             self._open_output_folder(run_dir)
+        elif kind == "xml_download_progress":
+            _, xml_name, done, total = ev
+            self._show_xml_download_progress(xml_name, done, total)
+        elif kind == "xml_crop_progress":
+            _, xml_name, done, total = ev
+            self._show_xml_crop_progress(xml_name, done, total)
         elif kind == "cancelled":
             _, run_dir, wd = ev
-            self._cleanup_run_dir(run_dir)
-            if not self.keep_cache.get():
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            if wd is not None and not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.progress["value"] = 0
             self.status_var.set("Proceso detenido.")
             self._finish_running()
+        elif kind == "permission_error":
+            _, card_name, xml_name, position = ev
+            parts = [f"Se ha fallado descargando «{card_name}»"]
+            if xml_name:
+                parts[0] += f" en el {xml_name}"
+            if position:
+                parts[0] += f" que está en la posición {position}."
+            else:
+                parts[0] += "."
+            parts.append(
+                "Esto no es un fallo del programa: le han quitado los permisos "
+                "de acceso público a la imagen en Google Drive.\n"
+                "Pide al creador del proxy que restaure los permisos."
+            )
+            self.status_var.set("Error de descarga.")
+            self._finish_running()
+            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+        elif kind == "timeout_error":
+            _, card_name, xml_name, position = ev
+            parts = [f"Se ha agotado el tiempo de espera descargando «{card_name}»"]
+            if xml_name:
+                parts[0] += f" en el {xml_name}"
+            if position:
+                parts[0] += f" que está en la posición {position}."
+            else:
+                parts[0] += "."
+            parts.append(
+                "La descarga no recibió datos durante 30 segundos y se canceló.\n"
+                "Puede ser un problema temporal de Google Drive o de tu conexión.\n"
+                "Vuelve a intentarlo en unos minutos."
+            )
+            self.status_var.set("Error de descarga (tiempo agotado).")
+            self._finish_running()
+            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
         elif kind == "error":
             _, msg = ev
             self.status_var.set("Error durante la generación.")
