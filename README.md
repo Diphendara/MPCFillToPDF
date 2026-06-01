@@ -1,5 +1,5 @@
 # Tutorial
-Si buscas un tutorial mira aquí -> https://github.com/Diphendara/MPCFillToPDF/wiki/Tutorial
+Si buscas un tutorial mira aquí -> [https://github.com/Diphendara/MPCFillToPDF/wiki/Tutorial](https://github.com/Diphendara/MPCFillToPDF/wiki/1-%E2%80%90-Tutorial)
 
 # Sugerencias, bugs etc
 Puedes buscarme en twitter/bsky como @diphendara o abrirme una issue por github
