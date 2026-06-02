@@ -90,9 +90,9 @@ def plan(reports: list[XmlReport], local_count: int = 0) -> Plan:
     """Decide how XMLs map to PDFs.
 
     - Each XML whose deck is already a multiple of 9 becomes a solo job.
-    - All unaligned XMLs are checked: if their combined total is a multiple
-      of 9 they are fused into a single merged job (named `<a>_<b>_..._union`).
-    - Otherwise each unaligned XML becomes a solo job.
+    - Multiple unaligned XMLs are always fused into a single merged job
+      (named `<a>_<b>_..._union`) to consolidate blank slots into one PDF.
+    - A single unaligned XML becomes a solo job.
     - `local_count` is the number of local fronts that will be appended to the
       LAST job — included in that job's blank-slot calculation.
     """
@@ -104,14 +104,16 @@ def plan(reports: list[XmlReport], local_count: int = 0) -> Plan:
 
     if unaligned:
         total_unaligned = sum(r.cards for r in unaligned)
-        if total_unaligned % CARDS_PER_PAGE == 0:
+        if len(unaligned) == 1:
+            jobs.append(PdfJob([unaligned[0].path], unaligned[0].path.stem, unaligned[0].cards))
+        else:
+            # Always merge multiple unaligned XMLs to consolidate blank slots into one PDF.
+            # Even when the total isn't divisible by 9, merging is better than producing
+            # several PDFs each with their own wasted slots.
             ordered = sorted(unaligned, key=lambda r: -r.cards)
             base = "_".join(r.path.stem for r in ordered) + "_union"
             jobs.append(PdfJob([r.path for r in ordered], base, total_unaligned))
             merged_xmls = ordered
-        else:
-            for r in unaligned:
-                jobs.append(PdfJob([r.path], r.path.stem, r.cards))
 
     if local_count > 0 and jobs:
         jobs[-1].extra_locals = local_count
@@ -122,7 +124,7 @@ def plan(reports: list[XmlReport], local_count: int = 0) -> Plan:
 def format_merge_info(plan_: Plan) -> str | None:
     if not plan_.has_merge:
         return None
-    lines = ["Se fusionarán las siguientes barajas para evitar huecos en blanco:"]
+    lines = ["Se fusionarán las siguientes barajas para reducir huecos en blanco:"]
     for job in plan_.jobs:
         if not job.is_merged:
             continue

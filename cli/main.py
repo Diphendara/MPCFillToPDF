@@ -12,7 +12,8 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
-from src.pipeline import run, run_merged, run_locals_only
+from src.downloader import DownloadPermissionError, DownloadTimeoutError
+from src.pipeline import run_plan, run_locals_only
 from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 
@@ -60,6 +61,19 @@ def _cleanup(workdir: Path) -> None:
         target = workdir / sub
         if target.exists():
             shutil.rmtree(target)
+
+
+def _print_permission_error(e: DownloadPermissionError) -> None:
+    print(file=sys.stderr)
+    print(f"Error de descarga: no se pudo obtener «{e.card_name}»", file=sys.stderr)
+    if e.xml_name:
+        print(f"  Archivo XML: {e.xml_name}", file=sys.stderr)
+    if e.position:
+        print(f"  Posición en el PDF: {e.position}", file=sys.stderr)
+    print(file=sys.stderr)
+    print("Esto no es un fallo del programa.", file=sys.stderr)
+    print("La imagen ha perdido los permisos de acceso público en Google Drive.", file=sys.stderr)
+    print("Pide al creador del proxy que restaure los permisos.", file=sys.stderr)
 
 
 def main() -> None:
@@ -188,46 +202,66 @@ def main() -> None:
 
     overall_start = time.time()
 
-    if plan_ is not None:
-        last_idx = len(plan_.jobs) - 1
-        for i, job in enumerate(plan_.jobs):
-            is_last = (i == last_idx)
-            label = job.base_name + (" (fusión)" if job.is_merged else "")
-            if is_last and local_fronts:
-                label += f" + {len(local_fronts)} local(es)"
-            print(f"\nProcesando: {label}")
-            _stage_started_at.clear()
-            kwargs = {}
-            if is_last and local_fronts:
-                kwargs["extra_fronts"] = local_fronts
-                if local_backs:
-                    kwargs["extra_backs"] = local_backs
-                kwargs["local_crop_map"] = {
-                    p: args.local_needs_crop
-                    for p in (*local_fronts, *local_backs)
-                }
-            if job.is_merged:
-                pdfs = run_merged(job.xml_paths, run_dir, job.base_name, workdir, _progress, **kwargs)
-            else:
-                pdfs = run(job.xml_paths[0], run_dir, workdir, _progress, **kwargs)
+    try:
+        if plan_ is not None:
+            job_labels = {
+                j.base_name: j.base_name + (" (fusión)" if j.is_merged else "")
+                for j in plan_.jobs
+            }
+
+            def on_job_pdf_start(job_idx, total_jobs, job_name):
+                label = job_labels.get(job_name, job_name)
+                if job_idx == 1 and local_fronts:
+                    # Only last job gets locals; adjust label if it's also last
+                    pass
+                last_job_name = plan_.jobs[-1].base_name
+                if job_name == last_job_name and local_fronts:
+                    label += f" + {len(local_fronts)} local(es)"
+                print(f"\nGenerando PDF: {label}")
+                _stage_started_at.clear()
+
+            pdfs = run_plan(
+                plan_.jobs, run_dir, workdir, _progress,
+                cancel_event=None,
+                extra_fronts=local_fronts or None,
+                extra_backs=local_backs or None,
+                local_crop_map={p: args.local_needs_crop for p in (*local_fronts, *local_backs)} or None,
+                on_job_pdf_start=on_job_pdf_start,
+            )
             for p in pdfs:
                 size_mb = p.stat().st_size / (1024 * 1024)
                 print(f"  -> {p}  ({size_mb:.1f} MB)")
-    else:
-        # No XMLs: a single locals-only job.
-        print(f"\nProcesando: {args.locals_base_name} (solo imágenes locales)")
-        _stage_started_at.clear()
-        all_locals = [*local_fronts, *local_backs]
-        if local_cardback is not None:
-            all_locals.append(local_cardback)
-        pdfs = run_locals_only(
-            local_fronts, local_cardback, run_dir, args.locals_base_name,
-            workdir, _progress, extra_backs=local_backs or None,
-            local_crop_map={p: args.local_needs_crop for p in all_locals},
-        )
-        for p in pdfs:
-            size_mb = p.stat().st_size / (1024 * 1024)
-            print(f"  -> {p}  ({size_mb:.1f} MB)")
+        else:
+            # No XMLs: a single locals-only job.
+            print(f"\nProcesando: {args.locals_base_name} (solo imágenes locales)")
+            _stage_started_at.clear()
+            all_locals = [*local_fronts, *local_backs]
+            if local_cardback is not None:
+                all_locals.append(local_cardback)
+            pdfs = run_locals_only(
+                local_fronts, local_cardback, run_dir, args.locals_base_name,
+                workdir, _progress, extra_backs=local_backs or None,
+                local_crop_map={p: args.local_needs_crop for p in all_locals},
+            )
+            for p in pdfs:
+                size_mb = p.stat().st_size / (1024 * 1024)
+                print(f"  -> {p}  ({size_mb:.1f} MB)")
+
+    except DownloadPermissionError as e:
+        _print_permission_error(e)
+        sys.exit(1)
+    except DownloadTimeoutError as e:
+        print(file=sys.stderr)
+        print(f"Error de descarga (tiempo agotado): «{e.card_name}»", file=sys.stderr)
+        if e.xml_name:
+            print(f"  Archivo XML: {e.xml_name}", file=sys.stderr)
+        if e.position:
+            print(f"  Posición en el PDF: {e.position}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("La descarga no recibió datos durante 30 segundos y se canceló.", file=sys.stderr)
+        print("Puede ser un problema temporal de Google Drive o de tu conexión.", file=sys.stderr)
+        print("Vuelve a intentarlo en unos minutos.", file=sys.stderr)
+        sys.exit(1)
 
     manifest = write_manifest(plan_, reports, run_dir) if plan_ is not None else None
     if manifest:

@@ -1,10 +1,11 @@
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
 from src.cancellation import Cancelled
 from src.parser import parse, CardOrder
-from src.downloader import download_all
+from src.downloader import download_all, DownloadPermissionError, DownloadTimeoutError
 from src.cropper import process_for_pdf
 from src.pdf_generator import generate
 
@@ -147,18 +148,29 @@ def _run_xmls(
     back_slot_to_id: dict[int, str] = {}
     id_name_map: dict[str, str] = {}
     local_id_to_path: dict[str, Path] = {}
+    # drive_id → (xml_filename, 1-based slot position) for friendly error messages
+    drive_id_context: dict[str, tuple[str, int]] = {}
     next_slot = 0
-    for order in orders:
+    for path, order in zip(xml_paths, orders):
+        xml_name = path.name
         front_by_slot = {s: c.drive_id for c in order.fronts for s in c.slots}
         back_by_slot  = {s: c.drive_id for c in order.backs  for s in c.slots}
         for orig_slot in sorted(front_by_slot):
             new_slot = next_slot
             next_slot += 1
-            front_slot_to_id[new_slot] = front_by_slot[orig_slot]
+            fid = front_by_slot[orig_slot]
+            front_slot_to_id[new_slot] = fid
             back_slot_to_id[new_slot]  = back_by_slot.get(orig_slot, order.cardback_id)
+            if fid not in drive_id_context:
+                drive_id_context[fid] = (xml_name, new_slot + 1)
+            bid = back_slot_to_id[new_slot]
+            if bid not in drive_id_context:
+                drive_id_context[bid] = (xml_name, new_slot + 1)
         for card in order.fronts + order.backs:
             id_name_map[card.drive_id] = card.name
         id_name_map[order.cardback_id] = "cardback.jpg"
+        if order.cardback_id not in drive_id_context:
+            drive_id_context[order.cardback_id] = (xml_name, 0)
 
     # Cardback fallback used for local fronts without a paired back.
     if local_cardback_path is not None:
@@ -188,9 +200,15 @@ def _run_xmls(
         (did, name) for did, name in id_name_map.items()
         if did not in local_id_to_path
     ]
-    id_to_raw = download_all(
-        download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
-    )
+    try:
+        id_to_raw = download_all(
+            download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
+        )
+    except (DownloadPermissionError, DownloadTimeoutError) as e:
+        ctx = drive_id_context.get(e.drive_id)
+        if ctx:
+            e.xml_name, e.position = ctx
+        raise
     id_to_raw.update(local_id_to_path)
 
     # 3. Crop + mirror bleed
