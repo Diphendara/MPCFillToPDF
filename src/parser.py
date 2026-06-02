@@ -37,7 +37,10 @@ def _parse_slots(slots_text: str) -> list[int]:
 
 
 def parse(xml_path: str | Path) -> CardOrder:
-    tree = ET.parse(xml_path)
+    try:
+        tree = ET.parse(xml_path)
+    except ET.ParseError as exc:
+        raise ValueError(f"XML inválido en '{xml_path}': {exc}") from exc
     root = tree.getroot()
 
     details = root.find("details")

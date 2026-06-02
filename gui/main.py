@@ -668,10 +668,17 @@ class App:
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.events.put(("done", generated, manifest, run_dir))
+<<<<<<< Updated upstream
+=======
+        except DownloadPermissionError as e:
+            self.events.put(("permission_error", e.card_name, e.xml_name, e.position, run_dir, wd))
+        except DownloadTimeoutError as e:
+            self.events.put(("timeout_error", e.card_name, e.xml_name, e.position, run_dir, wd))
+>>>>>>> Stashed changes
         except Cancelled:
             self.events.put(("cancelled", run_dir, wd))
         except Exception as e:
-            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}"))
+            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir, wd))
 
     @staticmethod
     def _cleanup_workdir(wd: Path) -> None:
@@ -721,8 +728,57 @@ class App:
             self.progress["value"] = 0
             self.status_var.set("Proceso detenido.")
             self._finish_running()
+<<<<<<< Updated upstream
+=======
+        elif kind == "permission_error":
+            _, card_name, xml_name, position, run_dir, wd = ev
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            if wd is not None and not self.keep_cache.get():
+                self._cleanup_workdir(wd)
+            parts = [f"Se ha fallado descargando «{card_name}»"]
+            if xml_name:
+                parts[0] += f" en el {xml_name}"
+            if position:
+                parts[0] += f" que está en la posición {position}."
+            else:
+                parts[0] += "."
+            parts.append(
+                "Esto no es un fallo del programa: le han quitado los permisos "
+                "de acceso público a la imagen en Google Drive.\n"
+                "Pide al creador del proxy que restaure los permisos."
+            )
+            self.status_var.set("Error de descarga.")
+            self._finish_running()
+            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+        elif kind == "timeout_error":
+            _, card_name, xml_name, position, run_dir, wd = ev
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            if wd is not None and not self.keep_cache.get():
+                self._cleanup_workdir(wd)
+            parts = [f"Se ha agotado el tiempo de espera descargando «{card_name}»"]
+            if xml_name:
+                parts[0] += f" en el {xml_name}"
+            if position:
+                parts[0] += f" que está en la posición {position}."
+            else:
+                parts[0] += "."
+            parts.append(
+                "La descarga no recibió datos durante 30 segundos y se canceló.\n"
+                "Puede ser un problema temporal de Google Drive o de tu conexión.\n"
+                "Vuelve a intentarlo en unos minutos."
+            )
+            self.status_var.set("Error de descarga (tiempo agotado).")
+            self._finish_running()
+            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+>>>>>>> Stashed changes
         elif kind == "error":
-            _, msg = ev
+            _, msg, run_dir, wd = ev
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            if wd is not None and not self.keep_cache.get():
+                self._cleanup_workdir(wd)
             self.status_var.set("Error durante la generación.")
             self._finish_running()
             messagebox.showerror(APP_TITLE, msg)

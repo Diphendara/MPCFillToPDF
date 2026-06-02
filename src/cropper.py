@@ -59,7 +59,10 @@ def process_for_pdf(
     input_path = Path(input_path)
     if output_path.exists() and output_path.stat().st_mtime >= input_path.stat().st_mtime:
         return output_path
-    img = Image.open(input_path).convert("RGB")
+    try:
+        img = Image.open(input_path).convert("RGB")
+    except Exception as exc:
+        raise RuntimeError(f"No se puede abrir la imagen '{input_path}': {exc}") from exc
     trimmed = _crop_to_trim(img) if crop_borders else img
     cw, ch = trimmed.size
     bx = round(cw * BLEED_MM / CARD_W_MM)
@@ -72,7 +75,10 @@ def process_for_pdf(
 
 def crop_image(input_path: str | Path, output_path: str | Path) -> None:
     """Standalone crop to trim size (without bleed)."""
-    img = Image.open(input_path)
+    try:
+        img = Image.open(input_path)
+    except Exception as exc:
+        raise RuntimeError(f"No se puede abrir la imagen '{input_path}': {exc}") from exc
     trimmed = _crop_to_trim(img)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
