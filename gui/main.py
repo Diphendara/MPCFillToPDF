@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
 from src.downloader import DownloadPermissionError, DownloadTimeoutError
-from src.pipeline import run, run_merged, run_locals_only
+from src.pipeline import run, run_merged, run_locals_only, run_plan
 from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
 
 APP_TITLE = "MPCFillToPDF"
