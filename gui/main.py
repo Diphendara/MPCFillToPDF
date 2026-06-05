@@ -113,16 +113,26 @@ class App:
         bottom_controls.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
         self.keep_cache_cb = ttk.Checkbutton(
-            bottom_controls, text="Conservar caché de imágenes entre ejecuciones",
+            bottom_controls, text="Guardar en el PC las imágenes entre ejecuciones",
             variable=self.keep_cache,
         )
         self.keep_cache_cb.pack(anchor=tk.W)
 
         ttk.Separator(bottom_controls, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
 
-        self.generate_btn = ttk.Button(bottom_controls, text="Generar PDF(s)", command=self._start)
-        self.generate_btn.pack(fill=tk.X)
-        self.generate_btn.state(["disabled"])
+        self.soriano_btn = ttk.Button(
+            bottom_controls, text="Generar PDF con traseras (Para copisteria, con espejo horizontal)",
+            command=lambda: self._start(fronts_only=False),
+        )
+        self.soriano_btn.pack(fill=tk.X)
+        self.soriano_btn.state(["disabled"])
+
+        self.fronts_only_btn = ttk.Button(
+            bottom_controls, text="Generar PDF solo frontales",
+            command=lambda: self._start(fronts_only=True),
+        )
+        self.fronts_only_btn.pack(fill=tk.X, pady=(4, 0))
+        self.fronts_only_btn.state(["disabled"])
 
         self.stop_btn = ttk.Button(bottom_controls, text="Detener", command=self._request_stop)
 
@@ -634,9 +644,11 @@ class App:
             # locals-only requires at least one back (acts as the cardback)
             ready = True
         if ready and not self.running:
-            self.generate_btn.state(["!disabled"])
+            self.soriano_btn.state(["!disabled"])
+            self.fronts_only_btn.state(["!disabled"])
         else:
-            self.generate_btn.state(["disabled"])
+            self.soriano_btn.state(["disabled"])
+            self.fronts_only_btn.state(["disabled"])
 
     def _resolve_extra_backs(self) -> list[Path | None]:
         """One entry per local front: the explicit Path the user chose, or
@@ -663,7 +675,7 @@ class App:
             m[p] = c
         return m
 
-    def _start(self) -> None:
+    def _start(self, fronts_only: bool = False) -> None:
         if self.running:
             return
 
@@ -705,14 +717,15 @@ class App:
 
         self.running = True
         self.cancel_event.clear()
-        self.generate_btn.state(["disabled"])
+        self.soriano_btn.state(["disabled"])
+        self.fronts_only_btn.state(["disabled"])
         self.stop_btn.state(["!disabled"])
-        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.generate_btn)
+        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.fronts_only_btn)
         self.progress["value"] = 0
         self.status_var.set("Preparando…")
         self._reset_xml_download_progress()
         self.worker = threading.Thread(
-            target=self._work, args=(plan_, reports), daemon=True,
+            target=self._work, args=(plan_, reports, fronts_only), daemon=True,
         )
         self.worker.start()
 
@@ -723,7 +736,7 @@ class App:
         self.stop_btn.state(["disabled"])
         self.status_var.set("Cancelando…")
 
-    def _work(self, plan_, reports) -> None:
+    def _work(self, plan_, reports, fronts_only: bool = False) -> None:
         run_dir = None
         wd = None
         try:
@@ -763,6 +776,7 @@ class App:
                     on_job_pdf_start=on_job_pdf_start,
                     on_xml_download_progress=on_xml_download_progress,
                     on_xml_crop_progress=on_xml_crop_progress,
+                    fronts_only=fronts_only,
                 )
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
@@ -778,6 +792,7 @@ class App:
                     cancel_event=self.cancel_event,
                     extra_backs=list(extra_backs),
                     local_crop_map=dict(crop_map),
+                    fronts_only=fronts_only,
                 )
                 generated.extend(pdfs)
                 manifest = None
@@ -901,7 +916,6 @@ class App:
             messagebox.showerror(APP_TITLE, msg)
 
     def _finish_running(self) -> None:
-        """Return to idle state after done / cancelled / error."""
         self.running = False
         self.worker = None
         self.stop_btn.pack_forget()

@@ -24,6 +24,7 @@ def run(
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     """Single-XML pipeline: XML → one or more PDFs named after the XML stem.
 
@@ -39,7 +40,7 @@ def run(
     return _run_xmls(
         [xml_path], xml_path.stem, output_dir, work_dir, progress_callback, cancel_event,
         extra_fronts=extra_fronts, extra_backs=extra_backs,
-        local_crop_map=local_crop_map,
+        local_crop_map=local_crop_map, fronts_only=fronts_only,
     )
 
 
@@ -53,6 +54,7 @@ def run_merged(
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     """Multi-XML pipeline: concatenate the XMLs' fronts in order and emit one
     or more PDFs named `<base_name>.pdf` (or `<base_name>_1.pdf`, … when split).
@@ -65,7 +67,7 @@ def run_merged(
     return _run_xmls(
         paths, base_name, output_dir, work_dir, progress_callback, cancel_event,
         extra_fronts=extra_fronts, extra_backs=extra_backs,
-        local_crop_map=local_crop_map,
+        local_crop_map=local_crop_map, fronts_only=fronts_only,
     )
 
 
@@ -79,6 +81,7 @@ def run_locals_only(
     cancel_event: Event | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     """Generate PDF(s) only from local images (no XML).
 
@@ -91,6 +94,7 @@ def run_locals_only(
         [], base_name, output_dir, work_dir, progress_callback, cancel_event,
         extra_fronts=extra_fronts, extra_backs=extra_backs,
         local_cardback=local_cardback, local_crop_map=local_crop_map,
+        fronts_only=fronts_only,
     )
 
 
@@ -113,6 +117,7 @@ def _run_xmls(
     extra_backs: list[str | Path | None] | None = None,
     local_cardback: str | Path | None = None,
     local_crop_map: dict[Path, bool] | None = None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     extra_fronts = [Path(p) for p in (extra_fronts or [])]
     # extra_backs is parallel to extra_fronts; entries may be None to mean
@@ -244,9 +249,8 @@ def _run_xmls(
         front_slot_to_id, back_slot_to_id, id_to_bled,
         progress_callback=_cb("pdf"),
         cancel_event=cancel_event,
+        fronts_only=fronts_only,
     )
-<<<<<<< Updated upstream
-=======
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +352,7 @@ def run_plan(
     on_job_pdf_start=None,
     on_xml_download_progress=None,
     on_xml_crop_progress=None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     """Download ALL images first, then crop all, then generate each job's PDFs.
 
@@ -502,8 +507,8 @@ def run_plan(
             jd.front_slot_to_id, jd.back_slot_to_id, id_to_bled,
             progress_callback=_cb("pdf"),
             cancel_event=cancel_event,
+            fronts_only=fronts_only,
         )
         all_outputs.extend(outputs)
 
     return all_outputs
->>>>>>> Stashed changes

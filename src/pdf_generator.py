@@ -165,11 +165,14 @@ def generate(
     max_bytes: int = MAX_PDF_BYTES,
     progress_callback=None,
     cancel_event: Event | None = None,
+    fronts_only: bool = False,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
     bytes past `max_bytes` — i.e. we always cut on an even page so each
     chunk is independently duplex-ready.
+
+    When `fronts_only=True`, only front pages are emitted (no back pages).
 
     Output: `<base_name>.pdf` if a single chunk fits, otherwise
     `<base_name>_1.pdf`, `<base_name>_2.pdf`, …
@@ -225,12 +228,13 @@ def generate(
             _draw_page(c, padded, id_to_path, front_slot_to_id, page_label=str(pair_no))
             c.showPage()
 
-            mirrored = []
-            for row in range(ROWS):
-                mirrored.extend(reversed(padded[row * COLS:(row + 1) * COLS]))
+            if not fronts_only:
+                mirrored = []
+                for row in range(ROWS):
+                    mirrored.extend(reversed(padded[row * COLS:(row + 1) * COLS]))
 
-            _draw_page(c, mirrored, id_to_path, back_slot_to_id, page_label=f"{pair_no}B")
-            c.showPage()
+                _draw_page(c, mirrored, id_to_path, back_slot_to_id, page_label=f"{pair_no}B")
+                c.showPage()
 
             done_pairs += 1
             if progress_callback:
