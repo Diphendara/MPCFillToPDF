@@ -14,13 +14,20 @@ from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
 from src.downloader import DownloadPermissionError, DownloadTimeoutError
 from src.pipeline import run, run_merged, run_locals_only, run_plan
-from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
+from src.precheck import (
+    CARDS_PER_PAGE,
+    analyze,
+    format_merge_info,
+    format_warning,
+    plan,
+    write_manifest,
+)
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
     "download": "Descargando",
-    "crop":     "Recortando",
-    "pdf":      "Generando PDF",
+    "crop":     "Procesando imágenes",
+    "pdf":      "Generando PDF, Páginas",
 }
 
 IMAGE_FILETYPES = [
@@ -78,6 +85,7 @@ class App:
 
         self.xml_paths: list[Path] = []
         self._xml_rows: list[dict] = []
+        self._xml_card_counts: dict[Path, int] = {}
         self.local_fronts: list[Path] = []
         self.local_backs: list[Path] = []
         # Per-front back assignment: None = use XML cardback fallback.
@@ -237,9 +245,9 @@ class App:
         fronts_block.columnconfigure(0, weight=1)
         fronts_block.rowconfigure(1, weight=1)
 
+        self._fronts_header_var = tk.StringVar(value="Frontales (asignar trasera por carta):")
         ttk.Label(
-            fronts_block,
-            text="Frontales (asignar trasera por carta):",
+            fronts_block, textvariable=self._fronts_header_var,
         ).grid(row=0, column=0, sticky="w", pady=(2, 4))
 
         fronts_holder = ttk.Frame(fronts_block)
@@ -307,6 +315,13 @@ class App:
             if pp not in self.xml_paths:
                 self.xml_paths.append(pp)
                 added += 1
+                if pp not in self._xml_card_counts:
+                    try:
+                        rpts = analyze([pp])
+                        if rpts:
+                            self._xml_card_counts[pp] = rpts[0].cards
+                    except Exception:
+                        pass
         if added:
             self._refresh_xml_rows()
             self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
@@ -314,12 +329,14 @@ class App:
 
     def _remove_xml(self, idx: int) -> None:
         if 0 <= idx < len(self.xml_paths):
+            self._xml_card_counts.pop(self.xml_paths[idx], None)
             del self.xml_paths[idx]
             self._refresh_xml_rows()
             self._refresh_generate_state()
 
     def _clear_xmls(self) -> None:
         self.xml_paths.clear()
+        self._xml_card_counts.clear()
         self._refresh_xml_rows()
         self._refresh_generate_state()
 
@@ -342,19 +359,25 @@ class App:
                 frame, text=_ellipsize(xml_path.name, 32), anchor="w",
             ).grid(row=0, column=0, sticky="ew", padx=(4, 8))
 
+            card_count = self._xml_card_counts.get(xml_path)
+            cards_text = f"{card_count} cartas" if card_count is not None else ""
+            ttk.Label(frame, text=cards_text, foreground="#555", width=10, anchor="e").grid(
+                row=0, column=1, padx=(0, 8),
+            )
+
             pb = _XmlPb(frame)
-            pb.grid(row=0, column=1, padx=(0, 4))
+            pb.grid(row=0, column=2, padx=(0, 4))
             pb.grid_remove()
 
             count_var = tk.StringVar(value="")
             count_lbl = ttk.Label(frame, textvariable=count_var, width=9, anchor="e")
-            count_lbl.grid(row=0, column=2, padx=(0, 4))
+            count_lbl.grid(row=0, column=3, padx=(0, 4))
             count_lbl.grid_remove()
 
             ttk.Button(
                 frame, text="✕", width=2,
                 command=lambda idx=i: self._remove_xml(idx),
-            ).grid(row=0, column=3, padx=(0, 2))
+            ).grid(row=0, column=4, padx=(0, 2))
 
             self._xml_rows.append({
                 "frame": frame, "pb": pb,
@@ -546,6 +569,7 @@ class App:
 
         if not self.local_fronts:
             self._fronts_empty_label.pack(anchor="w")
+            self._fronts_header_var.set("Frontales (asignar trasera por carta):")
             return
         self._fronts_empty_label.pack_forget()
 
@@ -606,6 +630,11 @@ class App:
         # Keep scrollregion fresh after layout settles.
         self.fronts_inner.update_idletasks()
         self.fronts_canvas.configure(scrollregion=self.fronts_canvas.bbox("all"))
+
+        total = len(self.local_fronts)
+        self._fronts_header_var.set(
+            f"Frontales (asignar trasera por carta):   Actualmente: {total} cartas"
+        )
 
     # ------------------------------------------------------------------
     # Mousewheel scroll over the active row list
@@ -713,6 +742,21 @@ class App:
                     warning + "\n\n¿Continuar de todos modos?",
                     icon=messagebox.WARNING,
                 ):
+                    return
+        else:
+            # Locals-only: warn if total fronts is not a multiple of 9
+            total = len(self.local_fronts)
+            rem = total % CARDS_PER_PAGE
+            if rem:
+                blanks = CARDS_PER_PAGE - rem
+                s = "hueco" if blanks == 1 else "huecos"
+                warning = (
+                    f"Aviso: {total} carta(s) no es múltiplo de 9.\n"
+                    f"La última página tendrá {blanks} {s} en blanco "
+                    "(la imprenta cobra la página entera aunque no esté llena)."
+                    "\n\n¿Continuar de todos modos?"
+                )
+                if not messagebox.askyesno(APP_TITLE, warning, icon=messagebox.WARNING):
                     return
 
         self.running = True
