@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
-from src.downloader import DownloadPermissionError, DownloadTimeoutError
+from src.downloader import DownloadPermissionError, DownloadRateLimitError, DownloadTimeoutError
 from src.pipeline import run, run_merged, run_locals_only, run_plan
 from src.precheck import (
     CARDS_PER_PAGE,
@@ -843,6 +843,8 @@ class App:
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
             self.events.put(("done", generated, manifest, run_dir))
+        except DownloadRateLimitError:
+            self.events.put(("rate_limit_error", run_dir, wd))
         except DownloadPermissionError as e:
             self.events.put(("permission_error", e.card_name, e.xml_name, e.position, run_dir, wd))
         except DownloadTimeoutError as e:
@@ -907,6 +909,21 @@ class App:
             self.progress["value"] = 0
             self.status_var.set("Proceso detenido.")
             self._finish_running()
+        elif kind == "rate_limit_error":
+            _, run_dir, wd = ev
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            if wd is not None and not self.keep_cache.get():
+                self._cleanup_workdir(wd)
+            self.status_var.set("Error: demasiadas descargas en poco tiempo.")
+            self._finish_running()
+            messagebox.showerror(
+                APP_TITLE,
+                "Se están intentando descargar demasiadas imágenes en poco tiempo, "
+                "espera un rato y vuelve a intentar.\n\n"
+                "Por favor selecciona «Guardar en el PC las imágenes entre ejecuciones» "
+                "así evitamos volver a descargarlas cada vez.",
+            )
         elif kind == "permission_error":
             _, card_name, xml_name, position, run_dir, wd = ev
             if run_dir is not None:

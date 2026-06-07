@@ -1,4 +1,5 @@
 import functools
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Event
@@ -14,6 +15,8 @@ except ImportError:
     _GdownPermissionError = None
 
 THREADS = 5
+_MAX_RETRIES = 4
+_INITIAL_BACKOFF = 1.0  # seconds; doubles on each retry (1 → 2 → 4 → 8)
 
 # Per-image download timeouts.  The read timeout fires only when *no data is
 # received* for that many seconds — it does not limit total download time, so
@@ -36,6 +39,11 @@ def _install_download_timeout() -> None:
 
 
 _install_download_timeout()
+
+
+class DownloadRateLimitError(Exception):
+    """Raised when Google Drive rate-limits us and all retries are exhausted."""
+    pass
 
 
 class DownloadPermissionError(Exception):
@@ -64,6 +72,18 @@ def _drive_url(drive_id: str) -> str:
     return f"https://drive.google.com/uc?id={drive_id}"
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    keywords = ("429", "too many", "quota", "rate limit", "try again later",
+                 "limit exceeded", "503", "service unavailable")
+    if any(kw in msg for kw in keywords):
+        return True
+    resp = getattr(exc, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) in (429, 503):
+        return True
+    return False
+
+
 def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Use the drive_id as the stem to avoid filesystem issues with card names
@@ -71,19 +91,30 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
     output_path = dest_dir / f"{drive_id}{suffix}"
     if output_path.exists():
         return output_path
-    try:
-        gdown.download(_drive_url(drive_id), str(output_path), quiet=True)
-    except requests.exceptions.Timeout:
-        raise DownloadTimeoutError(drive_id, filename)
-    except Exception as exc:
-        is_permission = (
-            (_GdownPermissionError is not None and isinstance(exc, _GdownPermissionError))
-            or "FileURLRetrievalError" in type(exc).__name__
-        )
-        if is_permission:
-            raise DownloadPermissionError(drive_id, filename) from exc
-        raise
-    return output_path
+
+    delay = _INITIAL_BACKOFF
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            gdown.download(_drive_url(drive_id), str(output_path), quiet=True)
+            return output_path
+        except requests.exceptions.Timeout:
+            raise DownloadTimeoutError(drive_id, filename)
+        except Exception as exc:
+            is_permission = (
+                (_GdownPermissionError is not None and isinstance(exc, _GdownPermissionError))
+                or "FileURLRetrievalError" in type(exc).__name__
+            )
+            if is_permission:
+                raise DownloadPermissionError(drive_id, filename) from exc
+            if _is_rate_limit_error(exc):
+                if attempt < _MAX_RETRIES:
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                raise DownloadRateLimitError() from exc
+            raise
+
+    raise DownloadRateLimitError()
 
 
 def download_all(
