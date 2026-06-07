@@ -1,6 +1,9 @@
+import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +40,7 @@ def _parse_slots(slots_text: str) -> list[int]:
 
 
 def parse(xml_path: str | Path) -> CardOrder:
+    _log.debug("Parsing %s", xml_path)
     try:
         tree = ET.parse(xml_path)
     except ET.ParseError as exc:
@@ -52,16 +56,30 @@ def parse(xml_path: str | Path) -> CardOrder:
             return []
         cards = []
         for card_el in section.findall("card"):
-            cards.append(CardImage(
-                drive_id=card_el.findtext("id", "").strip(),
-                name=card_el.findtext("name", "").strip(),
-                slots=_parse_slots(card_el.findtext("slots", "")),
-            ))
+            drive_id = card_el.findtext("id", "").strip()
+            name = card_el.findtext("name", "").strip()
+            slots_text = card_el.findtext("slots", "")
+            if not drive_id:
+                raise ValueError(
+                    f"Carta sin ID de Drive en <{section_tag}> "
+                    f"(slots: '{slots_text.strip() or 'desconocidos'}', "
+                    f"nombre: '{name or 'sin nombre'}')"
+                )
+            cards.append(CardImage(drive_id=drive_id, name=name, slots=_parse_slots(slots_text)))
         return cards
 
-    return CardOrder(
+    cardback_id = root.findtext("cardback", "").strip()
+    if not cardback_id:
+        raise ValueError("El XML no tiene un <cardback> definido o está vacío.")
+
+    order = CardOrder(
         quantity=quantity,
         fronts=parse_cards("fronts"),
         backs=parse_cards("backs"),
-        cardback_id=root.findtext("cardback", "").strip(),
+        cardback_id=cardback_id,
     )
+    _log.debug(
+        "Parsed %s: %d fronts, %d backs, quantity=%d",
+        Path(xml_path).name, len(order.fronts), len(order.backs), quantity,
+    )
+    return order

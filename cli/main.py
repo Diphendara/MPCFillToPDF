@@ -1,4 +1,5 @@
 import argparse
+import logging
 import shutil
 import sys
 import time
@@ -14,7 +15,10 @@ for _stream in (sys.stdout, sys.stderr):
 
 from src.downloader import DownloadPermissionError, DownloadTimeoutError
 from src.pipeline import run_plan, run_locals_only
-from src.precheck import analyze, plan, format_warning, format_merge_info, write_manifest
+from src.precheck import (
+    analyze, plan, format_warning, format_merge_info, write_manifest,
+    collect_drive_ids, check_drive_access,
+)
 
 
 SUPPORTED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -40,6 +44,7 @@ _stage_started_at: dict[str, float] = {}
 
 def _progress(stage: str, done: int, total: int) -> None:
     labels = {
+        "verify":   "Verificando",
         "download": "Descargando",
         "crop":     "Recortando ",
         "pdf":      "Generando  ",
@@ -74,6 +79,16 @@ def _print_permission_error(e: DownloadPermissionError) -> None:
     print("Esto no es un fallo del programa.", file=sys.stderr)
     print("La imagen ha perdido los permisos de acceso público en Google Drive.", file=sys.stderr)
     print("Pide al creador del proxy que restaure los permisos.", file=sys.stderr)
+
+
+def _setup_logging(log_path: Path, verbose: bool) -> None:
+    fmt = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+    handlers: list[logging.Handler] = [
+        logging.FileHandler(log_path, encoding="utf-8"),
+    ]
+    if verbose:
+        handlers.append(logging.StreamHandler(sys.stderr))
+    logging.basicConfig(level=logging.DEBUG, format=fmt, handlers=handlers)
 
 
 def main() -> None:
@@ -123,6 +138,14 @@ def main() -> None:
         help="Aplicar el recorte de bleed MPC a las imágenes locales "
              "(por defecto desactivado: se asume que ya están sin borde).",
     )
+    parser.add_argument(
+        "--fronts-only", action="store_true",
+        help="Generar solo páginas de frontales (sin páginas de traseras).",
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Mostrar mensajes de depuración en stderr además de escribirlos en el log.",
+    )
     args = parser.parse_args()
 
     local_fronts = _validate_local_images(args.local_fronts, "--local-fronts")
@@ -163,6 +186,7 @@ def main() -> None:
 
     run_dir = out_dir / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
     run_dir.mkdir(parents=True, exist_ok=True)
+    _setup_logging(run_dir / "run.log", args.verbose)
 
     if xmls:
         print(f"Encontrados {len(xmls)} XML(s) en '{xml_dir}'.")
@@ -181,6 +205,37 @@ def main() -> None:
     for r in reports:
         print(f"  - {r.path.name}: {r.cards} cartas"
               + (f"  ({r.blanks} hueco(s) en blanco)" if r.has_blanks else ""))
+
+    # --- Verify Drive access before downloading ----------------------------
+    if xmls:
+        all_ids = collect_drive_ids(xmls)
+        raw_dir = workdir / "raw"
+        to_check = [
+            (did, name) for did, name in all_ids
+            if not list(raw_dir.glob(f"{did}.*"))
+        ]
+        n_cached = len(all_ids) - len(to_check)
+        if to_check:
+            cache_note = f"  ({n_cached} en caché)" if n_cached else ""
+            print(f"\nVerificando XML{cache_note}:")
+            _progress("verify", 0, len(to_check))
+            inaccessible = check_drive_access(
+                to_check,
+                progress_callback=lambda d, t: _progress("verify", d, t),
+            )
+            if inaccessible:
+                print()
+                print(f"Aviso: {len(inaccessible)} carta(s) sin acceso público en Google Drive:")
+                for _, name in inaccessible:
+                    print(f"  • {name}")
+                if not args.yes:
+                    print()
+                    ans = input("¿Continuar de todos modos? [s/N]: ").strip().lower()
+                    if ans not in ("s", "si", "sí", "y", "yes"):
+                        print("Cancelado.")
+                        return
+        elif n_cached:
+            print(f"\nVerificando XML: omitida ({n_cached} imagen(es) ya en caché)")
 
     plan_ = plan(reports, local_count=len(local_fronts)) if reports else None
 
@@ -227,6 +282,7 @@ def main() -> None:
                 extra_backs=local_backs or None,
                 local_crop_map={p: args.local_needs_crop for p in (*local_fronts, *local_backs)} or None,
                 on_job_pdf_start=on_job_pdf_start,
+                fronts_only=args.fronts_only,
             )
             for p in pdfs:
                 size_mb = p.stat().st_size / (1024 * 1024)
@@ -242,6 +298,7 @@ def main() -> None:
                 local_fronts, local_cardback, run_dir, args.locals_base_name,
                 workdir, _progress, extra_backs=local_backs or None,
                 local_crop_map={p: args.local_needs_crop for p in all_locals},
+                fronts_only=args.fronts_only,
             )
             for p in pdfs:
                 size_mb = p.stat().st_size / (1024 * 1024)

@@ -1,4 +1,6 @@
 import hashlib
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -9,10 +11,66 @@ from src.downloader import download_all, DownloadPermissionError, DownloadTimeou
 from src.cropper import process_for_pdf
 from src.pdf_generator import generate
 
+CROP_THREADS = 5
+_log = logging.getLogger(__name__)
+
 
 def _check_cancel(cancel_event: Event | None) -> None:
     if cancel_event is not None and cancel_event.is_set():
         raise Cancelled()
+
+
+def _build_crop_tasks(
+    id_to_raw: dict[str, Path],
+    bled_dir: Path,
+    local_id_to_path: dict[str, Path],
+    crop_map: dict[Path, bool],
+) -> list[tuple[str, Path, Path, bool]]:
+    """Return (drive_id, raw_path, bled_path, crop_borders) for each image."""
+    tasks = []
+    for drive_id, raw_path in id_to_raw.items():
+        if drive_id in local_id_to_path:
+            local_path = local_id_to_path[drive_id]
+            crop_borders = crop_map.get(local_path, False)
+            suffix = raw_path.suffix.lower() or ".jpg"
+            tag = "" if crop_borders else "_nocrop"
+            bled_name = f"{drive_id}{tag}{suffix}"
+        else:
+            crop_borders = True
+            bled_name = raw_path.name
+        tasks.append((drive_id, raw_path, bled_dir / bled_name, crop_borders))
+    return tasks
+
+
+def _run_crop_parallel(
+    tasks: list[tuple[str, Path, Path, bool]],
+    cancel_event: Event | None,
+    on_done=None,  # (drive_id: str, done: int, total: int) → None
+) -> dict[str, Path]:
+    """Crop images in parallel using CROP_THREADS workers."""
+    total = len(tasks)
+    id_to_bled: dict[str, Path] = {}
+    done = 0
+    if not tasks:
+        return id_to_bled
+
+    with ThreadPoolExecutor(max_workers=CROP_THREADS) as executor:
+        futures = {
+            executor.submit(process_for_pdf, raw, bled, crop): did
+            for did, raw, bled, crop in tasks
+        }
+        for future in as_completed(futures):
+            if cancel_event is not None and cancel_event.is_set():
+                for f in futures:
+                    f.cancel()
+                raise Cancelled()
+            drive_id = futures[future]
+            id_to_bled[drive_id] = future.result()
+            done += 1
+            if on_done:
+                on_done(drive_id, done, total)
+
+    return id_to_bled
 
 
 def run(
@@ -205,6 +263,10 @@ def _run_xmls(
         (did, name) for did, name in id_name_map.items()
         if did not in local_id_to_path
     ]
+    _log.info("Phase 2 — download: %d images (%d local)", len(download_pairs), len(local_id_to_path))
+
+    if progress_callback and download_pairs:
+        progress_callback("download", 0, len(download_pairs))
     try:
         id_to_raw = download_all(
             download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
@@ -216,33 +278,22 @@ def _run_xmls(
         raise
     id_to_raw.update(local_id_to_path)
 
-    # 3. Crop + mirror bleed
-    total = len(id_to_raw)
-    id_to_bled: dict[str, Path] = {}
-    for i, (drive_id, raw_path) in enumerate(id_to_raw.items(), start=1):
-        _check_cancel(cancel_event)
-        is_local = drive_id in local_id_to_path
-        if is_local:
-            local_path = local_id_to_path[drive_id]
-            crop_borders = crop_map.get(local_path, False)
-            # Two local files may share a basename — key the bled output
-            # by the synthetic id so they don't overwrite each other. The
-            # `_nocrop` suffix keeps cached output for both crop modes.
-            suffix = raw_path.suffix.lower() or ".jpg"
-            tag = "" if crop_borders else "_nocrop"
-            bled_name = f"{drive_id}{tag}{suffix}"
-        else:
-            crop_borders = True
-            bled_name = raw_path.name
-        id_to_bled[drive_id] = process_for_pdf(
-            raw_path, bled_dir / bled_name, crop_borders=crop_borders,
-        )
+    # 3. Crop + mirror bleed (parallel)
+    _log.info("Phase 3 — crop: %d images", len(id_to_raw))
+    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, local_id_to_path, crop_map)
+
+    def _on_crop(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
-            progress_callback("crop", i, total)
+            progress_callback("crop", done, total)
+
+    if progress_callback and crop_tasks:
+        progress_callback("crop", 0, len(crop_tasks))
+    id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop)
 
     _check_cancel(cancel_event)
 
     # 4. Generate PDF(s)
+    _log.info("Phase 4 — generate PDF: %s (%d slots)", base_name, len(front_slot_to_id))
     ordered_slots = sorted(front_slot_to_id.keys())
     return generate(
         output_dir, base_name, ordered_slots,
@@ -438,6 +489,8 @@ def run_plan(
             _xml_done[xml_name] += 1
             on_xml_download_progress(xml_name, _xml_done[xml_name], _xml_totals[xml_name])
 
+    if progress_callback and download_pairs:
+        progress_callback("download", 0, len(download_pairs))
     try:
         id_to_raw = download_all(
             download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
@@ -452,10 +505,7 @@ def run_plan(
 
     _check_cancel(cancel_event)
 
-    # --- Phase 3: crop all images -----------------------------------------------
-    total_imgs = len(id_to_raw)
-    id_to_bled: dict[str, Path] = {}
-
+    # --- Phase 3: crop all images (parallel) ------------------------------------
     # Per-XML crop progress tracking
     _raw_ids_set = set(id_to_raw.keys())
     _xml_crop_totals = {
@@ -464,34 +514,25 @@ def run_plan(
         if ids & _raw_ids_set
     }
     _xml_crop_done: dict[str, int] = {name: 0 for name in _xml_crop_totals}
-    # Precompute reverse map: drive_id → xml_names that track it (O(1) dispatch)
     _crop_id_to_xml: dict[str, list[str]] = {}
     for _xname, _xids in combined_xml_ids.items():
         if _xname in _xml_crop_totals:
             for _did in _xids & _raw_ids_set:
                 _crop_id_to_xml.setdefault(_did, []).append(_xname)
 
-    for idx, (drive_id, raw_path) in enumerate(id_to_raw.items(), start=1):
-        _check_cancel(cancel_event)
-        is_local = drive_id in combined_locals
-        if is_local:
-            local_path   = combined_locals[drive_id]
-            crop_borders = crop_map.get(local_path, False)
-            suffix       = raw_path.suffix.lower() or ".jpg"
-            tag          = "" if crop_borders else "_nocrop"
-            bled_name    = f"{drive_id}{tag}{suffix}"
-        else:
-            crop_borders = True
-            bled_name    = raw_path.name
-        id_to_bled[drive_id] = process_for_pdf(
-            raw_path, bled_dir / bled_name, crop_borders=crop_borders,
-        )
+    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, combined_locals, crop_map)
+
+    def _on_crop_plan(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
-            progress_callback("crop", idx, total_imgs)
+            progress_callback("crop", done, total)
         if on_xml_crop_progress:
             for xml_name in _crop_id_to_xml.get(drive_id, []):
                 _xml_crop_done[xml_name] += 1
                 on_xml_crop_progress(xml_name, _xml_crop_done[xml_name], _xml_crop_totals[xml_name])
+
+    if progress_callback and crop_tasks:
+        progress_callback("crop", 0, len(crop_tasks))
+    id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop_plan)
 
     _check_cancel(cancel_event)
 

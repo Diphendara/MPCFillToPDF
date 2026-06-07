@@ -57,6 +57,7 @@ def main() -> None:
         "--hidden-import=PIL.Image",
         "--hidden-import=reportlab.pdfgen",
         "--hidden-import=gdown",
+        "--hidden-import=windnd",
         str(ENTRY),
     ]
     print("Running:", " ".join(args))

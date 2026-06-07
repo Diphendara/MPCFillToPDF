@@ -1,22 +1,36 @@
 """MPCFillToPDF GUI — pick XML(s) and optional local images, run the pipeline,
 open the output folder."""
+import io
+import logging
 import os
 import queue
 import shutil
+import sys
 import threading
 import tkinter as tk
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+try:
+    import windnd
+    _WINDND_AVAILABLE = True
+except ImportError:
+    _WINDND_AVAILABLE = False
+
+from PIL import Image, ImageTk
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
 from src.downloader import DownloadPermissionError, DownloadRateLimitError, DownloadTimeoutError
+from src.parser import parse, CardOrder
 from src.pipeline import run, run_merged, run_locals_only, run_plan
 from src.precheck import (
     CARDS_PER_PAGE,
     analyze,
+    check_drive_access,
+    collect_drive_ids,
     format_merge_info,
     format_warning,
     plan,
@@ -25,6 +39,7 @@ from src.precheck import (
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
+    "verify":   "Verificando XML",
     "download": "Descargando",
     "crop":     "Procesando imágenes",
     "pdf":      "Generando PDF, Páginas",
@@ -76,6 +91,118 @@ class _XmlPb(tk.Canvas):
         self.itemconfigure(self._lbl, text=text)
 
 
+class PreviewWindow(tk.Toplevel):
+    _THUMB_W = 80
+    _THUMB_H = 112
+    _COLS = 4
+    _THUMB_URL = "https://drive.google.com/thumbnail?id={}&sz=w80"
+
+    def __init__(self, parent: tk.Misc, xml_path: Path, order: CardOrder) -> None:
+        super().__init__(parent)
+        self.title(f"Vista previa — {xml_path.name}")
+        self.geometry("700x520")
+        self.resizable(True, True)
+
+        self._cancel = threading.Event()
+        self._pending: queue.Queue = queue.Queue()
+        self._photo_refs: list = []
+
+        placeholder = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (210, 210, 210))
+        self._placeholder_photo = ImageTk.PhotoImage(placeholder)
+
+        frame = ttk.Frame(self)
+        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        inner = ttk.Frame(canvas)
+        wid = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(wid, width=e.width))
+
+        self._img_labels: list[tk.Label] = []
+        for idx, card in enumerate(order.fronts):
+            r, c = divmod(idx, self._COLS)
+            cell = ttk.Frame(inner, relief=tk.RIDGE, borderwidth=1)
+            cell.grid(row=r, column=c, padx=4, pady=4)
+
+            lbl_img = tk.Label(cell, image=self._placeholder_photo, bg="#d2d2d2")
+            lbl_img.pack()
+            self._img_labels.append(lbl_img)
+
+            name = _ellipsize(card.name, 12) if card.name else "(sin nombre)"
+            tk.Label(cell, text=name, font=("Segoe UI", 7), wraplength=self._THUMB_W).pack()
+            count = len(card.slots)
+            if count > 1:
+                tk.Label(cell, text=f"x{count}", font=("Segoe UI", 7, "bold"),
+                         fg="#555").pack()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(80, self._drain)
+
+        self._executor = ThreadPoolExecutor(max_workers=4)
+        threading.Thread(target=self._load_all, args=(order,), daemon=True).start()
+
+    def _fetch(self, drive_id: str) -> bytes:
+        import requests as _req
+        resp = _req.get(self._THUMB_URL.format(drive_id), timeout=(5, 15))
+        resp.raise_for_status()
+        return resp.content
+
+    def _load_all(self, order: CardOrder) -> None:
+        futs = {
+            self._executor.submit(self._fetch, card.drive_id): idx
+            for idx, card in enumerate(order.fronts)
+        }
+        for fut in as_completed(futs):
+            if self._cancel.is_set():
+                break
+            idx = futs[fut]
+            try:
+                self._pending.put((idx, fut.result()))
+            except Exception:
+                pass
+
+    def _drain(self) -> None:
+        if self._cancel.is_set():
+            return
+        try:
+            while True:
+                idx, data = self._pending.get_nowait()
+                self._apply(idx, data)
+        except queue.Empty:
+            pass
+        finally:
+            if not self._cancel.is_set():
+                self.after(80, self._drain)
+
+    def _apply(self, idx: int, data: bytes) -> None:
+        if idx >= len(self._img_labels):
+            return
+        try:
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            img.thumbnail((self._THUMB_W, self._THUMB_H), Image.LANCZOS)
+            padded = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (210, 210, 210))
+            ox = (self._THUMB_W - img.width) // 2
+            oy = (self._THUMB_H - img.height) // 2
+            padded.paste(img, (ox, oy))
+            photo = ImageTk.PhotoImage(padded)
+            self._photo_refs.append(photo)
+            self._img_labels[idx].configure(image=photo)
+        except Exception:
+            pass
+
+    def _on_close(self) -> None:
+        self._cancel.set()
+        self._executor.shutdown(wait=False)
+        self.destroy()
+
+
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -86,6 +213,7 @@ class App:
         self.xml_paths: list[Path] = []
         self._xml_rows: list[dict] = []
         self._xml_card_counts: dict[Path, int] = {}
+        self._xml_orders: dict[Path, CardOrder] = {}
         self.local_fronts: list[Path] = []
         self.local_backs: list[Path] = []
         # Per-front back assignment: None = use XML cardback fallback.
@@ -105,6 +233,7 @@ class App:
 
         self._build_ui()
         self.root.after(80, self._drain_events)
+        self.root.after(200, self._setup_dnd)
 
     # ------------------------------------------------------------------
     # Layout
@@ -168,6 +297,7 @@ class App:
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         xml_frame = ttk.LabelFrame(parent, text="Archivos XML")
         xml_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self._xml_drop_frame = xml_frame
         xml_frame.columnconfigure(0, weight=1)
         xml_frame.rowconfigure(0, weight=1)
 
@@ -184,9 +314,10 @@ class App:
         self.xml_canvas.bind("<Leave>",
                              lambda _e: self._bind_mousewheel(self.xml_canvas, False))
 
+        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
         self._xml_empty_label = ttk.Label(
             self.xml_inner,
-            text="(sin XMLs — usa “Seleccionar XMLs…”)",
+            text=f"(sin XMLs — usa «Seleccionar XMLs…»{dnd_hint})",
             foreground="#777", padding=(8, 10),
         )
         self._xml_empty_label.pack(anchor="w")
@@ -201,6 +332,7 @@ class App:
     def _build_locals_pane(self, parent: ttk.Frame) -> None:
         local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
         local_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self._locals_drop_frame = local_frame
         local_frame.columnconfigure(0, weight=1)
         local_frame.rowconfigure(1, weight=1, uniform="locals")  # backs
         local_frame.rowconfigure(3, weight=2, uniform="locals")  # fronts
@@ -222,9 +354,10 @@ class App:
         self.backs_canvas.bind("<Leave>",
                                lambda _e: self._bind_mousewheel(self.backs_canvas, False))
 
+        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
         self._backs_empty_label = ttk.Label(
             self.backs_inner,
-            text="(sin traseras — usa “Seleccionar imágenes…”)",
+            text=f"(sin traseras — usa «Seleccionar imágenes…»{dnd_hint})",
             foreground="#777", padding=(8, 10),
         )
         self._backs_empty_label.pack(anchor="w")
@@ -263,9 +396,10 @@ class App:
         self.fronts_canvas.bind("<Leave>",
                                 lambda _e: self._bind_mousewheel(self.fronts_canvas, False))
 
+        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
         self._fronts_empty_label = ttk.Label(
             self.fronts_inner,
-            text="(sin frontales — usa “Seleccionar imágenes…”)",
+            text=f"(sin frontales — usa «Seleccionar imágenes…»{dnd_hint})",
             foreground="#777", padding=(8, 10),
         )
         self._fronts_empty_label.pack(anchor="w")
@@ -322,6 +456,11 @@ class App:
                             self._xml_card_counts[pp] = rpts[0].cards
                     except Exception:
                         pass
+                if pp not in self._xml_orders:
+                    try:
+                        self._xml_orders[pp] = parse(pp)
+                    except Exception:
+                        pass
         if added:
             self._refresh_xml_rows()
             self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
@@ -330,6 +469,7 @@ class App:
     def _remove_xml(self, idx: int) -> None:
         if 0 <= idx < len(self.xml_paths):
             self._xml_card_counts.pop(self.xml_paths[idx], None)
+            self._xml_orders.pop(self.xml_paths[idx], None)
             del self.xml_paths[idx]
             self._refresh_xml_rows()
             self._refresh_generate_state()
@@ -337,6 +477,7 @@ class App:
     def _clear_xmls(self) -> None:
         self.xml_paths.clear()
         self._xml_card_counts.clear()
+        self._xml_orders.clear()
         self._refresh_xml_rows()
         self._refresh_generate_state()
 
@@ -375,9 +516,21 @@ class App:
             count_lbl.grid_remove()
 
             ttk.Button(
+                frame, text="▲", width=2,
+                command=lambda idx=i: self._move_xml_up(idx),
+            ).grid(row=0, column=4, padx=(0, 1))
+            ttk.Button(
+                frame, text="▼", width=2,
+                command=lambda idx=i: self._move_xml_down(idx),
+            ).grid(row=0, column=5, padx=(0, 1))
+            ttk.Button(
                 frame, text="✕", width=2,
                 command=lambda idx=i: self._remove_xml(idx),
-            ).grid(row=0, column=4, padx=(0, 2))
+            ).grid(row=0, column=6, padx=(0, 1))
+            ttk.Button(
+                frame, text="Ver…", width=4,
+                command=lambda p=xml_path: self._show_preview(p),
+            ).grid(row=0, column=7, padx=(0, 2))
 
             self._xml_rows.append({
                 "frame": frame, "pb": pb,
@@ -413,6 +566,13 @@ class App:
             row["count_var"].set("")
             row["pb"].grid_remove()
             row["count_lbl"].grid_remove()
+
+    def _show_preview(self, xml_path: Path) -> None:
+        order = self._xml_orders.get(xml_path)
+        if order is None:
+            messagebox.showinfo(APP_TITLE, "No hay datos de cartas para esta XML.")
+            return
+        PreviewWindow(self.root, xml_path, order)
 
     # ------------------------------------------------------------------
     # Local back pickers
@@ -501,6 +661,14 @@ class App:
                 row, text="✕", width=2,
                 command=lambda idx=i: self._remove_back(idx),
             ).pack(side=tk.RIGHT)
+            ttk.Button(
+                row, text="▼", width=2,
+                command=lambda idx=i: self._move_back_down(idx),
+            ).pack(side=tk.RIGHT, padx=(0, 1))
+            ttk.Button(
+                row, text="▲", width=2,
+                command=lambda idx=i: self._move_back_up(idx),
+            ).pack(side=tk.RIGHT, padx=(0, 1))
 
             self._back_rows.append({"frame": row, "crop_var": crop_var})
 
@@ -622,6 +790,14 @@ class App:
                 row, text="✕", width=2,
                 command=lambda idx=i: self._remove_front(idx),
             ).pack(side=tk.RIGHT)
+            ttk.Button(
+                row, text="▼", width=2,
+                command=lambda idx=i: self._move_front_down(idx),
+            ).pack(side=tk.RIGHT, padx=(0, 1))
+            ttk.Button(
+                row, text="▲", width=2,
+                command=lambda idx=i: self._move_front_up(idx),
+            ).pack(side=tk.RIGHT, padx=(0, 1))
 
             self._front_rows.append(
                 {"frame": row, "var": var, "combo": combo, "crop_var": crop_var},
@@ -637,6 +813,140 @@ class App:
         )
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Reorder helpers
+    # ------------------------------------------------------------------
+    def _move_xml_up(self, idx: int) -> None:
+        if idx > 0:
+            self.xml_paths[idx], self.xml_paths[idx - 1] = self.xml_paths[idx - 1], self.xml_paths[idx]
+            self._refresh_xml_rows()
+
+    def _move_xml_down(self, idx: int) -> None:
+        if idx < len(self.xml_paths) - 1:
+            self.xml_paths[idx], self.xml_paths[idx + 1] = self.xml_paths[idx + 1], self.xml_paths[idx]
+            self._refresh_xml_rows()
+
+    def _move_back_up(self, idx: int) -> None:
+        if idx > 0:
+            self.local_backs[idx], self.local_backs[idx - 1] = self.local_backs[idx - 1], self.local_backs[idx]
+            self.local_back_crop[idx], self.local_back_crop[idx - 1] = self.local_back_crop[idx - 1], self.local_back_crop[idx]
+            self._refresh_back_rows()
+            self._refresh_front_rows()
+
+    def _move_back_down(self, idx: int) -> None:
+        if idx < len(self.local_backs) - 1:
+            self.local_backs[idx], self.local_backs[idx + 1] = self.local_backs[idx + 1], self.local_backs[idx]
+            self.local_back_crop[idx], self.local_back_crop[idx + 1] = self.local_back_crop[idx + 1], self.local_back_crop[idx]
+            self._refresh_back_rows()
+            self._refresh_front_rows()
+
+    def _move_front_up(self, idx: int) -> None:
+        if idx > 0:
+            self.local_fronts[idx], self.local_fronts[idx - 1] = self.local_fronts[idx - 1], self.local_fronts[idx]
+            self.front_back_paths[idx], self.front_back_paths[idx - 1] = self.front_back_paths[idx - 1], self.front_back_paths[idx]
+            self.local_front_crop[idx], self.local_front_crop[idx - 1] = self.local_front_crop[idx - 1], self.local_front_crop[idx]
+            self._refresh_front_rows()
+
+    def _move_front_down(self, idx: int) -> None:
+        if idx < len(self.local_fronts) - 1:
+            self.local_fronts[idx], self.local_fronts[idx + 1] = self.local_fronts[idx + 1], self.local_fronts[idx]
+            self.front_back_paths[idx], self.front_back_paths[idx + 1] = self.front_back_paths[idx + 1], self.front_back_paths[idx]
+            self.local_front_crop[idx], self.local_front_crop[idx + 1] = self.local_front_crop[idx + 1], self.local_front_crop[idx]
+            self._refresh_front_rows()
+
+    # ------------------------------------------------------------------
+    # Drag-and-drop
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _decode_drop(files) -> list[Path]:
+        result = []
+        for f in files:
+            if isinstance(f, bytes):
+                try:
+                    f = f.decode(sys.getfilesystemencoding())
+                except UnicodeDecodeError:
+                    f = f.decode("cp1252", errors="replace")
+            result.append(Path(str(f)))
+        return result
+
+    def _on_drop_xmls(self, files) -> None:
+        paths = self._decode_drop(files)
+        added = 0
+        for pp in paths:
+            if pp.suffix.lower() != ".xml":
+                continue
+            if pp not in self.xml_paths:
+                self.xml_paths.append(pp)
+                added += 1
+                if pp not in self._xml_card_counts:
+                    try:
+                        rpts = analyze([pp])
+                        if rpts:
+                            self._xml_card_counts[pp] = rpts[0].cards
+                    except Exception:
+                        pass
+                if pp not in self._xml_orders:
+                    try:
+                        self._xml_orders[pp] = parse(pp)
+                    except Exception:
+                        pass
+        if added:
+            self._refresh_xml_rows()
+            self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
+        self._refresh_generate_state()
+
+    def _on_drop_backs(self, files) -> None:
+        paths = self._decode_drop(files)
+        _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+        was_empty = not self.local_backs
+        added = False
+        for pp in paths:
+            if pp.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            if pp not in self.local_backs:
+                self.local_backs.append(pp)
+                self.local_back_crop.append(False)
+                added = True
+        if added:
+            if was_empty and self.local_backs:
+                first = self.local_backs[0]
+                for i, assigned in enumerate(self.front_back_paths):
+                    if assigned is None:
+                        self.front_back_paths[i] = first
+            self._refresh_back_rows()
+            self._refresh_front_rows()
+            self._refresh_generate_state()
+
+    def _on_drop_fronts(self, files) -> None:
+        paths = self._decode_drop(files)
+        _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
+        default_back = self.local_backs[0] if self.local_backs else None
+        added = False
+        for pp in paths:
+            if pp.suffix.lower() not in _IMAGE_EXTS:
+                continue
+            if pp not in self.local_fronts:
+                self.local_fronts.append(pp)
+                self.front_back_paths.append(default_back)
+                self.local_front_crop.append(False)
+                added = True
+        if added:
+            self._refresh_front_rows()
+            self._refresh_generate_state()
+
+    def _setup_dnd(self) -> None:
+        if not _WINDND_AVAILABLE:
+            return
+        try:
+            for w in (self._xml_drop_frame, self.xml_canvas, self.xml_inner):
+                windnd.hook_dropfiles(w, func=self._on_drop_xmls)
+            for w in (self.backs_canvas, self.backs_inner):
+                windnd.hook_dropfiles(w, func=self._on_drop_backs)
+            for w in (self.fronts_canvas, self.fronts_inner):
+                windnd.hook_dropfiles(w, func=self._on_drop_fronts)
+        except Exception:
+            pass
+
     # Mousewheel scroll over the active row list
     # ------------------------------------------------------------------
     def _bind_mousewheel(self, canvas: tk.Canvas, on: bool) -> None:
@@ -792,6 +1102,33 @@ class App:
             extra_backs = self._resolve_extra_backs()
             crop_map = self._build_crop_map()
             if plan_ is not None:
+                # --- Verify Drive access before downloading ---------------
+                xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
+                all_ids = collect_drive_ids(xml_paths_flat)
+                raw_dir = wd / "raw"
+                to_check = [
+                    (did, name) for did, name in all_ids
+                    if not list(raw_dir.glob(f"{did}.*"))
+                ]
+                if to_check:
+                    self.events.put(("progress", "verify", 0, len(to_check), "XML seleccionados"))
+
+                    def _verify_cb(done, total):
+                        self.events.put(("progress", "verify", done, total, "XML seleccionados"))
+
+                    inaccessible = check_drive_access(to_check, _verify_cb)
+
+                    if inaccessible and not self.cancel_event.is_set():
+                        confirm_event = threading.Event()
+                        self.events.put(("verify_warning", inaccessible, confirm_event))
+                        while not confirm_event.wait(timeout=0.1):
+                            if self.cancel_event.is_set():
+                                break
+
+                if self.cancel_event.is_set():
+                    self.events.put(("cancelled", run_dir, wd))
+                    return
+
                 # label shown during download/crop (global phases)
                 _pdf_label = [""]
 
@@ -900,6 +1237,19 @@ class App:
         elif kind == "xml_crop_progress":
             _, xml_name, done, total = ev
             self._show_xml_crop_progress(xml_name, done, total)
+        elif kind == "verify_warning":
+            _, cards, confirm_event = ev
+            names = "\n".join(f"  • {name}" for _, name in cards[:8])
+            more = f"\n  … y {len(cards) - 8} más" if len(cards) > 8 else ""
+            msg = (
+                f"{len(cards)} carta(s) sin acceso público en Google Drive:\n\n"
+                f"{names}{more}\n\n"
+                "El proceso fallará al intentar descargar estas cartas.\n"
+                "¿Deseas continuar de todos modos?"
+            )
+            if not messagebox.askyesno(APP_TITLE, msg, icon=messagebox.WARNING):
+                self.cancel_event.set()
+            confirm_event.set()
         elif kind == "cancelled":
             _, run_dir, wd = ev
             if run_dir is not None:
@@ -993,6 +1343,13 @@ class App:
 
 
 def main() -> None:
+    _wd = work_dir()
+    _wd.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        handlers=[logging.FileHandler(_wd / "gui.log", encoding="utf-8")],
+    )
     root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")

@@ -4,10 +4,78 @@ Print shops charge per A4 sheet whether the 3×3 grid is full or not, so we
 either merge small XMLs into bigger ones (when the global total is a multiple
 of 9) or warn the user before generating any PDF with paid empty slots.
 """
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+import requests
+
 from src.parser import parse
+
+_THUMB_CHECK_URL = "https://drive.google.com/thumbnail?id={}&sz=w1"
+_CHECK_THREADS = 20
+_CHECK_TIMEOUT = (5, 10)
+
+
+def collect_drive_ids(xml_paths: list[Path]) -> list[tuple[str, str]]:
+    """Return unique (drive_id, name) pairs from all XMLs (fronts + backs + cardback)."""
+    pairs: dict[str, str] = {}
+    for p in xml_paths:
+        try:
+            order = parse(p)
+        except Exception:
+            continue
+        for card in order.fronts + order.backs:
+            pairs.setdefault(card.drive_id, card.name)
+        pairs.setdefault(order.cardback_id, "cardback.jpg")
+    return list(pairs.items())
+
+
+def check_drive_access(
+    id_name_pairs: list[tuple[str, str]],
+    progress_callback=None,
+) -> list[tuple[str, str]]:
+    """Check which Drive IDs are publicly accessible via thumbnail URL.
+
+    Returns a list of (drive_id, name) for images that returned 403/404 —
+    those have lost public access and will fail during download.
+    Network errors are treated as accessible (transient, not a permission issue).
+    progress_callback(done, total) is called after each check.
+    """
+    if not id_name_pairs:
+        return []
+
+    total = len(id_name_pairs)
+    inaccessible: list[tuple[str, str]] = []
+
+    def _check(drive_id: str, name: str) -> tuple[str, str, bool]:
+        try:
+            r = requests.get(
+                _THUMB_CHECK_URL.format(drive_id),
+                timeout=_CHECK_TIMEOUT,
+                stream=True,
+            )
+            r.close()
+            ok = r.status_code < 400
+        except Exception:
+            ok = True  # network/timeout error → assume accessible, don't false-positive
+        return drive_id, name, ok
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=_CHECK_THREADS) as ex:
+        futures = {
+            ex.submit(_check, did, name): (did, name)
+            for did, name in id_name_pairs
+        }
+        for future in as_completed(futures):
+            drive_id, name, ok = future.result()
+            done += 1
+            if not ok:
+                inaccessible.append((drive_id, name))
+            if progress_callback:
+                progress_callback(done, total)
+
+    return inaccessible
 
 CARDS_PER_PAGE = 9
 

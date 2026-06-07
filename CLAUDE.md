@@ -40,7 +40,6 @@ The project targets three delivery modes, built in this order:
 
 1. **CLI** — accepts XML path, outputs PDF path; basis for the other interfaces ✅ v1
 2. **Desktop GUI** — file picker + progress display; for end users on Windows/Mac/Linux ✅ v2 (Tkinter, packaged with PyInstaller)
-3. **Web app** — upload XML → download PDF; hosted publicly so anyone can use it without installing anything
 
 ## Project structure
 

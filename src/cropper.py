@@ -1,5 +1,8 @@
+import logging
 from pathlib import Path
 from PIL import Image, ImageOps
+
+_log = logging.getLogger(__name__)
 
 # MPC bleed fractions (removed during crop)
 _BLEED_X = 0.042
@@ -58,7 +61,9 @@ def process_for_pdf(
     output_path = Path(output_path)
     input_path = Path(input_path)
     if output_path.exists() and output_path.stat().st_mtime >= input_path.stat().st_mtime:
+        _log.debug("Crop cache hit: %s", output_path.name)
         return output_path
+    _log.debug("Cropping: %s (crop_borders=%s)", input_path.name, crop_borders)
     try:
         img = Image.open(input_path).convert("RGB")
     except Exception as exc:

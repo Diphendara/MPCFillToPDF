@@ -1,4 +1,7 @@
 import functools
+import logging
+import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -8,6 +11,8 @@ import gdown
 import requests
 
 from src.cancellation import Cancelled
+
+_log = logging.getLogger(__name__)
 
 try:
     from gdown.exceptions import FileURLRetrievalError as _GdownPermissionError
@@ -84,33 +89,54 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return False
 
 
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
-    # Use the drive_id as the stem to avoid filesystem issues with card names
     suffix = Path(filename).suffix or ".jpg"
     output_path = dest_dir / f"{drive_id}{suffix}"
     if output_path.exists():
+        _log.debug("Download cache hit: %s", output_path.name)
         return output_path
+
+    _log.info("Downloading: %s (%s)", filename, drive_id)
+    tmp_path = dest_dir / f"{drive_id}_{os.getpid()}_{threading.current_thread().ident}{suffix}.tmp"
 
     delay = _INITIAL_BACKOFF
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            gdown.download(_drive_url(drive_id), str(output_path), quiet=True)
+            gdown.download(_drive_url(drive_id), str(tmp_path), quiet=True)
+            tmp_path.replace(output_path)
+            _log.debug("Downloaded: %s", output_path.name)
             return output_path
         except requests.exceptions.Timeout:
+            _safe_unlink(tmp_path)
+            _log.error("Timeout downloading %s (%s)", filename, drive_id)
             raise DownloadTimeoutError(drive_id, filename)
         except Exception as exc:
+            _safe_unlink(tmp_path)
             is_permission = (
                 (_GdownPermissionError is not None and isinstance(exc, _GdownPermissionError))
                 or "FileURLRetrievalError" in type(exc).__name__
             )
             if is_permission:
+                _log.error("Permission denied: %s (%s)", filename, drive_id)
                 raise DownloadPermissionError(drive_id, filename) from exc
             if _is_rate_limit_error(exc):
                 if attempt < _MAX_RETRIES:
+                    _log.warning(
+                        "Rate limited on %s, retry %d/%d in %.0fs",
+                        drive_id, attempt + 1, _MAX_RETRIES, delay,
+                    )
                     time.sleep(delay)
                     delay *= 2
                     continue
+                _log.error("Rate limit exhausted for %s", drive_id)
                 raise DownloadRateLimitError() from exc
             raise
 
@@ -143,18 +169,23 @@ def download_all(
             executor.submit(download_image, drive_id, dest_dir, name): drive_id
             for drive_id, name in id_name_pairs
         }
-        for i, future in enumerate(as_completed(futures), start=1):
-            if cancel_event is not None and cancel_event.is_set():
-                cancelled = True
-                for f in futures:
-                    f.cancel()
-                break
-            drive_id = futures[future]
-            results[drive_id] = future.result()
-            if on_image_done:
-                on_image_done(drive_id)
-            if progress_callback:
-                progress_callback(i, total)
+        try:
+            for i, future in enumerate(as_completed(futures), start=1):
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled = True
+                    for f in futures:
+                        f.cancel()
+                    break
+                drive_id = futures[future]
+                results[drive_id] = future.result()
+                if on_image_done:
+                    on_image_done(drive_id)
+                if progress_callback:
+                    progress_callback(i, total)
+        except Exception:
+            for f in futures:
+                f.cancel()
+            raise
 
     if cancelled:
         raise Cancelled()
