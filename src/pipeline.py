@@ -7,7 +7,12 @@ from threading import Event
 
 from src.cancellation import Cancelled
 from src.parser import parse, CardOrder
-from src.downloader import download_all, DownloadPermissionError, DownloadTimeoutError
+from src.downloader import (
+    download_all,
+    DownloadPartialError,
+    DownloadPermissionError,
+    DownloadTimeoutError,
+)
 from src.cropper import process_for_pdf
 from src.pdf_generator import generate
 
@@ -271,6 +276,12 @@ def _run_xmls(
         id_to_raw = download_all(
             download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
         )
+    except DownloadPartialError as e:
+        for drive_id, _ in e.permission_errors + e.timeout_errors:
+            ctx = drive_id_context.get(drive_id)
+            if ctx:
+                e.xml_context[drive_id] = ctx
+        raise
     except (DownloadPermissionError, DownloadTimeoutError) as e:
         ctx = drive_id_context.get(e.drive_id)
         if ctx:
@@ -404,6 +415,7 @@ def run_plan(
     on_xml_download_progress=None,
     on_xml_crop_progress=None,
     fronts_only: bool = False,
+    on_speed_update=None,
 ) -> list[Path]:
     """Download ALL images first, then crop all, then generate each job's PDFs.
 
@@ -494,8 +506,14 @@ def run_plan(
     try:
         id_to_raw = download_all(
             download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
-            on_image_done=_on_image_done,
+            on_image_done=_on_image_done, on_speed_update=on_speed_update,
         )
+    except DownloadPartialError as e:
+        for drive_id, _ in e.permission_errors + e.timeout_errors:
+            ctx = combined_context.get(drive_id)
+            if ctx:
+                e.xml_context[drive_id] = ctx
+        raise
     except (DownloadPermissionError, DownloadTimeoutError) as e:
         ctx = combined_context.get(e.drive_id)
         if ctx:

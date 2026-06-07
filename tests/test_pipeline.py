@@ -37,7 +37,7 @@ def _one_card_xml(tmp_path: Path, name: str = "deck") -> Path:
 def _fake_download_all(raw_dir: Path, img_color=(180, 80, 40)):
     """Return a monkeypatch replacement for download_all that writes tiny JPEGs."""
     def _impl(pairs, dest_dir, progress_callback=None, cancel_event=None,
-               on_image_done=None):
+               on_image_done=None, on_speed_update=None):
         result = {}
         for did, name in pairs:
             p = dest_dir / f"{did}.jpg"

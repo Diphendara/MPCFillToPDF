@@ -8,6 +8,7 @@ import requests
 
 from src.cancellation import Cancelled
 from src.downloader import (
+    DownloadPartialError,
     DownloadPermissionError,
     DownloadTimeoutError,
     DownloadRateLimitError,
@@ -183,51 +184,71 @@ def test_download_all_cancel_event_raises_cancelled(tmp_path):
             )
 
 
-def test_download_all_propagates_permission_error(tmp_path):
+def test_download_all_propagates_permission_error_as_partial(tmp_path):
     def _raise(*a, **kw):
         raise _FakeFileURLRetrievalError("no access")
 
     with patch("gdown.download", side_effect=_raise):
-        with pytest.raises(DownloadPermissionError):
+        with pytest.raises(DownloadPartialError) as exc_info:
             download_all([("ID1", "a.jpg")], tmp_path / "raw")
 
+    err = exc_info.value
+    assert len(err.permission_errors) == 1
+    assert err.permission_errors[0] == ("ID1", "a.jpg")
+    assert err.timeout_errors == []
 
-def test_download_all_propagates_timeout_error(tmp_path):
+
+def test_download_all_propagates_timeout_error_as_partial(tmp_path):
     def _raise(*a, **kw):
         raise requests.exceptions.Timeout("timeout")
 
     with patch("gdown.download", side_effect=_raise):
-        with pytest.raises(DownloadTimeoutError):
-            download_all([("ID1", "a.jpg")], tmp_path / "raw")
+        with patch("time.sleep"):  # skip the retry delay
+            with pytest.raises(DownloadPartialError) as exc_info:
+                download_all([("ID1", "a.jpg")], tmp_path / "raw")
+
+    err = exc_info.value
+    assert len(err.timeout_errors) == 1
+    assert err.timeout_errors[0] == ("ID1", "a.jpg")
+    assert err.permission_errors == []
 
 
-def test_download_all_cancels_pending_futures_on_error(tmp_path):
-    """When one download fails, pending (not-yet-started) futures are cancelled.
-
-    Non-failing tasks sleep 50 ms so they remain in-flight when ID00 fails
-    instantly. This guarantees as_completed returns ID00 first. However, the
-    ThreadPoolExecutor may assign one extra task to the freed thread before
-    cancel fires, so the bound is THREADS + 1, not THREADS.
-    """
-    import time
-    from src.downloader import THREADS
-
-    started = []
-
-    def _fail_first(url: str, path: str, quiet: bool) -> None:
-        started.append(url)
-        if "ID00" in url:
-            raise requests.exceptions.Timeout("timeout")
-        time.sleep(0.5)  # stay in-flight until cancel fires; 500 ms outlasts CI GIL delays
+def test_download_all_continues_after_partial_failure(tmp_path):
+    """Successful downloads complete even when some images fail."""
+    def _mixed(url: str, path: str, quiet: bool) -> None:
+        if "BAD" in url:
+            raise _FakeFileURLRetrievalError("no access")
         Path(path).write_bytes(b"img")
 
-    n_tasks = 30
-    pairs = [(f"ID{i:02d}", f"card{i}.jpg") for i in range(n_tasks)]
+    with patch("gdown.download", side_effect=_mixed):
+        with pytest.raises(DownloadPartialError) as exc_info:
+            download_all(
+                [("GOOD1", "good1.jpg"), ("BAD", "bad.jpg"), ("GOOD2", "good2.jpg")],
+                tmp_path / "raw",
+            )
 
-    with patch("gdown.download", side_effect=_fail_first):
-        with pytest.raises(DownloadTimeoutError):
-            download_all(pairs, tmp_path / "raw")
+    err = exc_info.value
+    assert len(err.permission_errors) == 1
+    assert err.permission_errors[0][0] == "BAD"
+    # Good images still downloaded
+    assert (tmp_path / "raw" / "GOOD1.jpg").exists()
+    assert (tmp_path / "raw" / "GOOD2.jpg").exists()
 
-    # ID00 fails → cancel fires → ID(THREADS+1)..29 never start.
-    # The freed thread may pick up one extra task before cancel fires.
-    assert len(started) <= THREADS + 1
+
+def test_download_all_timeout_retry_succeeds(tmp_path):
+    """Timed-out images that succeed on retry are NOT included in partial errors."""
+    attempts: dict[str, int] = {}
+
+    def _flaky(url: str, path: str, quiet: bool) -> None:
+        drive_id = url.split("id=")[1]
+        attempts[drive_id] = attempts.get(drive_id, 0) + 1
+        if attempts[drive_id] == 1:
+            raise requests.exceptions.Timeout("timeout first time")
+        Path(path).write_bytes(b"img")
+
+    with patch("gdown.download", side_effect=_flaky):
+        with patch("time.sleep"):  # skip retry delay
+            results = download_all([("ID1", "a.jpg")], tmp_path / "raw")
+
+    assert "ID1" in results
+    assert attempts["ID1"] == 2  # first attempt timed out, retry succeeded

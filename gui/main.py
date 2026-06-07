@@ -2,11 +2,13 @@
 open the output folder."""
 import io
 import logging
+import math
 import os
 import queue
 import shutil
 import sys
 import threading
+import time
 import tkinter as tk
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +25,12 @@ except ImportError:
 from PIL import Image, ImageTk
 from gui.paths import output_dir, work_dir
 from src.cancellation import Cancelled
-from src.downloader import DownloadPermissionError, DownloadRateLimitError, DownloadTimeoutError
+from src.downloader import (
+    DownloadPartialError,
+    DownloadPermissionError,
+    DownloadRateLimitError,
+    DownloadTimeoutError,
+)
 from src.parser import parse, CardOrder
 from src.pipeline import run, run_merged, run_locals_only, run_plan
 from src.precheck import (
@@ -36,6 +43,19 @@ from src.precheck import (
     plan,
     write_manifest,
 )
+from src.validator import validate, ValidationWarning
+
+_log = logging.getLogger(__name__)
+
+
+def _notify(title: str, message: str) -> None:
+    """Show a system notification (best-effort; silently ignored if plyer is missing)."""
+    try:
+        from plyer import notification as _n
+        _n.notify(title=title, message=message, app_name=APP_TITLE, timeout=8)
+    except Exception:
+        pass
+
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
@@ -91,11 +111,86 @@ class _XmlPb(tk.Canvas):
         self.itemconfigure(self._lbl, text=text)
 
 
+class _ImageTooltip:
+    """Floating image preview that appears when the mouse hovers over a widget."""
+    _DELAY_MS = 350
+    _MAX_W = 240
+    _MAX_H = 336
+
+    def __init__(self, widget: tk.Widget, image_path: Path) -> None:
+        self._widget = widget
+        self._path = image_path
+        self._after_id: str | None = None
+        self._tip: tk.Toplevel | None = None
+        self._photo = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Motion>", self._on_motion, add="+")
+        widget.bind("<Destroy>", lambda _e: self._hide(), add="+")
+
+    def _schedule(self, event) -> None:
+        self._hide()
+        self._after_id = self._widget.after(
+            self._DELAY_MS,
+            lambda: self._show(event.x_root, event.y_root),
+        )
+
+    def _on_motion(self, event) -> None:
+        if self._tip and self._tip.winfo_exists():
+            self._move(event.x_root, event.y_root)
+
+    def _show(self, x_root: int, y_root: int) -> None:
+        if not self._widget.winfo_exists():
+            return
+        try:
+            img = Image.open(self._path).convert("RGB")
+        except Exception:
+            return
+        img.thumbnail((self._MAX_W, self._MAX_H), Image.LANCZOS)
+        self._photo = ImageTk.PhotoImage(img)
+        parent = self._widget.winfo_toplevel()
+        self._tip = tk.Toplevel(parent)
+        self._tip.overrideredirect(True)
+        self._tip.attributes("-topmost", True)
+        border = tk.Frame(self._tip, bg="#444", padx=2, pady=2)
+        border.pack()
+        tk.Label(border, image=self._photo, bg="#444").pack()
+        self._tip.update_idletasks()
+        self._move(x_root, y_root)
+
+    def _move(self, x_root: int, y_root: int) -> None:
+        if not (self._tip and self._tip.winfo_exists()):
+            return
+        tw = self._tip.winfo_width()
+        th = self._tip.winfo_height()
+        sw = self._tip.winfo_screenwidth()
+        sh = self._tip.winfo_screenheight()
+        x = x_root + 18
+        y = y_root + 18
+        if x + tw > sw:
+            x = x_root - tw - 8
+        if y + th > sh:
+            y = y_root - th - 8
+        self._tip.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def _hide(self, _event=None) -> None:
+        if self._after_id is not None:
+            try:
+                self._widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        if self._tip and self._tip.winfo_exists():
+            self._tip.destroy()
+        self._tip = None
+
+
 class PreviewWindow(tk.Toplevel):
     _THUMB_W = 80
     _THUMB_H = 112
     _COLS = 4
     _THUMB_URL = "https://drive.google.com/thumbnail?id={}&sz=w80"
+    _SPINNER = ["◐", "◓", "◑", "◒"]
 
     def __init__(self, parent: tk.Misc, xml_path: Path, order: CardOrder) -> None:
         super().__init__(parent)
@@ -106,6 +201,9 @@ class PreviewWindow(tk.Toplevel):
         self._cancel = threading.Event()
         self._pending: queue.Queue = queue.Queue()
         self._photo_refs: list = []
+        self._spinner_frame: int = 0
+        self._loading_labels: list[tk.Label] = []
+        self._loading_set: set[int] = set()
 
         placeholder = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (210, 210, 210))
         self._placeholder_photo = ImageTk.PhotoImage(placeholder)
@@ -125,28 +223,62 @@ class PreviewWindow(tk.Toplevel):
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(wid, width=e.width))
 
+        def _scroll(event):
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        self.bind("<MouseWheel>", _scroll)
+        canvas.bind("<MouseWheel>", _scroll)
+        inner.bind("<MouseWheel>", _scroll)
+
         self._img_labels: list[tk.Label] = []
         for idx, card in enumerate(order.fronts):
             r, c = divmod(idx, self._COLS)
             cell = ttk.Frame(inner, relief=tk.RIDGE, borderwidth=1)
             cell.grid(row=r, column=c, padx=4, pady=4)
+            cell.bind("<MouseWheel>", _scroll)
 
             lbl_img = tk.Label(cell, image=self._placeholder_photo, bg="#d2d2d2")
             lbl_img.pack()
+            lbl_img.bind("<MouseWheel>", _scroll)
             self._img_labels.append(lbl_img)
 
+            loading_lbl = tk.Label(
+                cell, text=self._SPINNER[0],
+                font=("Segoe UI", 9), fg="#888",
+            )
+            loading_lbl.pack()
+            loading_lbl.bind("<MouseWheel>", _scroll)
+            self._loading_labels.append(loading_lbl)
+            self._loading_set.add(idx)
+
             name = _ellipsize(card.name, 12) if card.name else "(sin nombre)"
-            tk.Label(cell, text=name, font=("Segoe UI", 7), wraplength=self._THUMB_W).pack()
+            name_lbl = tk.Label(cell, text=name, font=("Segoe UI", 7),
+                                wraplength=self._THUMB_W)
+            name_lbl.pack()
+            name_lbl.bind("<MouseWheel>", _scroll)
             count = len(card.slots)
             if count > 1:
-                tk.Label(cell, text=f"x{count}", font=("Segoe UI", 7, "bold"),
-                         fg="#555").pack()
+                count_lbl = tk.Label(cell, text=f"x{count}",
+                                     font=("Segoe UI", 7, "bold"), fg="#555")
+                count_lbl.pack()
+                count_lbl.bind("<MouseWheel>", _scroll)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain)
+        self.after(200, self._tick_spinner)
 
         self._executor = ThreadPoolExecutor(max_workers=4)
         threading.Thread(target=self._load_all, args=(order,), daemon=True).start()
+
+    def _tick_spinner(self) -> None:
+        if self._cancel.is_set() or not self._loading_set:
+            return
+        self._spinner_frame = (self._spinner_frame + 1) % len(self._SPINNER)
+        ch = self._SPINNER[self._spinner_frame]
+        for idx in self._loading_set:
+            if idx < len(self._loading_labels):
+                self._loading_labels[idx].configure(text=ch)
+        self.after(200, self._tick_spinner)
 
     def _fetch(self, drive_id: str) -> bytes:
         import requests as _req
@@ -166,7 +298,7 @@ class PreviewWindow(tk.Toplevel):
             try:
                 self._pending.put((idx, fut.result()))
             except Exception:
-                pass
+                self._pending.put((idx, None))
 
     def _drain(self) -> None:
         if self._cancel.is_set():
@@ -181,8 +313,13 @@ class PreviewWindow(tk.Toplevel):
             if not self._cancel.is_set():
                 self.after(80, self._drain)
 
-    def _apply(self, idx: int, data: bytes) -> None:
+    def _apply(self, idx: int, data: bytes | None) -> None:
         if idx >= len(self._img_labels):
+            return
+        self._loading_set.discard(idx)
+        if idx < len(self._loading_labels):
+            self._loading_labels[idx].pack_forget()
+        if data is None:
             return
         try:
             img = Image.open(io.BytesIO(data)).convert("RGB")
@@ -214,6 +351,7 @@ class App:
         self._xml_rows: list[dict] = []
         self._xml_card_counts: dict[Path, int] = {}
         self._xml_orders: dict[Path, CardOrder] = {}
+        self._xml_validations: dict[Path, list[ValidationWarning]] = {}
         self.local_fronts: list[Path] = []
         self.local_backs: list[Path] = []
         # Per-front back assignment: None = use XML cardback fallback.
@@ -230,6 +368,8 @@ class App:
         self.cancel_event = threading.Event()
         self.running = False
         self.keep_cache = tk.BooleanVar(value=False)
+        self._dl_speed_str: str = ""
+        self._custom_output_dir: Path | None = None
 
         self._build_ui()
         self.root.after(80, self._drain_events)
@@ -279,9 +419,27 @@ class App:
         self.progress = ttk.Progressbar(bottom_controls, mode="determinate", maximum=100)
         self.progress.pack(fill=tk.X)
 
-        out_text = f"Carpeta de salida: {output_dir()}"
-        self.out_label = ttk.Label(bottom_controls, text=out_text, foreground="#666", anchor=tk.W)
-        self.out_label.pack(fill=tk.X, pady=(8, 0))
+        out_row = ttk.Frame(bottom_controls)
+        out_row.pack(fill=tk.X, pady=(8, 0))
+        self.out_dir_var = tk.StringVar(value=str(output_dir()))
+        self.out_label = ttk.Label(out_row, textvariable=self.out_dir_var,
+                                   foreground="#666", anchor=tk.W)
+        self.out_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(out_row, text="Cambiar…", command=self._pick_output_dir,
+                   width=9).pack(side=tk.RIGHT, padx=(6, 0))
+
+        self.timing_var = tk.StringVar(value="")
+        ttk.Label(
+            bottom_controls, textvariable=self.timing_var,
+            foreground="#888", anchor=tk.W,
+        ).pack(fill=tk.X)
+
+        # Pre-flight summary (updates whenever XMLs / locals change)
+        self._preflight_frame = ttk.LabelFrame(bottom_controls, text="Resumen")
+        # Initially hidden; _update_preflight shows it when there's content.
+        self._preflight_inner = ttk.Frame(self._preflight_frame)
+        self._preflight_inner.pack(fill=tk.X, padx=6, pady=4)
+        self._preflight_labels: list[ttk.Label] = []
 
         # 2. SECCIÓN SUPERIOR (Paneles de archivos)
         # Usamos un frame intermedio que ocupará el RESTO del espacio
@@ -338,8 +496,15 @@ class App:
         local_frame.rowconfigure(3, weight=2, uniform="locals")  # fronts
 
         # --- Backs (top) ----------------------------------------------
-        ttk.Label(local_frame, text="Traseras (numeradas 1, 2, …):").grid(
-            row=0, column=0, sticky="w", padx=6, pady=(6, 2))
+        backs_hdr = ttk.Frame(local_frame)
+        backs_hdr.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        ttk.Label(backs_hdr, text="Traseras (numeradas 1, 2, …):").pack(side=tk.LEFT)
+        self._back_crop_all = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            backs_hdr, text="Recortar todas",
+            variable=self._back_crop_all,
+            command=self._on_back_crop_all,
+        ).pack(side=tk.RIGHT, padx=(8, 0))
 
         backs_block = ttk.Frame(local_frame)
         backs_block.grid(row=1, column=0, sticky="nsew", padx=6)
@@ -378,10 +543,16 @@ class App:
         fronts_block.columnconfigure(0, weight=1)
         fronts_block.rowconfigure(1, weight=1)
 
+        fronts_hdr = ttk.Frame(fronts_block)
+        fronts_hdr.grid(row=0, column=0, sticky="ew", pady=(2, 4))
         self._fronts_header_var = tk.StringVar(value="Frontales (asignar trasera por carta):")
-        ttk.Label(
-            fronts_block, textvariable=self._fronts_header_var,
-        ).grid(row=0, column=0, sticky="w", pady=(2, 4))
+        ttk.Label(fronts_hdr, textvariable=self._fronts_header_var).pack(side=tk.LEFT)
+        self._front_crop_all = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            fronts_hdr, text="Recortar todas",
+            variable=self._front_crop_all,
+            command=self._on_front_crop_all,
+        ).pack(side=tk.RIGHT, padx=(8, 0))
 
         fronts_holder = ttk.Frame(fronts_block)
         fronts_holder.grid(row=1, column=0, sticky="nsew")
@@ -461,6 +632,11 @@ class App:
                         self._xml_orders[pp] = parse(pp)
                     except Exception:
                         pass
+                if pp not in self._xml_validations:
+                    try:
+                        self._xml_validations[pp] = validate(pp)
+                    except Exception:
+                        self._xml_validations[pp] = []
         if added:
             self._refresh_xml_rows()
             self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
@@ -468,8 +644,10 @@ class App:
 
     def _remove_xml(self, idx: int) -> None:
         if 0 <= idx < len(self.xml_paths):
-            self._xml_card_counts.pop(self.xml_paths[idx], None)
-            self._xml_orders.pop(self.xml_paths[idx], None)
+            p = self.xml_paths[idx]
+            self._xml_card_counts.pop(p, None)
+            self._xml_orders.pop(p, None)
+            self._xml_validations.pop(p, None)
             del self.xml_paths[idx]
             self._refresh_xml_rows()
             self._refresh_generate_state()
@@ -478,6 +656,7 @@ class App:
         self.xml_paths.clear()
         self._xml_card_counts.clear()
         self._xml_orders.clear()
+        self._xml_validations.clear()
         self._refresh_xml_rows()
         self._refresh_generate_state()
 
@@ -532,9 +711,19 @@ class App:
                 command=lambda p=xml_path: self._show_preview(p),
             ).grid(row=0, column=7, padx=(0, 2))
 
+            xml_warnings = self._xml_validations.get(xml_path, [])
+            warn_btn = ttk.Button(
+                frame, text="⚠", width=2,
+                command=lambda p=xml_path: self._show_xml_warnings(p),
+            )
+            warn_btn.grid(row=0, column=8, padx=(0, 2))
+            if not xml_warnings:
+                warn_btn.grid_remove()
+
             self._xml_rows.append({
                 "frame": frame, "pb": pb,
                 "count_var": count_var, "count_lbl": count_lbl,
+                "warn_btn": warn_btn,
             })
 
         self.xml_inner.update_idletasks()
@@ -573,6 +762,16 @@ class App:
             messagebox.showinfo(APP_TITLE, "No hay datos de cartas para esta XML.")
             return
         PreviewWindow(self.root, xml_path, order)
+
+    def _show_xml_warnings(self, xml_path: Path) -> None:
+        warnings = self._xml_validations.get(xml_path, [])
+        if not warnings:
+            return
+        msg = "\n".join(f"• {w.message}" for w in warnings)
+        messagebox.showwarning(
+            APP_TITLE,
+            f"Advertencias en {xml_path.name}:\n\n{msg}",
+        )
 
     # ------------------------------------------------------------------
     # Local back pickers
@@ -646,10 +845,12 @@ class App:
 
             ttk.Label(row, text=f"{i + 1:>3}.", width=4,
                       anchor="e").pack(side=tk.LEFT)
-            ttk.Label(
+            name_lbl = ttk.Label(
                 row, text=_ellipsize(back_path.name, FRONT_NAME_WIDTH),
                 width=FRONT_NAME_WIDTH + 1, anchor="w",
-            ).pack(side=tk.LEFT, padx=(4, 8))
+            )
+            name_lbl.pack(side=tk.LEFT, padx=(4, 8))
+            _ImageTooltip(name_lbl, back_path)
 
             crop_var = tk.BooleanVar(value=self.local_back_crop[i])
             ttk.Checkbutton(
@@ -728,6 +929,18 @@ class App:
         if 0 <= idx < len(self.local_front_crop):
             self.local_front_crop[idx] = bool(var.get())
 
+    def _on_front_crop_all(self) -> None:
+        val = bool(self._front_crop_all.get())
+        for i in range(len(self.local_front_crop)):
+            self.local_front_crop[i] = val
+        self._refresh_front_rows()
+
+    def _on_back_crop_all(self) -> None:
+        val = bool(self._back_crop_all.get())
+        for i in range(len(self.local_back_crop)):
+            self.local_back_crop[i] = val
+        self._refresh_back_rows()
+
     def _refresh_front_rows(self) -> None:
         """Tear down and rebuild the per-front rows so indices/combos stay in
         sync with `self.local_fronts` and `self.local_backs`."""
@@ -751,10 +964,12 @@ class App:
 
             ttk.Label(row, text=f"{i + 1:>3}.", width=4,
                       anchor="e").pack(side=tk.LEFT)
-            ttk.Label(
+            front_name_lbl = ttk.Label(
                 row, text=_ellipsize(front_path.name, FRONT_NAME_WIDTH),
                 width=FRONT_NAME_WIDTH + 1, anchor="w",
-            ).pack(side=tk.LEFT, padx=(4, 8))
+            )
+            front_name_lbl.pack(side=tk.LEFT, padx=(4, 8))
+            _ImageTooltip(front_name_lbl, front_path)
 
             ttk.Label(row, text="Trasera:").pack(side=tk.LEFT)
 
@@ -890,6 +1105,11 @@ class App:
                         self._xml_orders[pp] = parse(pp)
                     except Exception:
                         pass
+                if pp not in self._xml_validations:
+                    try:
+                        self._xml_validations[pp] = validate(pp)
+                    except Exception:
+                        self._xml_validations[pp] = []
         if added:
             self._refresh_xml_rows()
             self.status_var.set(f"{len(self.xml_paths)} XML(s) en cola.")
@@ -975,6 +1195,86 @@ class App:
     # ------------------------------------------------------------------
     # Run controls
     # ------------------------------------------------------------------
+    def _pick_output_dir(self) -> None:
+        chosen = filedialog.askdirectory(
+            title="Selecciona la carpeta de salida para los PDFs",
+            initialdir=str(self._custom_output_dir or output_dir()),
+        )
+        if chosen:
+            self._custom_output_dir = Path(chosen)
+            self.out_dir_var.set(str(self._custom_output_dir))
+
+    def _effective_output_dir(self) -> Path:
+        d = self._custom_output_dir or output_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _update_preflight(self) -> None:
+        """Refresh the pre-flight summary panel from current XML + local state."""
+        for widget in self._preflight_labels:
+            widget.destroy()
+        self._preflight_labels.clear()
+
+        if not self.xml_paths and not self.local_fronts:
+            self._preflight_frame.pack_forget()
+            return
+
+        def _row(parts: list[tuple[str, bool]]) -> None:
+            """Create one line: list of (text, is_warn) packed left-to-right."""
+            frame = ttk.Frame(self._preflight_inner)
+            frame.pack(fill=tk.X)
+            self._preflight_labels.append(frame)
+            for text, is_warn in parts:
+                kw = (
+                    {"foreground": "#cc0000", "font": ("Segoe UI", 10, "bold")}
+                    if is_warn
+                    else {"foreground": "#444"}
+                )
+                ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
+
+        xml_total = 0
+
+        for p in self.xml_paths:
+            order = self._xml_orders.get(p)
+            if order is None:
+                _row([(f"• {p.name}: (no se pudo leer)", False)])
+                continue
+            n = sum(len(card.slots) for card in order.fronts)
+            xml_total += n
+            rem = n % CARDS_PER_PAGE
+            blanks = (CARDS_PER_PAGE - rem) if rem else 0
+            if blanks:
+                _row([
+                    (f"• {p.name}: {n} cartas, ", False),
+                    (f"{blanks} huecos", True),
+                ])
+            else:
+                _row([(f"• {p.name}: {n} cartas", False)])
+
+        local_count = len(self.local_fronts)
+        if local_count:
+            _row([(f"• Locales: {local_count} carta(s)", False)])
+
+        total_cards = xml_total + local_count
+        if total_cards:
+            pairs = math.ceil(total_cards / CARDS_PER_PAGE)
+            rem = total_cards % CARDS_PER_PAGE
+            blanks = (CARDS_PER_PAGE - rem) if rem else 0
+
+            bled_dir = work_dir() / "bled"
+            cached = len([f for f in bled_dir.iterdir() if f.is_file()]) if bled_dir.exists() else 0
+            cache_str = f" · {cached} imagen(es) en caché" if cached else ""
+
+            if blanks:
+                _row([
+                    (f"Total: {total_cards} cartas · {pairs} par(es) de páginas{cache_str} · ", False),
+                    (f"⚠ {blanks} huecos en la última página", True),
+                ])
+            else:
+                _row([(f"Total: {total_cards} cartas · {pairs} par(es) de páginas{cache_str}", False)])
+
+        self._preflight_frame.pack(fill=tk.X, pady=(8, 0))
+
     def _refresh_generate_state(self) -> None:
         ready = False
         if self.xml_paths:
@@ -988,6 +1288,7 @@ class App:
         else:
             self.soriano_btn.state(["disabled"])
             self.fronts_only_btn.state(["disabled"])
+        self._update_preflight()
 
     def _resolve_extra_backs(self) -> list[Path | None]:
         """One entry per local front: the explicit Path the user chose, or
@@ -1033,6 +1334,27 @@ class App:
         reports = []
         plan_ = None
         if self.xml_paths:
+            # Show a single confirmation if any XML has validation warnings.
+            all_xml_warnings = [
+                (p, ws)
+                for p in self.xml_paths
+                if (ws := self._xml_validations.get(p))
+            ]
+            if all_xml_warnings:
+                lines = []
+                for p, ws in all_xml_warnings:
+                    for w in ws:
+                        lines.append(f"[{p.name}] {w.message}")
+                preview = "\n".join(f"• {l}" for l in lines[:10])
+                more = f"\n… y {len(lines) - 10} más" if len(lines) > 10 else ""
+                if not messagebox.askyesno(
+                    APP_TITLE,
+                    f"Se encontraron {len(lines)} advertencia(s) en los XML:\n\n"
+                    f"{preview}{more}\n\n¿Continuar de todos modos?",
+                    icon=messagebox.WARNING,
+                ):
+                    return
+
             try:
                 reports = analyze(self.xml_paths)
             except Exception as e:
@@ -1071,6 +1393,8 @@ class App:
 
         self.running = True
         self.cancel_event.clear()
+        self._dl_speed_str = ""
+        self.timing_var.set("")
         self.soriano_btn.state(["disabled"])
         self.fronts_only_btn.state(["disabled"])
         self.stop_btn.state(["!disabled"])
@@ -1086,6 +1410,12 @@ class App:
     def _request_stop(self) -> None:
         if not self.running:
             return
+        if not messagebox.askyesno(
+            APP_TITLE,
+            "¿Seguro que quieres detener el proceso en curso?",
+            icon=messagebox.WARNING,
+        ):
+            return
         self.cancel_event.set()
         self.stop_btn.state(["disabled"])
         self.status_var.set("Cancelando…")
@@ -1094,13 +1424,34 @@ class App:
         run_dir = None
         wd = None
         try:
-            out = output_dir()
+            out = self._effective_output_dir()
             wd = work_dir()
+
+            # Checkpoint: notify if cached crops exist from a previous failed run
+            bled_dir = wd / "bled"
+            if bled_dir.exists():
+                cached = [f for f in bled_dir.iterdir() if f.is_file()]
+                if cached:
+                    self.events.put(("checkpoint_found", len(cached)))
+
             run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
             run_dir.mkdir(parents=True, exist_ok=True)
             generated: list[Path] = []
             extra_backs = self._resolve_extra_backs()
             crop_map = self._build_crop_map()
+
+            # Phase timing tracking
+            _run_start = time.time()
+            _phase_first: dict[str, float] = {}
+            _phase_done: dict[str, float] = {}
+
+            def _track(stage: str, done: int, total: int) -> None:
+                now = time.time()
+                if stage not in _phase_first:
+                    _phase_first[stage] = now
+                if done == total and total > 0:
+                    _phase_done[stage] = now
+
             if plan_ is not None:
                 # --- Verify Drive access before downloading ---------------
                 xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
@@ -1114,6 +1465,7 @@ class App:
                     self.events.put(("progress", "verify", 0, len(to_check), "XML seleccionados"))
 
                     def _verify_cb(done, total):
+                        _track("verify", done, total)
                         self.events.put(("progress", "verify", done, total, "XML seleccionados"))
 
                     inaccessible = check_drive_access(to_check, _verify_cb)
@@ -1126,13 +1478,14 @@ class App:
                                 break
 
                 if self.cancel_event.is_set():
-                    self.events.put(("cancelled", run_dir, wd))
+                    self.events.put(("cancelled", run_dir))
                     return
 
                 # label shown during download/crop (global phases)
                 _pdf_label = [""]
 
                 def cb(stage, done, total):
+                    _track(stage, done, total)
                     name = _pdf_label[0] if stage == "pdf" else "Todas las imágenes"
                     self.events.put(("progress", stage, done, total, name))
 
@@ -1148,6 +1501,9 @@ class App:
                 def on_xml_crop_progress(xml_name, done, total):
                     self.events.put(("xml_crop_progress", xml_name, done, total))
 
+                def on_speed_update(speed_mbps: float, eta_sec: float) -> None:
+                    self.events.put(("download_speed", speed_mbps, eta_sec))
+
                 pdfs = run_plan(
                     plan_.jobs, run_dir, wd, cb,
                     cancel_event=self.cancel_event,
@@ -1158,6 +1514,7 @@ class App:
                     on_xml_download_progress=on_xml_download_progress,
                     on_xml_crop_progress=on_xml_crop_progress,
                     fronts_only=fronts_only,
+                    on_speed_update=on_speed_update,
                 )
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
@@ -1166,6 +1523,7 @@ class App:
                 base = "locales"
                 self.events.put(("file", 1, 1, f"{base} (solo imágenes locales)"))
                 def cb(stage, done, total, _label=base):
+                    _track(stage, done, total)
                     self.events.put(("progress", stage, done, total, _label))
                 pdfs = run_locals_only(
                     list(self.local_fronts), self.local_backs[0],
@@ -1177,19 +1535,40 @@ class App:
                 )
                 generated.extend(pdfs)
                 manifest = None
+
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
-            self.events.put(("done", generated, manifest, run_dir))
+
+            # Build timing summary
+            def _fmt_dur(sec: float) -> str:
+                return f"{int(sec) // 60}m {int(sec) % 60}s" if sec >= 60 else f"{sec:.0f}s"
+
+            timing_parts = []
+            for stage in ("verify", "download", "crop", "pdf"):
+                if stage in _phase_first and stage in _phase_done:
+                    dur = _phase_done[stage] - _phase_first[stage]
+                    label = {"verify": "Verif.", "download": "Descarga",
+                             "crop": "Recorte", "pdf": "PDF"}.get(stage, stage)
+                    timing_parts.append(f"{label}: {_fmt_dur(dur)}")
+            total_dur = time.time() - _run_start
+            timing_str = "  ".join(timing_parts)
+            if timing_str:
+                timing_str += f"  Total: {_fmt_dur(total_dur)}"
+
+            self.events.put(("done", generated, manifest, run_dir, timing_str))
+        except DownloadPartialError as e:
+            self.events.put(("partial_download_error", e.permission_errors,
+                             e.timeout_errors, e.xml_context, run_dir))
         except DownloadRateLimitError:
-            self.events.put(("rate_limit_error", run_dir, wd))
+            self.events.put(("rate_limit_error", run_dir))
         except DownloadPermissionError as e:
-            self.events.put(("permission_error", e.card_name, e.xml_name, e.position, run_dir, wd))
+            self.events.put(("permission_error", e.card_name, e.xml_name, e.position, run_dir))
         except DownloadTimeoutError as e:
-            self.events.put(("timeout_error", e.card_name, e.xml_name, e.position, run_dir, wd))
+            self.events.put(("timeout_error", e.card_name, e.xml_name, e.position, run_dir))
         except Cancelled:
-            self.events.put(("cancelled", run_dir, wd))
+            self.events.put(("cancelled", run_dir))
         except Exception as e:
-            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir, wd))
+            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir))
 
     @staticmethod
     def _cleanup_workdir(wd: Path) -> None:
@@ -1223,13 +1602,56 @@ class App:
             label = STAGE_LABELS.get(stage, stage)
             pct = (done / total * 100.0) if total else 0
             self.progress["value"] = pct
-            self.status_var.set(f"{name} — {label}: {done}/{total}")
+            speed_info = (
+                f" — {self._dl_speed_str}" if stage == "download" and self._dl_speed_str else ""
+            )
+            self.status_var.set(f"{name} — {label}: {done}/{total}{speed_info}")
+        elif kind == "download_speed":
+            _, speed_mbps, eta_sec = ev
+            mins = int(eta_sec) // 60
+            secs = int(eta_sec) % 60
+            eta_str = f"{mins}:{secs:02d}" if mins > 0 else f"{secs}s"
+            self._dl_speed_str = f"{speed_mbps:.1f} MB/s — ETA {eta_str}"
+        elif kind == "checkpoint_found":
+            _, count = ev
+            self.status_var.set(
+                f"Se encontraron {count} imagen(es) en caché de una ejecución anterior. "
+                "Retomando desde el crop."
+            )
+        elif kind == "partial_download_error":
+            _, perm_errors, timeout_errors, xml_context, run_dir = ev
+            if run_dir is not None:
+                self._cleanup_run_dir(run_dir)
+            parts = []
+            if perm_errors:
+                names = ", ".join(f"«{name}»" for _, name in perm_errors[:3])
+                more = f" y {len(perm_errors) - 3} más" if len(perm_errors) > 3 else ""
+                parts.append(
+                    f"{len(perm_errors)} imagen(es) sin permiso de descarga: {names}{more}.\n"
+                    "Pide al creador del proxy que restaure los permisos de Google Drive."
+                )
+            if timeout_errors:
+                names = ", ".join(f"«{name}»" for _, name in timeout_errors[:3])
+                more = f" y {len(timeout_errors) - 3} más" if len(timeout_errors) > 3 else ""
+                parts.append(
+                    f"{len(timeout_errors)} imagen(es) con tiempo de espera agotado: {names}{more}.\n"
+                    "Las imágenes descargadas correctamente están en caché. "
+                    "Vuelve a intentarlo en unos minutos."
+                )
+            total_failed = len(perm_errors) + len(timeout_errors)
+            self.status_var.set(f"Error: {total_failed} imagen(es) no se pudieron descargar.")
+            self._finish_running()
+            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
         elif kind == "done":
-            _, pdfs, manifest, run_dir = ev
+            _, pdfs, manifest, run_dir, timing_str = ev
             self.progress["value"] = 100
             extra = f" Resumen en {manifest.name}." if manifest else ""
             self.status_var.set(f"Listo. {len(pdfs)} PDF(s) generados en {run_dir.name}.{extra}")
+            if timing_str:
+                self.timing_var.set(f"Tiempos — {timing_str}")
+                _log.info("Phase timings: %s", timing_str)
             self._finish_running()
+            _notify(APP_TITLE, f"¡Listo! {len(pdfs)} PDF(s) generados correctamente.")
             self._open_output_folder(run_dir)
         elif kind == "xml_download_progress":
             _, xml_name, done, total = ev
@@ -1251,20 +1673,16 @@ class App:
                 self.cancel_event.set()
             confirm_event.set()
         elif kind == "cancelled":
-            _, run_dir, wd = ev
+            _, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
-            if wd is not None and not self.keep_cache.get():
-                self._cleanup_workdir(wd)
             self.progress["value"] = 0
-            self.status_var.set("Proceso detenido.")
+            self.status_var.set("Proceso detenido. Las imágenes descargadas se conservan para retomar.")
             self._finish_running()
         elif kind == "rate_limit_error":
-            _, run_dir, wd = ev
+            _, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
-            if wd is not None and not self.keep_cache.get():
-                self._cleanup_workdir(wd)
             self.status_var.set("Error: demasiadas descargas en poco tiempo.")
             self._finish_running()
             messagebox.showerror(
@@ -1275,11 +1693,9 @@ class App:
                 "así evitamos volver a descargarlas cada vez.",
             )
         elif kind == "permission_error":
-            _, card_name, xml_name, position, run_dir, wd = ev
+            _, card_name, xml_name, position, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
-            if wd is not None and not self.keep_cache.get():
-                self._cleanup_workdir(wd)
             parts = [f"Se ha fallado descargando «{card_name}»"]
             if xml_name:
                 parts[0] += f" en el {xml_name}"
@@ -1296,11 +1712,9 @@ class App:
             self._finish_running()
             messagebox.showerror(APP_TITLE, "\n\n".join(parts))
         elif kind == "timeout_error":
-            _, card_name, xml_name, position, run_dir, wd = ev
+            _, card_name, xml_name, position, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
-            if wd is not None and not self.keep_cache.get():
-                self._cleanup_workdir(wd)
             parts = [f"Se ha agotado el tiempo de espera descargando «{card_name}»"]
             if xml_name:
                 parts[0] += f" en el {xml_name}"
@@ -1317,12 +1731,10 @@ class App:
             self._finish_running()
             messagebox.showerror(APP_TITLE, "\n\n".join(parts))
         elif kind == "error":
-            _, msg, run_dir, wd = ev
+            _, msg, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
-            if wd is not None and not self.keep_cache.get():
-                self._cleanup_workdir(wd)
-            self.status_var.set("Error durante la generación.")
+            self.status_var.set("Error durante la generación. Las imágenes en caché se conservan.")
             self._finish_running()
             messagebox.showerror(APP_TITLE, msg)
 

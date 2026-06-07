@@ -21,7 +21,8 @@ except ImportError:
 
 THREADS = 5
 _MAX_RETRIES = 4
-_INITIAL_BACKOFF = 1.0  # seconds; doubles on each retry (1 → 2 → 4 → 8)
+_INITIAL_BACKOFF = 1.0       # seconds; doubles on each retry (1 → 2 → 4 → 8)
+_TIMEOUT_RETRY_DELAY = 5.0   # seconds to wait before retrying timed-out images
 
 # Per-image download timeouts.  The read timeout fires only when *no data is
 # received* for that many seconds — it does not limit total download time, so
@@ -49,6 +50,31 @@ _install_download_timeout()
 class DownloadRateLimitError(Exception):
     """Raised when Google Drive rate-limits us and all retries are exhausted."""
     pass
+
+
+class DownloadPartialError(Exception):
+    """Raised by download_all when individual images fail but the batch continues.
+
+    Collects *all* per-image failures so the caller can report them together
+    instead of stopping at the first error.
+
+    Attributes:
+        permission_errors: list of (drive_id, card_name) with revoked Drive access.
+        timeout_errors:    list of (drive_id, card_name) that still timed out
+                           after a retry.
+        xml_context:       drive_id → (xml_filename, 1-based position);
+                           populated by the pipeline after enrichment.
+    """
+    def __init__(
+        self,
+        permission_errors: list[tuple[str, str]],
+        timeout_errors: list[tuple[str, str]],
+    ) -> None:
+        self.permission_errors = permission_errors
+        self.timeout_errors = timeout_errors
+        self.xml_context: dict[str, tuple[str, int]] = {}
+        n = len(permission_errors) + len(timeout_errors)
+        super().__init__(f"{n} imagen(es) no se pudieron descargar")
 
 
 class DownloadPermissionError(Exception):
@@ -149,12 +175,15 @@ def download_all(
     progress_callback=None,
     cancel_event: Event | None = None,
     on_image_done=None,
+    on_speed_update=None,
 ) -> dict[str, Path]:
     """Download multiple images in parallel.
 
     Returns a mapping of drive_id → local Path.
     progress_callback(completed, total) is called after each download.
     on_image_done(drive_id) is called after each image finishes (cached or downloaded).
+    on_speed_update(speed_mbps, eta_sec) is called after each download with running
+    speed and estimated remaining time (both floats); only called after ≥0.1 s elapsed.
     If `cancel_event` is provided and gets set mid-run, pending downloads are
     cancelled, in-flight ones are awaited (gdown is uninterruptible), and the
     function raises `Cancelled` once the executor has joined.
@@ -163,6 +192,14 @@ def download_all(
     results: dict[str, Path] = {}
     total = len(id_name_pairs)
     cancelled = False
+
+    _dl_start = time.time()
+    _bytes_done = 0
+    _count_done = 0
+
+    # Per-image failures collected across the whole batch.
+    _perm_errors: list[tuple[str, str]] = []
+    _timeout_errors: list[tuple[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=THREADS) as executor:
         futures = {
@@ -177,9 +214,31 @@ def download_all(
                         f.cancel()
                     break
                 drive_id = futures[future]
-                results[drive_id] = future.result()
-                if on_image_done:
-                    on_image_done(drive_id)
+                try:
+                    results[drive_id] = future.result()
+                except DownloadPermissionError as exc:
+                    # Permanent failure — record and continue the rest.
+                    _perm_errors.append((exc.drive_id, exc.card_name))
+                    _log.warning("Permission denied (skipping): %s", exc.card_name)
+                except DownloadTimeoutError as exc:
+                    # Transient failure — record for a retry after the batch.
+                    _timeout_errors.append((exc.drive_id, exc.card_name))
+                    _log.warning("Timeout (will retry): %s", exc.card_name)
+                else:
+                    _count_done += 1
+                    try:
+                        _bytes_done += results[drive_id].stat().st_size
+                    except OSError:
+                        pass
+                    elapsed = time.time() - _dl_start
+                    if elapsed > 0.1 and on_speed_update and _bytes_done > 0:
+                        speed_bps = _bytes_done / elapsed
+                        remaining = total - _count_done
+                        avg_bytes = _bytes_done / _count_done
+                        eta_sec = avg_bytes * remaining / speed_bps if speed_bps > 0 else 0.0
+                        on_speed_update(speed_bps / (1024 * 1024), eta_sec)
+                    if on_image_done:
+                        on_image_done(drive_id)
                 if progress_callback:
                     progress_callback(i, total)
         except Exception:
@@ -189,4 +248,25 @@ def download_all(
 
     if cancelled:
         raise Cancelled()
+
+    # Retry timed-out images once, sequentially, after a brief pause.
+    if _timeout_errors:
+        _log.info("Retrying %d timed-out image(s) after %.0fs…", len(_timeout_errors),
+                  _TIMEOUT_RETRY_DELAY)
+        time.sleep(_TIMEOUT_RETRY_DELAY)
+        still_failed: list[tuple[str, str]] = []
+        for drive_id, card_name in _timeout_errors:
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            try:
+                results[drive_id] = download_image(drive_id, dest_dir, card_name)
+                _log.info("Retry succeeded: %s", card_name)
+            except Exception as exc:
+                still_failed.append((drive_id, card_name))
+                _log.error("Retry failed for %s: %s", card_name, exc)
+        _timeout_errors = still_failed
+
+    if _perm_errors or _timeout_errors:
+        raise DownloadPartialError(_perm_errors, _timeout_errors)
+
     return results
