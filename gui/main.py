@@ -1219,17 +1219,18 @@ class App:
             self._preflight_frame.pack_forget()
             return
 
-        def _row(parts: list[tuple[str, bool]]) -> None:
-            """Create one line: list of (text, is_warn) packed left-to-right."""
+        def _row(parts: list[tuple[str, str]]) -> None:
+            """Create one line: list of (text, style) where style is 'normal', 'bold', or 'warn'."""
             frame = ttk.Frame(self._preflight_inner)
             frame.pack(fill=tk.X)
             self._preflight_labels.append(frame)
-            for text, is_warn in parts:
-                kw = (
-                    {"foreground": "#cc0000", "font": ("Segoe UI", 10, "bold")}
-                    if is_warn
-                    else {"foreground": "#444"}
-                )
+            for text, style in parts:
+                if style == "warn":
+                    kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 10, "bold")}
+                elif style == "bold":
+                    kw = {"foreground": "#444", "font": ("Segoe UI", 10, "bold")}
+                else:
+                    kw = {"foreground": "#444"}
                 ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
 
         xml_total = 0
@@ -1237,23 +1238,23 @@ class App:
         for p in self.xml_paths:
             order = self._xml_orders.get(p)
             if order is None:
-                _row([(f"• {p.name}: (no se pudo leer)", False)])
+                _row([(f"• {p.name}: (no se pudo leer)", "normal")])
                 continue
             n = sum(len(card.slots) for card in order.fronts)
             xml_total += n
-            rem = n % CARDS_PER_PAGE
-            blanks = (CARDS_PER_PAGE - rem) if rem else 0
-            if blanks:
-                _row([
-                    (f"• {p.name}: {n} cartas, ", False),
-                    (f"{blanks} huecos", True),
-                ])
-            else:
-                _row([(f"• {p.name}: {n} cartas", False)])
+            _row([
+                (f"• {p.name}: ", "normal"),
+                (f"{n}", "bold"),
+                (" cartas", "normal"),
+            ])
 
         local_count = len(self.local_fronts)
         if local_count:
-            _row([(f"• Locales: {local_count} carta(s)", False)])
+            _row([
+                ("• Locales: ", "normal"),
+                (f"{local_count}", "bold"),
+                (" carta(s)", "normal"),
+            ])
 
         total_cards = xml_total + local_count
         if total_cards:
@@ -1267,11 +1268,17 @@ class App:
 
             if blanks:
                 _row([
-                    (f"Total: {total_cards} cartas · {pairs} par(es) de páginas{cache_str} · ", False),
-                    (f"⚠ {blanks} huecos en la última página", True),
+                    ("Total: ", "normal"),
+                    (f"{total_cards}", "bold"),
+                    (f" cartas · {pairs} par(es) de páginas{cache_str} · ", "normal"),
+                    (f"⚠ {blanks} huecos en la última página", "warn"),
                 ])
             else:
-                _row([(f"Total: {total_cards} cartas · {pairs} par(es) de páginas{cache_str}", False)])
+                _row([
+                    ("Total: ", "normal"),
+                    (f"{total_cards}", "bold"),
+                    (f" cartas · {pairs} par(es) de páginas{cache_str}", "normal"),
+                ])
 
         self._preflight_frame.pack(fill=tk.X, pady=(8, 0))
 

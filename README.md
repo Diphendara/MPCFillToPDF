@@ -13,6 +13,33 @@ El XML de MPCFill referencia imágenes alojadas en Google Drive. Esta herramient
 
 ---
 
+## Clave de API de Google Drive (recomendado)
+
+Las imágenes de los XMLs de MPCFill están alojadas en Google Drive. Sin configuración adicional, el programa las descarga usando `gdown` (peticiones anónimas), que puede recibir errores **429 — rate limit** al descargar muchas imágenes seguidas.
+
+Para evitarlo, configura una **API Key de Google Drive** (gratuita, no requiere OAuth ni cuenta de servicio):
+
+1. Ve a [Google Cloud Console](https://console.cloud.google.com/).
+2. Crea un proyecto (o usa uno existente).
+3. Activa la **Google Drive API** (Biblioteca → busca "Google Drive API" → Habilitar).
+4. Ve a **Credenciales** → **Crear credenciales** → **Clave de API**.
+5. (Opcional pero recomendado) Restringe la clave a la Google Drive API.
+6. Copia el archivo `config.example.json` y renómbralo a `config.json`:
+   ```
+   cp config.example.json config.json
+   ```
+7. Abre `config.json` y pega tu clave:
+   ```json
+   {
+     "google_drive_api_key": "AIza..."
+   }
+   ```
+
+> **`config.json` está en `.gitignore` y nunca se sube al repositorio.**
+> Si no configuras la clave, el programa sigue funcionando con `gdown` como antes.
+
+---
+
 ## Instalación
 
 ### 1. Requisitos previos
