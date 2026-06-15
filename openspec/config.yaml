@@ -1,0 +1,34 @@
+schema: spec-driven
+
+
+context: |
+ CLAUDE.md
+
+rules:
+  proposal:
+    - Must use grill-me skill
+    - Keep the proposal under 500 words unless the change is unusually broad.
+    - Cover only why, what changes, scope, non-goals, capabilities, and impact.
+    - Move implementation choices and file-level details to design.md.
+
+  specs:
+    - Treat specs as the behavioral contract, not an implementation plan.
+    - Include only observable behavior, user outcomes, and external contracts.
+    - Every new feature or change must define comprehensive test scenarios, edge cases, and expected behaviors.
+    - Exclude code structure, file paths, components, commands, and architecture decisions.
+
+  design:
+    - Keep design sections concise and decision-oriented.
+    - Include concrete files, routes, assets, dependencies, or integrations only when they clarify implementation.
+    - Do not repeat proposal motivation or spec requirements.
+
+  tasks:
+    - Write each task as one concrete deliverable.
+    - Include validation tasks for changed behavior.
+    - Avoid restating proposal, specs, or design in task text.
+    - Always include specific tasks to create unit and integration tests for every specification.
+    - Ensure test coverage is comprehensive before completing the task.
+    - The final task of any specification MUST be to commit the changes to the local Git repository.
+    - Break tasks into chunks of max 2 hours.
+    - Update README.md with new functionality descriptiond and new command line options if necessary
+    - Update CLAUDE.md file with a detailed explanation of the changes and configuration options

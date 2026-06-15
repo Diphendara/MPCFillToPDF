@@ -141,13 +141,40 @@ Lanza la ventana:
 python -m gui.main
 ```
 
-Aparece una ventana con:
+Al iniciar la aplicación, se presenta una pantalla de bienvenida (**Launcher**) que permite seleccionar el modo de trabajo:
 
+- **MPCFill (XML local)**: Ejecuta la aplicación de escritorio para procesar archivos XML locales de MPCFill.
+- **Web Load (Moxfield)**: Ejecuta una ventana de diseño similar donde se gestiona la carga de mazos directamente desde Moxfield vía web.
+
+### MPCFill (XML local)
 - **Seleccionar XMLs…** abre el explorador para elegir uno o varios `.xml` (Ctrl+click para varios).
-- **Lista** con los archivos en cola y botones para *Quitar selección* / *Vaciar*.
-- **Conservar caché**: si está marcado, no borra `workdir/raw` y `workdir/bled` al terminar (acelera futuras regeneraciones del mismo XML). **Por defecto desactivado.**
-- **Generar PDF(s)**: arranca el proceso. Solo se activa cuando hay al menos un XML en la lista.
-- **Estado + barra de progreso** se actualizan durante la generación.
+- **Vaciar** limpia la lista de proyectos en cola.
+- **Imágenes locales (opcional)**: Permite añadir imágenes locales de traseras y frontales con opción de recortar bordes.
+
+### Web Load (Moxfield)
+- **Introduce la URL del mazo de Moxfield**: Un campo de texto directo donde pegar la URL y presionar **Cargar** para descargar y analizar el mazo.
+- **Cartas Importadas (Moxfield)**: Muestra las cartas importadas del mazo desglosadas por zonas (Commanders, Mainboard, Sideboard, Tokens).
+- **Configuración de Descarga**:
+  - **Modo de descarga**:
+    - *Usar edición exacta del mazo*: Descarga la edición exacta (set y número de coleccionista) especificada en el mazo de Moxfield.
+    - *Mejor imagen disponible*: Busca y compara la calidad de todas las impresiones de la carta en Scryfall, seleccionando la de mayor resolución/nitidez.
+    - *Preferir versión en Español*: Prioriza la descarga de la carta en español. Si no está disponible o no cumple con el umbral de calidad, busca alternativas en español y finalmente hace fallback a inglés.
+  - **Zonas a descargar**: Permite seleccionar qué zonas del mazo descargar (Comandantes y Mazo Principal activos por defecto; Banquillo y Tokens inactivos por defecto).
+  - **Umbral de calidad**: Permite establecer un umbral de calidad mínimo basado en la varianza del operador Laplaciano. Puedes elegir entre dos algoritmos:
+    - *Pillow (por defecto)*: Calcula la varianza del Laplaciano usando enteros de 8 bits (con recorte de valores negativos a 0). El valor recomendado por defecto es **100**.
+    - *OpenCV*: Calcula la varianza del Laplaciano con precisión doble de 64 bits sin recorte. El valor recomendado por defecto es **300**.
+    Toggles con el checkbox "Usar algoritmo OpenCV", el cual actualiza automáticamente el valor del umbral según corresponda. Las imágenes por debajo de este umbral se descartan y se registran como faltantes.
+- **Descargar imágenes de Scryfall**: Botón que descarga las imágenes reales de las cartas importadas en segundo plano desde Scryfall, aplicando el rate limit de la API (0.5s de delay), la caché global en `workdir/scryfall_cache/`, la comprobación de calidad utilizando el método seleccionado (Pillow o OpenCV) y generando un reporte `missing_cards.txt` en caso de fallos.
+- **Limpiar Caché**: Abre un diálogo de opciones que permite eliminar selectivamente carpetas de caché y descargas temporales (`workdir/scryfall`, `workdir/scryfall_cache`, y/o `workdir/raw` y `workdir/bled`), previa confirmación.
+- **Generar PDF con traseras / solo frontales**: Genera el archivo PDF listo para imprimir para el mazo de Moxfield y cualquier carta opcional añadida.
+  - **Generar PDF con traseras**: Requiere al menos una imagen en la lista de **Traseras** del panel derecho para actuar como el reverso por defecto del mazo. Las cartas de doble cara (DFCs) usan de forma automática su trasera correspondiente de Scryfall (`_back.png`), y las cartas de una sola cara usan el reverso por defecto.
+  - **Generar PDF solo frontales**: Genera el archivo PDF omitiendo las páginas traseras, sin necesidad de definir un reverso por defecto.
+  - Las imágenes procedentes de Scryfall no se recortan por defecto (`crop_borders = False`), mientras que las imágenes locales opcionales del panel derecho respetan sus propios checkboxes de recorte de bordes.
+
+
+### Controles Comunes (Panel Inferior)
+- **Conservar caché**: si está marcado, no borra las imágenes descargadas (acelera futuras ejecuciones).
+- **Estado + barra de progreso**: Informan del progreso actual.
 
 Antes de generar:
 - Si las barajas pueden **fusionarse** sin dejar huecos (suma múltiplo de 9), aparece un diálogo informativo con el plan.

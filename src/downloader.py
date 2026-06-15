@@ -307,3 +307,13 @@ def download_all(
         raise DownloadPartialError(_perm_errors, _timeout_errors)
 
     return results
+
+
+def evaluate_image_quality(image_path: Path | str, method: str = "pillow") -> float:
+    """
+    Evaluates the quality score of an image using the selected method (Pillow or OpenCV).
+    Delegates to src.quality.evaluate_image_quality.
+    """
+    from src.quality import evaluate_image_quality as eq
+    return eq(image_path, method)
+

@@ -448,13 +448,14 @@ class App:
         top.columnconfigure(0, weight=1, uniform="cols")
         top.columnconfigure(1, weight=1, uniform="cols")
         top.rowconfigure(0, weight=1)
+        top.rowconfigure(1, weight=1)
 
         self._build_xml_pane(top)
         self._build_locals_pane(top)
 
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         xml_frame = ttk.LabelFrame(parent, text="Archivos XML")
-        xml_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        xml_frame.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 4))
         self._xml_drop_frame = xml_frame
         xml_frame.columnconfigure(0, weight=1)
         xml_frame.rowconfigure(0, weight=1)
@@ -487,9 +488,10 @@ class App:
         ttk.Button(xml_btn_row, text="Vaciar",
                    command=self._clear_xmls).pack(side=tk.LEFT, padx=6)
 
+
     def _build_locals_pane(self, parent: ttk.Frame) -> None:
         local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
-        local_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        local_frame.grid(row=0, column=1, rowspan=2, sticky="nsew", padx=(4, 0))
         self._locals_drop_frame = local_frame
         local_frame.columnconfigure(0, weight=1)
         local_frame.rowconfigure(1, weight=1, uniform="locals")  # backs
@@ -606,10 +608,9 @@ class App:
         )
         return canvas, inner, window_id
 
-    # ------------------------------------------------------------------
-    # XML pickers
-    # ------------------------------------------------------------------
+
     def _pick_xmls(self) -> None:
+
         paths = filedialog.askopenfilenames(
             title="Selecciona archivos XML de MPCFill",
             filetypes=[("Archivos XML", "*.xml"), ("Todos", "*.*")],
@@ -1761,6 +1762,862 @@ class App:
             subprocess.Popen([opener, str(path)])
 
 
+class Launcher:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.choice = None
+        self.root.title("MPCFillToPDF Launcher")
+        self.root.geometry("450x450")
+        self.root.resizable(False, False)
+        
+        # Center the window
+        self.root.update_idletasks()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - rw) // 2
+        y = (sh - rh) // 2
+        self.root.geometry(f"450x450+{x}+{y}")
+        
+        # Main container
+        frm = ttk.Frame(root, padding=20)
+        frm.pack(fill=tk.BOTH, expand=True)
+        
+        # Load and display logo
+        logo_path = Path(__file__).resolve().parent.parent / "src" / "assets" / "launcher_logo.png"
+        if logo_path.exists():
+            try:
+                img = Image.open(logo_path)
+                img = img.resize((180, 180), Image.Resampling.LANCZOS)
+                self.logo_img = ImageTk.PhotoImage(img)
+                lbl_logo = ttk.Label(frm, image=self.logo_img)
+                lbl_logo.pack(pady=(10, 15))
+            except Exception as e:
+                _log.exception("Error loading launcher logo")
+                ttk.Label(frm, text="[Error Loading Logo]", foreground="red").pack(pady=10)
+        else:
+            ttk.Label(frm, text="[Logo Missing]", foreground="red").pack(pady=10)
+
+        # Title / Description
+        lbl_title = ttk.Label(frm, text="MPCFillToPDF", font=("Helvetica", 18, "bold"))
+        lbl_title.pack()
+        lbl_desc = ttk.Label(
+            frm, 
+            text="Selecciona el modo de trabajo para comenzar", 
+            font=("Helvetica", 10),
+            foreground="#666"
+        )
+        lbl_desc.pack(pady=(5, 20))
+        
+        # Button frame
+        btn_frm = ttk.Frame(frm)
+        btn_frm.pack(fill=tk.X, expand=True)
+        
+        self.btn_mpc = ttk.Button(
+            btn_frm, text="MPCFill (XML local)", 
+            command=self._choose_mpcfill,
+            width=20
+        )
+        self.btn_mpc.pack(side=tk.LEFT, expand=True, padx=5, ipady=5)
+        
+        self.btn_web = ttk.Button(
+            btn_frm, text="Web Load (Moxfield)", 
+            command=self._choose_web_load,
+            width=20
+        )
+        self.btn_web.pack(side=tk.RIGHT, expand=True, padx=5, ipady=5)
+        
+    def _choose_mpcfill(self) -> None:
+        self.choice = "mpcfill"
+        self.root.destroy()
+        
+    def _choose_web_load(self) -> None:
+        self.choice = "webload"
+        self.root.destroy()
+
+
+class CleanCacheDialog(tk.Toplevel):
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.title("Limpiar Caché")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        
+        frm = ttk.Frame(self, padding=20)
+        frm.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(frm, text="Selecciona los elementos que deseas eliminar:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, pady=(0, 10))
+        
+        self.scryfall_deck_var = tk.BooleanVar(value=True)
+        self.scryfall_cache_var = tk.BooleanVar(value=True)
+        self.mpcfill_cache_var = tk.BooleanVar(value=False)
+        
+        ttk.Checkbutton(frm, text="Descargas de Moxfield/Scryfall (mazos en workdir/scryfall)", variable=self.scryfall_deck_var).pack(anchor=tk.W, pady=4)
+        ttk.Checkbutton(frm, text="Caché global de Scryfall (imágenes en workdir/scryfall_cache)", variable=self.scryfall_cache_var).pack(anchor=tk.W, pady=4)
+        ttk.Checkbutton(frm, text="Caché de MPCFill (imágenes y recortes en workdir/raw y bled)", variable=self.mpcfill_cache_var).pack(anchor=tk.W, pady=4)
+        
+        ttk.Separator(frm, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
+        
+        btn_frm = ttk.Frame(frm)
+        btn_frm.pack(fill=tk.X)
+        
+        ttk.Button(btn_frm, text="Cancelar", command=self.destroy, width=10).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_frm, text="Aceptar", command=self._on_accept, width=10).pack(side=tk.RIGHT)
+        
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        px = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"+{px}+{py}")
+        
+        self.accepted = False
+        
+    def _on_accept(self) -> None:
+        self.accepted = True
+        self.destroy()
+
+
+class WebLoadApp(App):
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        root.title("MPCFillToPDF - Web Load")
+        root.geometry("1200x760")
+        root.minsize(1000, 660)
+
+        self.local_fronts = []
+        self.local_backs = []
+        self.front_back_paths = []
+        self.local_front_crop = []
+        self.local_back_crop = []
+        self._front_rows = []
+        self._back_rows = []
+
+        self.events = queue.Queue()
+        self.worker = None
+        self.cancel_event = threading.Event()
+        self.running = False
+        self.keep_cache = tk.BooleanVar(value=False)
+        self._custom_output_dir = None
+
+        self.exact_edition = tk.BooleanVar(value=True)
+        self.best_image = tk.BooleanVar(value=False)
+        self.prefer_spanish = tk.BooleanVar(value=True)
+
+        self.zone_commanders = tk.BooleanVar(value=True)
+        self.zone_mainboard = tk.BooleanVar(value=True)
+        self.zone_sideboard = tk.BooleanVar(value=False)
+        self.zone_tokens = tk.BooleanVar(value=False)
+
+        self.quality_threshold = tk.StringVar(value="100")
+        self.use_opencv_quality = tk.BooleanVar(value=False)
+        self.timing_var = tk.StringVar(value="")
+
+        self._build_ui()
+
+        self.root.after(80, self._drain_events)
+        self.root.after(200, self._setup_dnd)
+
+    def _build_ui(self) -> None:
+        pad = {"padx": 10, "pady": 6}
+        frm = ttk.Frame(self.root)
+        frm.pack(fill=tk.BOTH, expand=True, **pad)
+
+        # 1. BOTTOM PANEL (Controls and Progress)
+        bottom_controls = ttk.Frame(frm)
+        bottom_controls.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+
+        self.keep_cache_cb = ttk.Checkbutton(
+            bottom_controls, text="Guardar en el PC las imágenes entre ejecuciones",
+            variable=self.keep_cache,
+        )
+        self.keep_cache_cb.pack(anchor=tk.W)
+
+        ttk.Separator(bottom_controls, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+
+        self.soriano_btn = ttk.Button(
+            bottom_controls, text="Generar PDF con traseras (Para copisteria, con espejo horizontal)",
+            command=lambda: self._start(fronts_only=False),
+        )
+        self.soriano_btn.pack(fill=tk.X)
+        self.soriano_btn.state(["disabled"])
+
+        self.fronts_only_btn = ttk.Button(
+            bottom_controls, text="Generar PDF solo frontales",
+            command=lambda: self._start(fronts_only=True),
+        )
+        self.fronts_only_btn.pack(fill=tk.X, pady=(4, 0))
+        self.fronts_only_btn.state(["disabled"])
+
+        self.scryfall_download_btn = ttk.Button(
+            bottom_controls, text="Descargar imágenes de Scryfall",
+            command=self._on_download_scryfall_images,
+        )
+        self.scryfall_download_btn.pack(fill=tk.X, pady=(4, 0))
+        self.scryfall_download_btn.state(["disabled"])
+
+        self.clean_cache_btn = ttk.Button(
+            bottom_controls, text="Limpiar Caché",
+            command=self._on_clean_cache,
+        )
+        self.clean_cache_btn.pack(fill=tk.X, pady=(4, 0))
+
+        self.stop_btn = ttk.Button(
+            bottom_controls, text="Detener",
+            command=self._request_stop,
+        )
+
+        self.status_var = tk.StringVar(value="Listo. Introduce una URL de Moxfield.")
+        ttk.Label(bottom_controls, textvariable=self.status_var, anchor=tk.W).pack(fill=tk.X, pady=(10, 2))
+
+        self.progress = ttk.Progressbar(bottom_controls, mode="determinate", maximum=100)
+        self.progress.pack(fill=tk.X)
+
+        out_row = ttk.Frame(bottom_controls)
+        out_row.pack(fill=tk.X, pady=(8, 0))
+        self.out_dir_var = tk.StringVar(value=str(output_dir()))
+        self.out_label = ttk.Label(out_row, textvariable=self.out_dir_var,
+                                   foreground="#666", anchor=tk.W)
+        self.out_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(out_row, text="Cambiar…", command=self._pick_output_dir,
+                   width=9).pack(side=tk.RIGHT, padx=(6, 0))
+
+        # 2. TOP PANEL (Panels)
+        top = ttk.Frame(frm)
+        top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        top.columnconfigure(0, weight=1, uniform="cols")
+        top.columnconfigure(1, weight=1, uniform="cols")
+        top.rowconfigure(0, weight=1)
+        top.rowconfigure(1, weight=1)
+
+        self._build_moxfield_input_pane(top)
+        self._build_imported_cards_pane(top)
+        self._build_locals_pane(top)
+
+    def _on_exact_edition_changed(self) -> None:
+        if self.exact_edition.get():
+            self.best_image.set(False)
+
+    def _on_best_image_changed(self) -> None:
+        if self.best_image.get():
+            self.exact_edition.set(False)
+
+    def _validate_threshold(self, P: str) -> bool:
+        if P == "":
+            return True
+        return P.isdigit()
+
+    def _on_toggle_quality_method(self) -> None:
+        if self.use_opencv_quality.get():
+            self.quality_threshold.set("300")
+        else:
+            self.quality_threshold.set("100")
+
+    def _build_moxfield_input_pane(self, parent: ttk.Frame) -> None:
+        input_frame = ttk.LabelFrame(parent, text="Cargar Mazo Moxfield")
+        input_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        input_frame.columnconfigure(0, weight=1)
+        
+        lbl = ttk.Label(input_frame, text="Introduce la URL del mazo de Moxfield:", foreground="#555")
+        lbl.pack(padx=10, pady=(10, 2), anchor="w")
+
+        url_row = ttk.Frame(input_frame)
+        url_row.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.url_entry = ttk.Entry(url_row)
+        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        self.url_entry.focus_set()
+        
+        self.load_btn = ttk.Button(url_row, text="Cargar", command=self._load_url)
+        self.load_btn.pack(side=tk.RIGHT)
+
+        # Options Frame
+        opts_frame = ttk.LabelFrame(input_frame, text="Configuración de Descarga")
+        opts_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        opts_frame.columnconfigure(0, weight=1)
+        opts_frame.columnconfigure(1, weight=1)
+        opts_frame.columnconfigure(2, weight=1)
+        
+        # Column 0: Modes
+        mode_frm = ttk.Frame(opts_frame)
+        mode_frm.grid(row=0, column=0, sticky="nws", padx=5, pady=5)
+        
+        ttk.Label(mode_frm, text="Modo de descarga:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Checkbutton(
+            mode_frm, text="Usar edición exacta del mazo",
+            variable=self.exact_edition, command=self._on_exact_edition_changed
+        ).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(
+            mode_frm, text="Mejor imagen disponible",
+            variable=self.best_image, command=self._on_best_image_changed
+        ).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(
+            mode_frm, text="Preferir versión en Español",
+            variable=self.prefer_spanish
+        ).pack(anchor=tk.W, pady=2)
+        
+        # Column 1: Zones
+        zone_frm = ttk.Frame(opts_frame)
+        zone_frm.grid(row=0, column=1, sticky="nws", padx=5, pady=5)
+        
+        ttk.Label(zone_frm, text="Zonas a descargar:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        ttk.Checkbutton(zone_frm, text="Comandantes", variable=self.zone_commanders).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(zone_frm, text="Mazo Principal", variable=self.zone_mainboard).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(zone_frm, text="Banquillo (Sideboard)", variable=self.zone_sideboard).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(zone_frm, text="Tokens / Fichas", variable=self.zone_tokens).pack(anchor=tk.W, pady=2)
+        
+        # Column 2: Quality threshold
+        qual_frm = ttk.Frame(opts_frame)
+        qual_frm.grid(row=0, column=2, sticky="nws", padx=5, pady=5)
+        
+        ttk.Label(qual_frm, text="Umbral de calidad:", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        
+        vcmd = (self.root.register(self._validate_threshold), "%P")
+        self.threshold_entry = ttk.Entry(
+            qual_frm, textvariable=self.quality_threshold,
+            validate="key", validatecommand=vcmd, width=10
+        )
+        self.threshold_entry.pack(anchor=tk.W, pady=2)
+        
+        self.opencv_checkbox = ttk.Checkbutton(
+            qual_frm, text="Usar algoritmo OpenCV",
+            variable=self.use_opencv_quality,
+            command=self._on_toggle_quality_method
+        )
+        self.opencv_checkbox.pack(anchor=tk.W, pady=(4, 2))
+        
+        btn_row = ttk.Frame(input_frame)
+        btn_row.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttk.Button(btn_row, text="Vaciar", command=self._clear_moxfield).pack(side=tk.LEFT)
+
+
+    def _build_imported_cards_pane(self, parent: ttk.Frame) -> None:
+        imported_frame = ttk.LabelFrame(parent, text="Cartas Importadas (Moxfield)")
+        imported_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(4, 0))
+        imported_frame.columnconfigure(0, weight=1)
+        imported_frame.rowconfigure(0, weight=1)
+
+        text_frame = ttk.Frame(imported_frame)
+        text_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+
+        self.imported_text = tk.Text(
+            text_frame, wrap=tk.WORD, state=tk.DISABLED,
+            bg="#ffffff", height=10
+        )
+        self.imported_text.tag_configure("black_text", foreground="#000000")
+        self.imported_text.grid(row=0, column=0, sticky="nsew")
+
+        sb = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.imported_text.yview)
+        self.imported_text.configure(yscrollcommand=sb.set)
+        sb.grid(row=0, column=1, sticky="ns")
+
+    def _load_url(self) -> None:
+        url = self.url_entry.get().strip()
+        if not url:
+            return
+            
+        import src.moxfield as mf
+        if mf.is_moxfield_url(url):
+            deck_id = mf.extract_deck_id(url)
+            if not deck_id:
+                messagebox.showerror("Error", "No se pudo extraer el ID del mazo de Moxfield.")
+                return
+            self._import_moxfield_deck_bg(deck_id)
+        else:
+            messagebox.showerror("Error", "URL no soportada. Actualmente solo se admite Moxfield.")
+
+    def _import_moxfield_deck_bg(self, deck_id: str) -> None:
+        self.status_var.set("Descargando mazo de Moxfield...")
+        self.progress["value"] = 10
+        self.load_btn.state(["disabled"])
+        
+        def run_import():
+            import src.moxfield as mf
+            try:
+                deck_json = mf.download_deck(deck_id)
+                deck_data = mf.parse_deck(deck_json)
+                deck_data["id"] = deck_id
+                
+                lines = []
+
+                lines.append(f"Mazo: {deck_data['name']}")
+                lines.append(f"Formato: {deck_data['format'].upper()}")
+                if deck_data['author']:
+                    lines.append(f"Creador: {deck_data['author']}")
+                lines.append("=" * 45)
+                lines.append("")
+                
+                if deck_data["commanders"]:
+                    lines.append("--- Commanders ---")
+                    for c in deck_data["commanders"]:
+                        lines.append(f"{c['quantity']}x {c['name']} ({c['set']}) {c['cn']}")
+                    lines.append("")
+                    
+                if deck_data["mainboard"]:
+                    lines.append("--- Mainboard ---")
+                    for c in deck_data["mainboard"]:
+                        lines.append(f"{c['quantity']}x {c['name']} ({c['set']}) {c['cn']}")
+                    lines.append("")
+                    
+                if deck_data["sideboard"]:
+                    lines.append("--- Sideboard ---")
+                    for c in deck_data["sideboard"]:
+                        lines.append(f"{c['quantity']}x {c['name']} ({c['set']}) {c['cn']}")
+                    lines.append("")
+                    
+                if deck_data["tokens"]:
+                    lines.append("--- Tokens ---")
+                    for c in deck_data["tokens"]:
+                        lines.append(f"{c['quantity']}x {c['name']} ({c['set']}) {c['cn']}")
+                    lines.append("")
+                    
+                cards_text = "\n".join(lines)
+                self.events.put(("moxfield_success", deck_data["name"], cards_text, deck_data))
+                
+            except Exception as e:
+                _log.exception("Failed to import Moxfield deck")
+                self.events.put(("moxfield_error", str(e)))
+                
+        threading.Thread(target=run_import, daemon=True).start()
+
+    def _display_imported_cards(self, text_content: str) -> None:
+        self.imported_text.configure(state=tk.NORMAL)
+        self.imported_text.delete("1.0", tk.END)
+        self.imported_text.insert(tk.END, text_content, "black_text")
+        self.imported_text.configure(state=tk.DISABLED)
+
+    def _clear_moxfield(self) -> None:
+        self.url_entry.delete(0, tk.END)
+        self._display_imported_cards("")
+        self.status_var.set("Listo. Introduce una URL de Moxfield.")
+        self.progress["value"] = 0
+        self.deck_data = None
+        self._refresh_generate_state()
+
+    def _drain_events(self) -> None:
+        while True:
+            try:
+                ev = self.events.get_nowait()
+            except queue.Empty:
+                break
+            
+            kind = ev[0]
+            if kind == "moxfield_success":
+                _, deck_name, cards_text, deck_data = ev
+                self.deck_data = deck_data
+                self._display_imported_cards(cards_text)
+                self.status_var.set(f"Mazo Moxfield importado: {deck_name}")
+                self.progress["value"] = 100
+                self.load_btn.state(["!disabled"])
+                self._refresh_generate_state()
+            elif kind == "moxfield_error":
+                _, err_msg = ev
+                self.deck_data = None
+                self.status_var.set(f"Error cargando Moxfield: {err_msg}")
+                self.progress["value"] = 0
+                self.load_btn.state(["!disabled"])
+                self._refresh_generate_state()
+                messagebox.showerror("Error", f"No se pudo cargar el mazo desde Moxfield:\n\n{err_msg}")
+            elif kind == "scryfall_download_start":
+                _, total_cards = ev
+                self.running = True
+                self.load_btn.state(["disabled"])
+                self.progress["value"] = 0
+                self.status_var.set(f"Descargando imágenes de Scryfall (0/{total_cards})...")
+                self._refresh_generate_state()
+            elif kind == "scryfall_download_progress":
+                _, index, total_cards, percent, card_name = ev
+                self.progress["value"] = percent
+                self.status_var.set(f"Descargando ({index}/{total_cards}): {card_name}")
+            elif kind == "scryfall_download_success":
+                total_cards = ev[1]
+                failed_cards = ev[2] if len(ev) > 2 else []
+                self.running = False
+                self.load_btn.state(["!disabled"])
+                self.progress["value"] = 100
+                self.status_var.set(f"Descarga finalizada. {total_cards} imágenes procesadas.")
+                self._refresh_generate_state()
+                if failed_cards:
+                    failed_str = "\n".join(f"• {name}" for name in failed_cards)
+                    messagebox.showwarning(
+                        "Descarga incompleta",
+                        f"La descarga ha finalizado, pero las siguientes cartas no se pudieron descargar o no cumplieron con el umbral de calidad:\n\n{failed_str}\n\nSe ha creado un reporte en 'missing_cards.txt'."
+                    )
+                else:
+                    messagebox.showinfo("Éxito", "La descarga de imágenes de Scryfall ha finalizado con éxito.")
+
+            elif kind == "scryfall_download_error":
+                _, err_msg = ev
+                self.running = False
+                self.load_btn.state(["!disabled"])
+                self.progress["value"] = 0
+                self.status_var.set(f"Error en descarga: {err_msg}")
+                self._refresh_generate_state()
+                messagebox.showerror("Error", f"Error durante la descarga de imágenes:\n\n{err_msg}")
+            else:
+                self._handle(ev)
+
+        self.root.after(80, self._drain_events)
+
+    def _setup_dnd(self) -> None:
+        if not _WINDND_AVAILABLE:
+            return
+        try:
+            for w in (self.backs_canvas, self.backs_inner):
+                windnd.hook_dropfiles(w, func=self._on_drop_backs)
+            for w in (self.fronts_canvas, self.fronts_inner):
+                windnd.hook_dropfiles(w, func=self._on_drop_fronts)
+        except Exception:
+            pass
+
+    def _refresh_generate_state(self) -> None:
+        self.soriano_btn.state(["disabled"])
+        self.fronts_only_btn.state(["disabled"])
+        has_deck = hasattr(self, "deck_data") and self.deck_data
+        if has_deck and not self.running:
+            self.scryfall_download_btn.state(["!disabled"])
+            
+            from src.scryfall import sanitize_filename
+            from gui.paths import work_dir
+            
+            deck_name = self.deck_data.get("name", "Moxfield_Deck")
+            deck_id = self.deck_data.get("id", "Unknown")
+            deck_dir = work_dir() / "scryfall" / f"{sanitize_filename(deck_name)}_{sanitize_filename(deck_id)}"
+            
+            if deck_dir.exists() and any(deck_dir.glob("*.png")):
+                self.soriano_btn.state(["!disabled"])
+                self.fronts_only_btn.state(["!disabled"])
+        else:
+            self.scryfall_download_btn.state(["disabled"])
+
+    def _on_download_scryfall_images(self) -> None:
+        if not hasattr(self, "deck_data") or not self.deck_data:
+            return
+            
+        threshold_str = self.quality_threshold.get().strip()
+        if not threshold_str:
+            messagebox.showerror("Error", "El umbral de calidad no puede estar vacío.")
+            return
+        try:
+            threshold = int(threshold_str)
+            if threshold <= 0:
+                messagebox.showerror("Error", "El umbral de calidad debe ser un número entero positivo.")
+                return
+        except ValueError:
+            messagebox.showerror("Error", "El umbral de calidad debe ser un número entero positivo.")
+            return
+
+        confirm = messagebox.askokcancel(
+            "Recordatorio de calidad",
+            "La calidad de las imágenes descargadas de Scryfall puede no ser óptima para impresión de alta calidad.\n\n¿Deseas continuar con la descarga en segundo plano?"
+        )
+        if not confirm:
+            return
+            
+        import src.scryfall as sf
+        self.cancel_event.clear()
+        
+        zones = {
+            "commanders": self.zone_commanders.get(),
+            "mainboard": self.zone_mainboard.get(),
+            "sideboard": self.zone_sideboard.get(),
+            "tokens": self.zone_tokens.get(),
+        }
+        
+        method = "opencv" if self.use_opencv_quality.get() else "pillow"
+        self.worker = threading.Thread(
+            target=sf.download_deck_images,
+            args=(
+                self.deck_data,
+                self.events,
+                self.cancel_event,
+                self.exact_edition.get(),
+                self.best_image.get(),
+                self.prefer_spanish.get(),
+                zones,
+                threshold,
+                method
+            ),
+            daemon=True
+        )
+        self.worker.start()
+
+
+    def _on_clean_cache(self) -> None:
+        if self.running:
+            messagebox.showerror("Error", "No se puede limpiar la caché mientras hay una descarga en curso.", parent=self.root)
+            return
+
+        dialog = CleanCacheDialog(self.root)
+        self.root.wait_window(dialog)
+        if dialog.accepted:
+            if not (dialog.scryfall_deck_var.get() or dialog.scryfall_cache_var.get() or dialog.mpcfill_cache_var.get()):
+                messagebox.showwarning("Sin selección", "Debes seleccionar al menos un elemento para limpiar.", parent=self.root)
+                return
+            
+            confirm = messagebox.askyesno(
+                "Confirmar limpieza",
+                "¿Estás seguro de que deseas eliminar permanentemente los elementos seleccionados?",
+                parent=self.root
+            )
+            if not confirm:
+                return
+            
+            wd = work_dir()
+            deleted_items = []
+            
+            if dialog.scryfall_deck_var.get():
+                path = wd / "scryfall"
+                if path.exists():
+                    shutil.rmtree(path, ignore_errors=True)
+                deleted_items.append("Descargas de Moxfield/Scryfall")
+                
+            if dialog.scryfall_cache_var.get():
+                path = wd / "scryfall_cache"
+                if path.exists():
+                    shutil.rmtree(path, ignore_errors=True)
+                deleted_items.append("Caché global de Scryfall")
+                
+            if dialog.mpcfill_cache_var.get():
+                for sub in ("raw", "bled"):
+                    path = wd / sub
+                    if path.exists():
+                        shutil.rmtree(path, ignore_errors=True)
+                deleted_items.append("Caché de MPCFill (raw y bled)")
+            
+            messagebox.showinfo(
+                "Limpieza completada",
+                "Se han eliminado correctamente los siguientes elementos:\n- " + "\n- ".join(deleted_items),
+                parent=self.root
+            )
+
+
+    def _start(self, fronts_only: bool) -> None:
+        if self.running:
+            return
+            
+        if not hasattr(self, "deck_data") or not self.deck_data:
+            messagebox.showerror(APP_TITLE, "Primero debes cargar un mazo de Moxfield.")
+            return
+            
+        if not fronts_only and not self.local_backs:
+            messagebox.showerror(
+                APP_TITLE,
+                "Para generar el PDF con traseras, arrastra o selecciona al menos una imagen en la lista de Traseras de la derecha para usarla como reverso por defecto."
+            )
+            return
+            
+        from src.scryfall import sanitize_filename
+        from gui.paths import work_dir
+        
+        deck_name = self.deck_data.get("name", "Moxfield_Deck")
+        deck_id = self.deck_data.get("id", "Unknown")
+        deck_dir = work_dir() / "scryfall" / f"{sanitize_filename(deck_name)}_{sanitize_filename(deck_id)}"
+        
+        zones = {
+            "commanders": self.zone_commanders.get(),
+            "mainboard": self.zone_mainboard.get(),
+            "sideboard": self.zone_sideboard.get(),
+            "tokens": self.zone_tokens.get(),
+        }
+        
+        missing_files = []
+        for zone_name, is_selected in zones.items():
+            if is_selected and zone_name in self.deck_data:
+                for card in self.deck_data[zone_name]:
+                    card_name = card.get("name", "")
+                    card_set = card.get("set", "").upper()
+                    card_cn = card.get("cn", "")
+                    
+                    prefix = f"{sanitize_filename(card_name)}_{sanitize_filename(card_set)}_{sanitize_filename(card_cn)}"
+                    front_dfc = deck_dir / f"{prefix}_front.png"
+                    back_dfc = deck_dir / f"{prefix}_back.png"
+                    front_sf = deck_dir / f"{prefix}.png"
+                    
+                    if not (front_sf.exists() or (front_dfc.exists() and back_dfc.exists())):
+                        missing_files.append(card_name)
+                        
+        if missing_files:
+            missing_str = "\n".join(f"• {name}" for name in missing_files[:8])
+            more = f"\n… y {len(missing_files) - 8} más" if len(missing_files) > 8 else ""
+            messagebox.showerror(
+                APP_TITLE,
+                f"Faltan imágenes para las siguientes cartas en el disco:\n\n{missing_str}{more}\n\n"
+                "Por favor, descarga las imágenes de Scryfall antes de generar el PDF."
+            )
+            return
+            
+        total_moxfield_qty = 0
+        for zone_name, is_selected in zones.items():
+            if is_selected and zone_name in self.deck_data:
+                for card in self.deck_data[zone_name]:
+                    qty = card.get("quantity", 1)
+                    total_moxfield_qty += (qty if qty is not None else 1)
+                    
+        total = total_moxfield_qty + len(self.local_fronts)
+        rem = total % CARDS_PER_PAGE
+        if rem:
+            blanks = CARDS_PER_PAGE - rem
+            s = "hueco" if blanks == 1 else "huecos"
+            warning = (
+                f"Aviso: {total} carta(s) no es múltiplo de 9.\n"
+                f"La última página tendrá {blanks} {s} en blanco "
+                "(la imprenta cobra la página entera aunque no esté llena)."
+                "\n\n¿Continuar de todos modos?"
+            )
+            if not messagebox.askyesno(APP_TITLE, warning, icon=messagebox.WARNING):
+                return
+                
+        self.running = True
+        self.cancel_event.clear()
+        self._dl_speed_str = ""
+        self.timing_var.set("")
+        self.soriano_btn.state(["disabled"])
+        self.fronts_only_btn.state(["disabled"])
+        self.stop_btn.state(["!disabled"])
+        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.fronts_only_btn)
+        self.progress["value"] = 0
+        self.status_var.set("Preparando…")
+        
+        self.worker = threading.Thread(
+            target=self._work, args=(fronts_only,), daemon=True,
+        )
+        self.worker.start()
+
+    def _work(self, fronts_only: bool = False) -> None:
+        run_dir = None
+        wd = None
+        try:
+            out = self._effective_output_dir()
+            wd = work_dir()
+            
+            # Checkpoint: notify if cached crops exist from a previous failed run
+            bled_dir = wd / "bled"
+            if bled_dir.exists():
+                cached = [f for f in bled_dir.iterdir() if f.is_file()]
+                if cached:
+                    self.events.put(("checkpoint_found", len(cached)))
+                    
+            from src.scryfall import sanitize_filename
+            
+            deck_name = self.deck_data.get("name", "Moxfield_Deck")
+            deck_id = self.deck_data.get("id", "Unknown")
+            deck_dir = wd / "scryfall" / f"{sanitize_filename(deck_name)}_{sanitize_filename(deck_id)}"
+            
+            zones = {
+                "commanders": self.zone_commanders.get(),
+                "mainboard": self.zone_mainboard.get(),
+                "sideboard": self.zone_sideboard.get(),
+                "tokens": self.zone_tokens.get(),
+            }
+            
+            mox_fronts = []
+            mox_backs = []
+            mox_crop_map = {}
+            
+            for zone_name, is_selected in zones.items():
+                if is_selected and zone_name in self.deck_data:
+                    for card in self.deck_data[zone_name]:
+                        card_name = card.get("name", "")
+                        card_set = card.get("set", "").upper()
+                        card_cn = card.get("cn", "")
+                        qty = card.get("quantity", 1)
+                        if qty is None:
+                            qty = 1
+                            
+                        prefix = f"{sanitize_filename(card_name)}_{sanitize_filename(card_set)}_{sanitize_filename(card_cn)}"
+                        front_dfc = deck_dir / f"{prefix}_front.png"
+                        back_dfc = deck_dir / f"{prefix}_back.png"
+                        front_sf = deck_dir / f"{prefix}.png"
+                        
+                        if front_dfc.exists() and back_dfc.exists():
+                            for _ in range(qty):
+                                mox_fronts.append(front_dfc)
+                                mox_backs.append(back_dfc)
+                                mox_crop_map[front_dfc] = False
+                                mox_crop_map[back_dfc] = False
+                        elif front_sf.exists():
+                            for _ in range(qty):
+                                mox_fronts.append(front_sf)
+                                mox_backs.append(None)
+                                mox_crop_map[front_sf] = False
+                                
+            if self.local_backs:
+                default_cardback = self.local_backs[0]
+            else:
+                default_cardback = mox_fronts[0] if mox_fronts else None
+                
+            local_fronts = list(self.local_fronts)
+            local_backs = self._resolve_extra_backs()
+            
+            combined_fronts = mox_fronts + local_fronts
+            combined_backs = mox_backs + local_backs
+            
+            crop_map = {}
+            crop_map.update(mox_crop_map)
+            
+            for p, c in zip(self.local_backs, self.local_back_crop):
+                crop_map[p] = c
+            for p, c in zip(self.local_fronts, self.local_front_crop):
+                crop_map[p] = c
+                
+            run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
+            run_dir.mkdir(parents=True, exist_ok=True)
+            
+            base = sanitize_filename(deck_name)
+            self.events.put(("file", 1, 1, f"{base} (mazo de Moxfield)"))
+            
+            _run_start = time.time()
+            _phase_first = {}
+            _phase_done = {}
+            
+            def _track(stage: str, done: int, total: int) -> None:
+                now = time.time()
+                if stage not in _phase_first:
+                    _phase_first[stage] = now
+                if done == total and total > 0:
+                    _phase_done[stage] = now
+                    
+            def cb(stage, done, total, _label=base):
+                _track(stage, done, total)
+                self.events.put(("progress", stage, done, total, _label))
+                
+            from src.pipeline import run_locals_only
+            pdfs = run_locals_only(
+                combined_fronts, default_cardback,
+                run_dir, base, wd, cb,
+                cancel_event=self.cancel_event,
+                extra_backs=combined_backs,
+                local_crop_map=crop_map,
+                fronts_only=fronts_only,
+            )
+            
+            if not self.keep_cache.get():
+                self._cleanup_workdir(wd)
+                
+            total_dur = time.time() - _run_start
+            timing_parts = []
+            for stage in ["verify", "download", "crop", "pdf"]:
+                if stage in _phase_first and stage in _phase_done:
+                    dur = _phase_done[stage] - _phase_first[stage]
+                    timing_parts.append(f"{stage}={dur:.1f}s")
+            timing_parts.append(f"total={total_dur:.1f}s")
+            timing_str = ", ".join(timing_parts)
+            
+            self.events.put(("done", pdfs, None, run_dir, timing_str))
+            
+        except Cancelled:
+            self.events.put(("cancelled", run_dir))
+        except Exception as e:
+            _log.exception("Error in pipeline thread")
+            self.events.put(("error", str(e), run_dir))
+
+
 def main() -> None:
     _wd = work_dir()
     _wd.mkdir(parents=True, exist_ok=True)
@@ -1769,13 +2626,35 @@ def main() -> None:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         handlers=[logging.FileHandler(_wd / "gui.log", encoding="utf-8")],
     )
-    root = tk.Tk()
+    
+    # 1. Start Launcher
+    launcher_root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")
     except tk.TclError:
         pass
-    App(root)
-    root.mainloop()
+    launcher = Launcher(launcher_root)
+    launcher_root.mainloop()
+    
+    # 2. Process choice
+    choice = launcher.choice
+    if not choice:
+        return
+        
+    # 3. Start selected application
+    app_root = tk.Tk()
+    try:
+        ttk.Style().theme_use("vista")
+    except tk.TclError:
+        pass
+        
+    if choice == "mpcfill":
+        App(app_root)
+    elif choice == "webload":
+        WebLoadApp(app_root)
+        
+    app_root.focus_force()
+    app_root.mainloop()
 
 
 if __name__ == "__main__":
