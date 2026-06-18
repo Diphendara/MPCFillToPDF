@@ -1603,7 +1603,7 @@ class App:
             try:
                 reports = analyze(self.xml_paths)
             except Exception as e:
-                messagebox.showerror(APP_TITLE, f"No se pudo analizar el XML:\n{e}")
+                self._show_error_dialog(f"No se pudo analizar el XML:\n{e}")
                 return
 
             plan_ = plan(reports, local_count=len(self.local_fronts))
@@ -1683,39 +1683,34 @@ class App:
             _run_start = time.time()
             label = " + ".join(d.name for d in decks)
 
-            # 1. Download all unique cards across all decks (shared cache)
+            # 1. Download images per deck (preserves source so URL/headers are correct).
+            # The dest_dir file-existence check in download_images handles deduplication
+            # within the same source; different sources may produce different file extensions
+            # for the same card_id, but both contain the same image.
             op_raw_dir = wd / "op_raw"
-            # Deduplicate cards by card_id across decks
-            all_unique: dict[str, object] = {}
-            for deck in decks:
-                for card in deck.cards:
-                    if card.card_id not in all_unique:
-                        all_unique[card.card_id] = card
-            total_unique = len(all_unique)
+            total_unique = sum(len({c.card_id for c in d.cards}) for d in decks)
             self.events.put(("progress", "download", 0, total_unique, label))
 
-            # Build a flat list of unique cards for downloading
-            _all_cards = list(all_unique.values())
-
-            class _FlatDeck:
-                cards = _all_cards
             image_map: dict[str, Path] = {}
-            done_dl = 0
+            done_dl_offset = 0
 
-            def _dl_progress(done, total):
-                nonlocal done_dl
-                done_dl = done
-                self.events.put(("progress", "download", done, total, label))
+            for deck in decks:
+                _offset = done_dl_offset
 
-            image_map = op_download(
-                _FlatDeck(), op_raw_dir,
-                cancel_event=self.cancel_event,
-                progress_cb=_dl_progress,
-            )
+                def _dl_progress(done, total, _off=_offset):
+                    self.events.put(("progress", "download", _off + done, total_unique, label))
 
-            if self.cancel_event.is_set():
-                self.events.put(("cancelled", run_dir))
-                return
+                partial = op_download(
+                    deck, op_raw_dir,
+                    cancel_event=self.cancel_event,
+                    progress_cb=_dl_progress,
+                )
+                image_map.update(partial)
+                done_dl_offset += len({c.card_id for c in deck.cards})
+
+                if self.cancel_event.is_set():
+                    self.events.put(("cancelled", run_dir))
+                    return
 
             # 2. Resolve backs from resources (or generate fallbacks)
             standard_back, leader_back_res = get_op_backs()
@@ -2019,7 +2014,7 @@ class App:
             total_failed = len(perm_errors) + len(timeout_errors)
             self.status_var.set(f"Error: {total_failed} imagen(es) no se pudieron descargar.")
             self._finish_running()
-            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+            self._show_error_dialog("\n\n".join(parts))
         elif kind == "done":
             _, pdfs, manifest, run_dir, timing_str = ev
             self.progress["value"] = 100
@@ -2063,12 +2058,11 @@ class App:
                 self._cleanup_run_dir(run_dir)
             self.status_var.set("Error: demasiadas descargas en poco tiempo.")
             self._finish_running()
-            messagebox.showerror(
-                APP_TITLE,
+            self._show_error_dialog(
                 "Se están intentando descargar demasiadas imágenes en poco tiempo, "
                 "espera un rato y vuelve a intentar.\n\n"
                 "Por favor selecciona «Guardar en el PC las imágenes entre ejecuciones» "
-                "así evitamos volver a descargarlas cada vez.",
+                "así evitamos volver a descargarlas cada vez."
             )
         elif kind == "permission_error":
             _, card_name, xml_name, position, run_dir = ev
@@ -2088,7 +2082,7 @@ class App:
             )
             self.status_var.set("Error de descarga.")
             self._finish_running()
-            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+            self._show_error_dialog("\n\n".join(parts))
         elif kind == "timeout_error":
             _, card_name, xml_name, position, run_dir = ev
             if run_dir is not None:
@@ -2107,7 +2101,7 @@ class App:
             )
             self.status_var.set("Error de descarga (tiempo agotado).")
             self._finish_running()
-            messagebox.showerror(APP_TITLE, "\n\n".join(parts))
+            self._show_error_dialog("\n\n".join(parts))
         elif kind == "op_deck_loaded":
             _, deck = ev
             # Avoid duplicates by slug
@@ -2120,15 +2114,53 @@ class App:
             self._op_load_btn.state(["!disabled"])
         elif kind == "op_deck_error":
             _, msg = ev
-            self._op_status_var.set(f"Error: {msg}")
+            self._op_status_var.set("Error al cargar el mazo.")
             self._op_load_btn.state(["!disabled"])
+            self._show_error_dialog(msg)
         elif kind == "error":
             _, msg, run_dir = ev
             if run_dir is not None:
                 self._cleanup_run_dir(run_dir)
             self.status_var.set("Error durante la generación. Las imágenes en caché se conservan.")
             self._finish_running()
-            messagebox.showerror(APP_TITLE, msg)
+            self._show_error_dialog(msg)
+
+    def _show_error_dialog(self, message: str) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"{APP_TITLE} — Error")
+        dlg.geometry("600x340")
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="Error", font=("Segoe UI", 11, "bold"),
+                  foreground="#cc0000").pack(anchor="w", padx=12, pady=(10, 4))
+
+        frame = ttk.Frame(dlg)
+        frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        txt = tk.Text(frame, wrap=tk.WORD, relief=tk.SUNKEN, borderwidth=1,
+                      font=("Consolas", 9), state=tk.NORMAL)
+        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        txt.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        txt.insert("1.0", message)
+        txt.configure(state=tk.DISABLED)
+
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        def _copy():
+            dlg.clipboard_clear()
+            dlg.clipboard_append(message)
+            copy_btn.configure(text="✓ Copiado")
+            dlg.after(2000, lambda: copy_btn.configure(text="Copiar al portapapeles"))
+
+        copy_btn = ttk.Button(btn_row, text="Copiar al portapapeles", command=_copy)
+        copy_btn.pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Cerrar", command=dlg.destroy).pack(side=tk.RIGHT)
 
     def _finish_running(self) -> None:
         self.running = False

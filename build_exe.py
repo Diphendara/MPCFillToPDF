@@ -93,7 +93,7 @@ def _embed_api_key() -> bool:
         "    return bytes(a ^ b for a, b in zip(_E, _M)).decode('utf-8')\n",
         encoding="utf-8",
     )
-    print(f"API key embedded (XOR-obfuscated) → {BUNDLED_KEY_PATH.name}")
+    print(f"API key embedded (XOR-obfuscated) -> {BUNDLED_KEY_PATH.name}")
     return True
 
 
