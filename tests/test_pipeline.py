@@ -3,19 +3,19 @@
 Downloads are always mocked; crop and PDF generation use real (tiny) images
 so the full pipeline chain is exercised without network access.
 """
+
 import threading
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PIL import Image
 
 from src.cancellation import Cancelled
 from src.downloader import DownloadPermissionError
-from src.pipeline import run_plan, run_locals_only, _local_synthetic_id
-from src.precheck import analyze, plan as make_plan
+from src.pipeline import _local_synthetic_id, run_locals_only, run_plan
+from src.precheck import analyze
+from src.precheck import plan as make_plan
 from tests.conftest import make_rgb_image, make_xml
-
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -36,8 +36,15 @@ def _one_card_xml(tmp_path: Path, name: str = "deck") -> Path:
 
 def _fake_download_all(raw_dir: Path, img_color=(180, 80, 40)):
     """Return a monkeypatch replacement for download_all that writes tiny JPEGs."""
-    def _impl(pairs, dest_dir, progress_callback=None, cancel_event=None,
-               on_image_done=None, on_speed_update=None):
+
+    def _impl(
+        pairs,
+        dest_dir,
+        progress_callback=None,
+        cancel_event=None,
+        on_image_done=None,
+        on_speed_update=None,
+    ):
         result = {}
         for did, name in pairs:
             p = dest_dir / f"{did}.jpg"
@@ -51,10 +58,12 @@ def _fake_download_all(raw_dir: Path, img_color=(180, 80, 40)):
             if progress_callback:
                 progress_callback(i, total)
         return result
+
     return _impl
 
 
 # ─── initial progress events (bug-fix regression) ───────────────────────────
+
 
 def test_run_plan_fires_download_zero_event_before_downloads(tmp_path):
     """progress_callback("download", 0, N) must be the FIRST download event."""
@@ -66,7 +75,9 @@ def test_run_plan_fires_download_zero_event_before_downloads(tmp_path):
 
     with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
         run_plan(
-            p.jobs, tmp_path / "out", tmp_path / "work",
+            p.jobs,
+            tmp_path / "out",
+            tmp_path / "work",
             progress_callback=lambda s, d, t: events.append((s, d, t)),
         )
 
@@ -85,7 +96,9 @@ def test_run_plan_fires_crop_zero_event_before_crops(tmp_path):
 
     with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
         run_plan(
-            p.jobs, tmp_path / "out", tmp_path / "work",
+            p.jobs,
+            tmp_path / "out",
+            tmp_path / "work",
             progress_callback=lambda s, d, t: events.append((s, d, t)),
         )
 
@@ -104,7 +117,9 @@ def test_run_plan_download_zero_total_matches_image_count(tmp_path):
 
     with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
         run_plan(
-            p.jobs, tmp_path / "out", tmp_path / "work",
+            p.jobs,
+            tmp_path / "out",
+            tmp_path / "work",
             progress_callback=lambda s, d, t: events.append((s, d, t)),
         )
 
@@ -113,6 +128,7 @@ def test_run_plan_download_zero_total_matches_image_count(tmp_path):
 
 
 # ─── run_plan — basic correctness ────────────────────────────────────────────
+
 
 def test_run_plan_produces_pdf(tmp_path):
     xml = _one_card_xml(tmp_path)
@@ -128,14 +144,16 @@ def test_run_plan_produces_pdf(tmp_path):
 
 
 def test_run_plan_produces_one_pdf_per_job(tmp_path):
-    xml1 = make_xml(tmp_path / "a.xml",
-                    fronts=[{"id": f"FA{i}", "name": f"A{i}", "slots": str(i)}
-                            for i in range(9)],
-                    cardback_id="CBA")
-    xml2 = make_xml(tmp_path / "b.xml",
-                    fronts=[{"id": f"FB{i}", "name": f"B{i}", "slots": str(i)}
-                            for i in range(9)],
-                    cardback_id="CBB")
+    xml1 = make_xml(
+        tmp_path / "a.xml",
+        fronts=[{"id": f"FA{i}", "name": f"A{i}", "slots": str(i)} for i in range(9)],
+        cardback_id="CBA",
+    )
+    xml2 = make_xml(
+        tmp_path / "b.xml",
+        fronts=[{"id": f"FB{i}", "name": f"B{i}", "slots": str(i)} for i in range(9)],
+        cardback_id="CBB",
+    )
     reports = analyze([xml1, xml2])
     p = make_plan(reports)
 
@@ -151,15 +169,14 @@ def test_run_plan_fronts_only(tmp_path):
     p = make_plan(reports)
 
     with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
-        r_both = run_plan(p.jobs, tmp_path / "out_both", tmp_path / "work_both",
-                          fronts_only=False)
-        r_fronts = run_plan(p.jobs, tmp_path / "out_f", tmp_path / "work_f",
-                            fronts_only=True)
+        r_both = run_plan(p.jobs, tmp_path / "out_both", tmp_path / "work_both", fronts_only=False)
+        r_fronts = run_plan(p.jobs, tmp_path / "out_f", tmp_path / "work_f", fronts_only=True)
 
     assert r_fronts[0].stat().st_size < r_both[0].stat().st_size
 
 
 # ─── run_plan — cancellation ─────────────────────────────────────────────────
+
 
 def test_run_plan_cancel_before_download_raises(tmp_path):
     xml = _one_card_xml(tmp_path)
@@ -173,6 +190,7 @@ def test_run_plan_cancel_before_download_raises(tmp_path):
 
 
 # ─── run_plan — error propagation ────────────────────────────────────────────
+
 
 def test_run_plan_propagates_permission_error(tmp_path):
     xml = _one_card_xml(tmp_path)
@@ -192,6 +210,7 @@ def test_run_plan_propagates_permission_error(tmp_path):
 
 # ─── run_plan — extra local fronts ───────────────────────────────────────────
 
+
 def test_run_plan_with_extra_local_fronts(tmp_path):
     xml = _one_card_xml(tmp_path)
     reports = analyze([xml])
@@ -201,7 +220,9 @@ def test_run_plan_with_extra_local_fronts(tmp_path):
 
     with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
         results = run_plan(
-            p.jobs, tmp_path / "out", tmp_path / "work",
+            p.jobs,
+            tmp_path / "out",
+            tmp_path / "work",
             extra_fronts=[local_front],
         )
 
@@ -210,6 +231,7 @@ def test_run_plan_with_extra_local_fronts(tmp_path):
 
 
 # ─── run_locals_only ─────────────────────────────────────────────────────────
+
 
 def test_run_locals_only_produces_pdf(tmp_path):
     front = _img(tmp_path / "front.jpg")
@@ -233,12 +255,20 @@ def test_run_locals_only_fronts_only(tmp_path):
     cardback = _img(tmp_path / "back.jpg", color=(40, 80, 180))
 
     r_both = run_locals_only(
-        [front], cardback, tmp_path / "out_both", "locals",
-        tmp_path / "work_both", fronts_only=False,
+        [front],
+        cardback,
+        tmp_path / "out_both",
+        "locals",
+        tmp_path / "work_both",
+        fronts_only=False,
     )
     r_fronts = run_locals_only(
-        [front], cardback, tmp_path / "out_f", "locals",
-        tmp_path / "work_f", fronts_only=True,
+        [front],
+        cardback,
+        tmp_path / "out_f",
+        "locals",
+        tmp_path / "work_f",
+        fronts_only=True,
     )
 
     assert r_fronts[0].stat().st_size < r_both[0].stat().st_size
@@ -270,6 +300,7 @@ def test_run_locals_only_with_explicit_backs(tmp_path):
 
 
 # ─── _local_synthetic_id ─────────────────────────────────────────────────────
+
 
 def test_local_synthetic_id_stable(tmp_path):
     p = tmp_path / "image.jpg"

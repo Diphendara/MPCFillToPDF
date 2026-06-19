@@ -1,13 +1,14 @@
 """Tests for src/parser.py — XML parsing into CardOrder."""
+
 import textwrap
 from pathlib import Path
 
 import pytest
 
-from src.parser import parse, CardOrder, CardImage
-
+from src.parser import CardImage, CardOrder, parse
 
 # ─── helpers ────────────────────────────────────────────────────────────────
+
 
 def _write(tmp_path: Path, content: str, name: str = "test.xml") -> Path:
     p = tmp_path / name
@@ -29,6 +30,7 @@ MINIMAL = """\
 
 
 # ─── basic parsing ───────────────────────────────────────────────────────────
+
 
 def test_parse_returns_card_order(tmp_path):
     order = parse(_write(tmp_path, MINIMAL))
@@ -101,6 +103,7 @@ def test_parse_explicit_backs(tmp_path):
 
 
 # ─── error cases ─────────────────────────────────────────────────────────────
+
 
 def test_parse_missing_cardback_element(tmp_path):
     xml = """\
@@ -175,6 +178,7 @@ def test_parse_invalid_xml_raises_value_error(tmp_path):
 
 
 # ─── CardOrder methods ───────────────────────────────────────────────────────
+
 
 def test_back_for_slot_returns_specific_back(tmp_path):
     xml = """\

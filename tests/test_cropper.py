@@ -1,4 +1,5 @@
 """Tests for src/cropper.py — bleed crop and mirror-bleed generation."""
+
 import time
 from pathlib import Path
 
@@ -6,17 +7,17 @@ import pytest
 from PIL import Image
 
 from src.cropper import (
+    _BLEED_X,
+    _BLEED_Y,
     BLEED_MM,
     CARD_H_MM,
     CARD_W_MM,
-    _BLEED_X,
-    _BLEED_Y,
     crop_image,
     process_for_pdf,
 )
 
-
 # ─── helpers ────────────────────────────────────────────────────────────────
+
 
 def _img(path: Path, w: int = 200, h: int = 280, color=(180, 80, 40)) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,6 +38,7 @@ def _expected_bled_size(w: int, h: int, crop: bool) -> tuple[int, int]:
 
 
 # ─── process_for_pdf ────────────────────────────────────────────────────────
+
 
 def test_process_for_pdf_creates_output_file(tmp_path):
     inp = _img(tmp_path / "raw" / "card.jpg")
@@ -104,6 +106,7 @@ def test_process_for_pdf_creates_parent_dirs(tmp_path):
 
 
 # ─── crop_image ─────────────────────────────────────────────────────────────
+
 
 def test_crop_image_output_dimensions(tmp_path):
     w, h = 200, 280

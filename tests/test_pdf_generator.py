@@ -1,4 +1,5 @@
 """Tests for src/pdf_generator.py — PDF layout and chunk splitting."""
+
 import threading
 from pathlib import Path
 
@@ -8,15 +9,13 @@ from PIL import Image
 from src.cancellation import Cancelled
 from src.pdf_generator import (
     CARDS_PER_PAGE,
-    COLS,
-    ROWS,
-    generate,
-    _projected_pdf_bytes,
     _pair_drive_ids,
+    _projected_pdf_bytes,
+    generate,
 )
 
-
 # ─── helpers ────────────────────────────────────────────────────────────────
+
 
 def _img(path: Path, w: int = 100, h: int = 140, color=(180, 80, 40)) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +41,7 @@ def _id_to_path(front: dict, back: dict, path: Path) -> dict[str, Path]:
 
 # ─── _projected_pdf_bytes ────────────────────────────────────────────────────
 
+
 def test_projected_pdf_bytes_missing_path():
     assert _projected_pdf_bytes(None) == 0
 
@@ -66,6 +66,7 @@ def test_projected_pdf_bytes_png(tmp_path):
 
 # ─── _pair_drive_ids ─────────────────────────────────────────────────────────
 
+
 def test_pair_drive_ids_collects_front_and_back():
     slots, front, back = _slot_maps(3)
     ids = _pair_drive_ids(slots, front, back)
@@ -77,6 +78,7 @@ def test_pair_drive_ids_empty_slots():
 
 
 # ─── generate — basic output ─────────────────────────────────────────────────
+
 
 def test_generate_creates_pdf_file(tmp_path):
     img = _img(tmp_path / "card.jpg")
@@ -92,8 +94,9 @@ def test_generate_creates_pdf_file(tmp_path):
 def test_generate_pdf_named_correctly(tmp_path):
     img = _img(tmp_path / "card.jpg")
     slots, front, back = _slot_maps(1)
-    results = generate(tmp_path / "out", "mydeck", slots, front, back,
-                       _id_to_path(front, back, img))
+    results = generate(
+        tmp_path / "out", "mydeck", slots, front, back, _id_to_path(front, back, img)
+    )
     assert results[0].name == "out_mydeck.pdf"
 
 
@@ -112,12 +115,12 @@ def test_generate_no_slots_returns_empty(tmp_path):
 
 # ─── generate — page counts ──────────────────────────────────────────────────
 
+
 def test_generate_without_fronts_only_has_two_pages_per_batch(tmp_path):
     """With 1 page-batch: PDF should have 2 pages (front + back)."""
     img = _img(tmp_path / "card.jpg")
     slots, front, back = _slot_maps(CARDS_PER_PAGE)
-    results = generate(tmp_path / "out", "deck", slots, front, back,
-                       _id_to_path(front, back, img))
+    results = generate(tmp_path / "out", "deck", slots, front, back, _id_to_path(front, back, img))
     # Use raw PDF bytes to count showPage markers (/Page entries)
     content = results[0].read_bytes()
     # Each page is recorded as a /Page dictionary in the PDF cross-reference.
@@ -131,15 +134,16 @@ def test_generate_fronts_only_produces_smaller_file(tmp_path):
     slots, front, back = _slot_maps(CARDS_PER_PAGE)
     id_map = _id_to_path(front, back, img)
 
-    r_both = generate(tmp_path / "out_both", "deck", slots, front, back, id_map,
-                      fronts_only=False)
-    r_fronts = generate(tmp_path / "out_fronts", "deck", slots, front, back, id_map,
-                        fronts_only=True)
+    r_both = generate(tmp_path / "out_both", "deck", slots, front, back, id_map, fronts_only=False)
+    r_fronts = generate(
+        tmp_path / "out_fronts", "deck", slots, front, back, id_map, fronts_only=True
+    )
 
     assert r_fronts[0].stat().st_size < r_both[0].stat().st_size
 
 
 # ─── generate — progress callback ────────────────────────────────────────────
+
 
 def test_generate_progress_callback_fires_for_each_pair(tmp_path):
     img = _img(tmp_path / "card.jpg")
@@ -148,8 +152,15 @@ def test_generate_progress_callback_fires_for_each_pair(tmp_path):
     id_map = _id_to_path(front, back, img)
 
     calls = []
-    generate(tmp_path / "out", "deck", slots, front, back, id_map,
-             progress_callback=lambda d, t: calls.append((d, t)))
+    generate(
+        tmp_path / "out",
+        "deck",
+        slots,
+        front,
+        back,
+        id_map,
+        progress_callback=lambda d, t: calls.append((d, t)),
+    )
 
     assert len(calls) == 2
     assert calls[-1] == (2, 2)
@@ -162,13 +173,21 @@ def test_generate_progress_total_matches_page_count(tmp_path):
     id_map = _id_to_path(front, back, img)
 
     totals = set()
-    generate(tmp_path / "out", "deck", slots, front, back, id_map,
-             progress_callback=lambda d, t: totals.add(t))
+    generate(
+        tmp_path / "out",
+        "deck",
+        slots,
+        front,
+        back,
+        id_map,
+        progress_callback=lambda d, t: totals.add(t),
+    )
 
     assert totals == {n_pages}
 
 
 # ─── generate — cancellation ─────────────────────────────────────────────────
+
 
 def test_generate_raises_cancelled_when_event_set(tmp_path):
     img = _img(tmp_path / "card.jpg")
@@ -177,11 +196,19 @@ def test_generate_raises_cancelled_when_event_set(tmp_path):
     event.set()
 
     with pytest.raises(Cancelled):
-        generate(tmp_path / "out", "deck", slots, front, back,
-                 _id_to_path(front, back, img), cancel_event=event)
+        generate(
+            tmp_path / "out",
+            "deck",
+            slots,
+            front,
+            back,
+            _id_to_path(front, back, img),
+            cancel_event=event,
+        )
 
 
 # ─── generate — chunk splitting ──────────────────────────────────────────────
+
 
 def test_generate_splits_into_multiple_chunks(tmp_path):
     """Setting max_bytes=1 forces every page pair into its own chunk."""
@@ -190,8 +217,7 @@ def test_generate_splits_into_multiple_chunks(tmp_path):
     slots, front, back = _slot_maps(CARDS_PER_PAGE * 2)
     id_map = _id_to_path(front, back, img)
 
-    results = generate(tmp_path / "out", "deck", slots, front, back, id_map,
-                       max_bytes=1)
+    results = generate(tmp_path / "out", "deck", slots, front, back, id_map, max_bytes=1)
 
     assert len(results) == 2
 
@@ -201,8 +227,7 @@ def test_generate_split_files_named_with_index(tmp_path):
     slots, front, back = _slot_maps(CARDS_PER_PAGE * 2)
     id_map = _id_to_path(front, back, img)
 
-    results = generate(tmp_path / "out", "deck", slots, front, back, id_map,
-                       max_bytes=1)
+    results = generate(tmp_path / "out", "deck", slots, front, back, id_map, max_bytes=1)
 
     names = {r.name for r in results}
     assert "out_deck_1.pdf" in names
@@ -214,8 +239,9 @@ def test_generate_no_split_when_under_cap(tmp_path):
     slots, front, back = _slot_maps(CARDS_PER_PAGE * 2)
     id_map = _id_to_path(front, back, img)
 
-    results = generate(tmp_path / "out", "deck", slots, front, back, id_map,
-                       max_bytes=10 * 1000 * 1000 * 1000)  # 10 GB cap
+    results = generate(
+        tmp_path / "out", "deck", slots, front, back, id_map, max_bytes=10 * 1000 * 1000 * 1000
+    )  # 10 GB cap
 
     assert len(results) == 1
 
@@ -225,8 +251,7 @@ def test_generate_split_all_files_exist(tmp_path):
     slots, front, back = _slot_maps(CARDS_PER_PAGE * 3)
     id_map = _id_to_path(front, back, img)
 
-    results = generate(tmp_path / "out", "deck", slots, front, back, id_map,
-                       max_bytes=1)
+    results = generate(tmp_path / "out", "deck", slots, front, back, id_map, max_bytes=1)
 
     for r in results:
         assert r.exists()

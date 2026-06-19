@@ -1,13 +1,13 @@
 """Tests for src/validator.py — business-logic XML validation."""
-import pytest
+
 from pathlib import Path
 
-from src.validator import validate, ValidationWarning
-
+from src.validator import ValidationWarning, validate
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _codes(warnings: list[ValidationWarning]) -> list[str]:
     return [w.code for w in warnings]
@@ -18,9 +18,7 @@ def _make_xml(tmp_path: Path, body: str) -> Path:
     p.write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         "<order>\n"
-        "    <details><quantity>9</quantity></details>\n"
-        + body +
-        "</order>\n",
+        "    <details><quantity>9</quantity></details>\n" + body + "</order>\n",
         encoding="utf-8",
     )
     return p
@@ -28,7 +26,7 @@ def _make_xml(tmp_path: Path, body: str) -> Path:
 
 def _xml_full(
     tmp_path,
-    fronts: list[tuple[str, str, str]],   # (id, name, slots)
+    fronts: list[tuple[str, str, str]],  # (id, name, slots)
     backs: list[tuple[str, str, str]] | None = None,
     cardback: str = "CB001",
 ) -> Path:
@@ -37,6 +35,7 @@ def _xml_full(
             f"        <card><id>{i}</id><name>{n}</name><slots>{s}</slots></card>"
             for i, n, s in (entries or [])
         )
+
     body = (
         f"    <fronts>\n{_cards(fronts)}\n    </fronts>\n"
         f"    <backs>\n{_cards(backs)}\n    </backs>\n"
@@ -48,6 +47,7 @@ def _xml_full(
 # ---------------------------------------------------------------------------
 # happy path
 # ---------------------------------------------------------------------------
+
 
 def test_valid_xml_returns_no_warnings(tmp_path):
     xml = _xml_full(
@@ -67,6 +67,7 @@ def test_valid_xml_no_backs_section(tmp_path):
 # parse error
 # ---------------------------------------------------------------------------
 
+
 def test_parse_error_returns_warning(tmp_path):
     bad = tmp_path / "bad.xml"
     bad.write_text("<<not xml>>", encoding="utf-8")
@@ -85,6 +86,7 @@ def test_nonexistent_file_returns_parse_error_warning(tmp_path):
 # no_fronts
 # ---------------------------------------------------------------------------
 
+
 def test_no_fronts_warning(tmp_path):
     xml = _xml_full(tmp_path, fronts=[], backs=[])
     codes = _codes(validate(xml))
@@ -102,12 +104,13 @@ def test_no_fronts_stops_further_checks(tmp_path):
 # duplicate_front_slot
 # ---------------------------------------------------------------------------
 
+
 def test_duplicate_front_slot(tmp_path):
     xml = _xml_full(
         tmp_path,
         fronts=[
             ("F1", "Alpha", "0,1"),
-            ("F2", "Beta",  "1,2"),   # slot 1 duplicated
+            ("F2", "Beta", "1,2"),  # slot 1 duplicated
         ],
     )
     codes = _codes(validate(xml))
@@ -126,13 +129,14 @@ def test_no_duplicate_front_slot_when_unique(tmp_path):
 # duplicate_back_slot
 # ---------------------------------------------------------------------------
 
+
 def test_duplicate_back_slot(tmp_path):
     xml = _xml_full(
         tmp_path,
         fronts=[("F1", "Card", "0,1,2")],
         backs=[
             ("B1", "BackA", "0,1"),
-            ("B2", "BackB", "1,2"),   # slot 1 duplicated
+            ("B2", "BackB", "1,2"),  # slot 1 duplicated
         ],
     )
     codes = _codes(validate(xml))
@@ -151,6 +155,7 @@ def test_no_duplicate_back_slot_when_unique(tmp_path):
 # ---------------------------------------------------------------------------
 # orphan_back_slot
 # ---------------------------------------------------------------------------
+
 
 def test_orphan_back_slot(tmp_path):
     xml = _xml_full(
@@ -175,6 +180,7 @@ def test_no_orphan_when_all_back_slots_have_fronts(tmp_path):
 # empty_cardback
 # ---------------------------------------------------------------------------
 
+
 def test_empty_cardback_causes_parse_error(tmp_path):
     # The parser raises ValueError for an empty <cardback>, which the validator
     # surfaces as a parse_error warning rather than empty_cardback.
@@ -193,12 +199,13 @@ def test_valid_cardback_no_warning(tmp_path):
 # multiple warnings at once
 # ---------------------------------------------------------------------------
 
+
 def test_multiple_warnings_returned_together(tmp_path):
     xml = _xml_full(
         tmp_path,
         fronts=[
             ("F1", "Alpha", "0,1"),
-            ("F2", "Beta",  "1,2"),   # duplicate front slot 1
+            ("F2", "Beta", "1,2"),  # duplicate front slot 1
         ],
         backs=[("B1", "Back1", "5")],  # orphan back slot 5
     )
@@ -210,6 +217,7 @@ def test_multiple_warnings_returned_together(tmp_path):
 # ---------------------------------------------------------------------------
 # message content (spot-check Spanish text)
 # ---------------------------------------------------------------------------
+
 
 def test_warning_messages_are_in_spanish(tmp_path):
     xml = _xml_full(

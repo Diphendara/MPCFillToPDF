@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+
 from PIL import Image, ImageOps
 
 _log = logging.getLogger(__name__)
@@ -30,16 +31,16 @@ def _add_mirror_bleed(img: Image.Image, bx: int, by: int) -> Image.Image:
 
     out.paste(img, (bx, by))
 
-    out.paste(ImageOps.flip(img.crop((0, 0, w, by))),          (bx, 0))           # top
-    out.paste(ImageOps.flip(img.crop((0, h - by, w, h))),      (bx, nh - by))     # bottom
-    out.paste(ImageOps.mirror(img.crop((0, 0, bx, h))),        (0, by))           # left
-    out.paste(ImageOps.mirror(img.crop((w - bx, 0, w, h))),    (nw - bx, by))     # right
+    out.paste(ImageOps.flip(img.crop((0, 0, w, by))), (bx, 0))  # top
+    out.paste(ImageOps.flip(img.crop((0, h - by, w, h))), (bx, nh - by))  # bottom
+    out.paste(ImageOps.mirror(img.crop((0, 0, bx, h))), (0, by))  # left
+    out.paste(ImageOps.mirror(img.crop((w - bx, 0, w, h))), (nw - bx, by))  # right
 
     # corners: rotate 180° of corresponding corner
-    out.paste(img.crop((0,      0,      bx, by)).rotate(180), (0,       0))
-    out.paste(img.crop((w - bx, 0,      w,  by)).rotate(180), (nw - bx, 0))
-    out.paste(img.crop((0,      h - by, bx, h )).rotate(180), (0,       nh - by))
-    out.paste(img.crop((w - bx, h - by, w,  h )).rotate(180), (nw - bx, nh - by))
+    out.paste(img.crop((0, 0, bx, by)).rotate(180), (0, 0))
+    out.paste(img.crop((w - bx, 0, w, by)).rotate(180), (nw - bx, 0))
+    out.paste(img.crop((0, h - by, bx, h)).rotate(180), (0, nh - by))
+    out.paste(img.crop((w - bx, h - by, w, h)).rotate(180), (nw - bx, nh - by))
 
     return out
 

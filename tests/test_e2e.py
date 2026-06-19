@@ -4,14 +4,14 @@ Downloads are always mocked; crop and PDF generation use real (tiny) images
 so the full pipeline chain is exercised.  PDF structure is verified via raw-
 byte inspection — no extra dependency needed.
 """
+
 import re
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from src.pipeline import run_plan, run_locals_only
-from src.precheck import analyze, plan as make_plan
+from src.pipeline import run_locals_only, run_plan
+from src.precheck import analyze
+from src.precheck import plan as make_plan
 from tests.conftest import make_rgb_image, make_xml
 
 W, H = 200, 280  # large enough to survive MPC bleed crop
@@ -23,8 +23,15 @@ def _img(path: Path, color=(180, 80, 40)) -> Path:
 
 def _fake_download_all(raw_dir: Path):
     """Mock for src.pipeline.download_all that writes tiny solid-colour JPEGs."""
-    def _impl(pairs, dest_dir, progress_callback=None, cancel_event=None,
-               on_image_done=None, on_speed_update=None):
+
+    def _impl(
+        pairs,
+        dest_dir,
+        progress_callback=None,
+        cancel_event=None,
+        on_image_done=None,
+        on_speed_update=None,
+    ):
         result = {}
         for did, name in pairs:
             p = dest_dir / f"{did}.jpg"
@@ -37,6 +44,7 @@ def _fake_download_all(raw_dir: Path):
             if progress_callback:
                 progress_callback(i, len(pairs))
         return result
+
     return _impl
 
 
@@ -44,17 +52,18 @@ def _fake_download_all(raw_dir: Path):
 # PDF introspection helpers (no extra deps)
 # ---------------------------------------------------------------------------
 
+
 def _page_count(pdf_path: Path) -> int:
     """Return total page count from the PDF page-tree /Count entry."""
     data = pdf_path.read_bytes()
-    counts = [int(m.group(1)) for m in re.finditer(rb'/Count\s+(\d+)', data)]
+    counts = [int(m.group(1)) for m in re.finditer(rb"/Count\s+(\d+)", data)]
     return max(counts) if counts else 0
 
 
 def _page_size(pdf_path: Path) -> tuple[float, float]:
     """Return (width_pt, height_pt) of the first page from its /MediaBox."""
     data = pdf_path.read_bytes()
-    m = re.search(rb'/MediaBox\s*\[([^\]]+)\]', data)
+    m = re.search(rb"/MediaBox\s*\[([^\]]+)\]", data)
     if not m:
         raise ValueError("No /MediaBox found in PDF")
     nums = [float(x) for x in m.group(1).split()]
@@ -64,6 +73,7 @@ def _page_size(pdf_path: Path) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_single_card_produces_two_pages(tmp_path):
     """1-card XML → PDF with 2 pages (front page + back page)."""

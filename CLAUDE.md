@@ -116,3 +116,53 @@ MPCFillToPDF/
 ### Cards per page
 - Always 9 (3×3); when total cards > 9 generate multiple front/back page pairs
 - Last page pair may have fewer than 9 cards; empty slots left blank
+
+---
+
+## Development style
+
+### Language and Python version
+- Python 3.10+. Use built-in generics (`list[Path]`, `dict[str, str]`, `X | None`) — never import `List`, `Dict`, `Optional` from `typing`.
+- User-facing strings (UI labels, error messages, warnings) in **Spanish**. Code identifiers, log messages, and docstrings in **English**.
+
+### Types and data structures
+- Use `@dataclass` for any structured return value with more than ~3 fields. Use a plain tuple for simpler multi-value returns; annotate the return type explicitly.
+- Use `Path` everywhere internally; convert `str | Path` inputs at function entry with `Path(x)`.
+- Use `frozenset` for immutable constant sets (e.g., `SUPPORTED_IMAGE_EXTS`).
+- Use `class Stage(str, Enum)` for typed string constants that must compare equal to raw strings (allows dict lookups with either key type).
+- Use `field(default_factory=list)` for mutable defaults in dataclasses — never bare `[]`.
+
+### Naming conventions
+- Module-level constants: `SCREAMING_SNAKE_CASE`.
+- Private module helpers and private instance attributes: `_underscore_prefix`.
+- Dict variables: `key_to_value` pattern (e.g., `id_to_path`, `slot_to_id`, `xml_needed_ids`).
+- Parallel lists: name them consistently (`local_fronts` / `local_front_crop` — same index = same card).
+
+### Module and function design
+- One concern per function. Build-functions (`_build_*`) only compute and return; they do not download, write files, or have side effects.
+- Extract any loop that appears in two places into a shared private helper immediately. Do not tolerate ~20-line duplications.
+- Place shared constants in `src/constants.py`. Do not re-define a constant in a consuming module.
+- Place logic that belongs to a data model inside that model (e.g., `CardOrder.back_for_slot`, `CardOrder.all_drive_ids`) rather than reimplementing it in callers.
+
+### Concurrency and cancellation
+- All worker functions that can take time accept `cancel_event: Event | None` and call `_check_cancel(cancel_event)` at safe checkpoints.
+- Use `ThreadPoolExecutor` + `as_completed` for parallel I/O (download, crop). Do not use `map` when you need per-item error handling or cancellation.
+- GUI ↔ worker communication goes through `queue.Queue`; the Tk loop drains it with `after()`. Never call Tk methods from the worker thread.
+
+### Error handling
+- Define a custom exception class (`DownloadPermissionError`, `Cancelled`, etc.) for each distinct failure mode that callers need to handle differently.
+- For user-visible errors (missing file, bad XML, permission denied), raise `ValueError` with a clear Spanish message. Catch and translate at the CLI/GUI boundary.
+- Do not catch broad `Exception` in production code except at top-level handlers (CLI `main`, GUI worker wrapper) and optional-dependency guards (e.g., `plyer`).
+
+### Comments and docstrings
+- No comments that explain *what* the code does — identifiers do that.
+- Add a one-line docstring only when the return value or non-obvious contract needs stating (e.g., `"""Return (drive_id, raw_path, bled_path, crop_borders) for each image."""`).
+- Add an inline comment only for *why*: a hidden constraint, a workaround, or a number that comes from an external spec (e.g., `# matches mpc-autofill behaviour`).
+
+### Testing
+- Test files live in `tests/`. Shared helpers and fixtures go in `tests/conftest.py`.
+- Use real tiny Pillow images for crop and PDF tests — do not mock the image pipeline.
+- Mock only at module boundaries (`patch("src.pipeline.download_all")`), never inside `src/`.
+- Use `tmp_path` (pytest built-in) for all temporary files.
+- Group related tests in a class named `TestFeatureName`; keep each test focused on one behaviour.
+- Run `python -m pytest tests/ --ignore=tests/test_downloader.py` to run the suite without network-dependent tests. All 170 tests must pass before committing.

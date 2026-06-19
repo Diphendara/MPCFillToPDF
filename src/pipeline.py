@@ -6,14 +6,15 @@ from pathlib import Path
 from threading import Event
 
 from src.cancellation import Cancelled
-from src.parser import parse, CardOrder
+from src.constants import Stage
+from src.cropper import process_for_pdf
 from src.downloader import (
-    download_all,
     DownloadPartialError,
     DownloadPermissionError,
     DownloadTimeoutError,
+    download_all,
 )
-from src.cropper import process_for_pdf
+from src.parser import CardOrder, parse
 from src.pdf_generator import generate
 
 CROP_THREADS = 5
@@ -61,8 +62,7 @@ def _run_crop_parallel(
 
     with ThreadPoolExecutor(max_workers=CROP_THREADS) as executor:
         futures = {
-            executor.submit(process_for_pdf, raw, bled, crop): did
-            for did, raw, bled, crop in tasks
+            executor.submit(process_for_pdf, raw, bled, crop): did for did, raw, bled, crop in tasks
         }
         for future in as_completed(futures):
             if cancel_event is not None and cancel_event.is_set():
@@ -101,9 +101,16 @@ def run(
     """
     xml_path = Path(xml_path)
     return _run_xmls(
-        [xml_path], xml_path.stem, output_dir, work_dir, progress_callback, cancel_event,
-        extra_fronts=extra_fronts, extra_backs=extra_backs,
-        local_crop_map=local_crop_map, fronts_only=fronts_only,
+        [xml_path],
+        xml_path.stem,
+        output_dir,
+        work_dir,
+        progress_callback,
+        cancel_event,
+        extra_fronts=extra_fronts,
+        extra_backs=extra_backs,
+        local_crop_map=local_crop_map,
+        fronts_only=fronts_only,
     )
 
 
@@ -128,9 +135,16 @@ def run_merged(
     """
     paths = [Path(p) for p in xml_paths]
     return _run_xmls(
-        paths, base_name, output_dir, work_dir, progress_callback, cancel_event,
-        extra_fronts=extra_fronts, extra_backs=extra_backs,
-        local_crop_map=local_crop_map, fronts_only=fronts_only,
+        paths,
+        base_name,
+        output_dir,
+        work_dir,
+        progress_callback,
+        cancel_event,
+        extra_fronts=extra_fronts,
+        extra_backs=extra_backs,
+        local_crop_map=local_crop_map,
+        fronts_only=fronts_only,
     )
 
 
@@ -154,10 +168,76 @@ def run_locals_only(
     if not extra_fronts:
         raise ValueError("run_locals_only requires at least one front image.")
     return _run_xmls(
-        [], base_name, output_dir, work_dir, progress_callback, cancel_event,
-        extra_fronts=extra_fronts, extra_backs=extra_backs,
-        local_cardback=local_cardback, local_crop_map=local_crop_map,
+        [],
+        base_name,
+        output_dir,
+        work_dir,
+        progress_callback,
+        cancel_event,
+        extra_fronts=extra_fronts,
+        extra_backs=extra_backs,
+        local_cardback=local_cardback,
+        local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+    )
+
+
+def _build_slot_maps(
+    xml_paths: list[Path],
+    orders: list[CardOrder],
+    next_slot: int,
+) -> tuple[
+    dict[int, str],
+    dict[int, str],
+    dict[str, str],
+    dict[str, tuple[str, int]],
+    dict[str, set[str]],
+    int,
+]:
+    """Build slot→driveID maps for a list of parsed XMLs.
+
+    Returns (front_slot_to_id, back_slot_to_id, id_name_map,
+             drive_id_context, xml_needed_ids, updated_next_slot).
+    Callers that don't need xml_needed_ids can discard it with _.
+    """
+    front_slot_to_id: dict[int, str] = {}
+    back_slot_to_id: dict[int, str] = {}
+    id_name_map: dict[str, str] = {}
+    drive_id_context: dict[str, tuple[str, int]] = {}
+    xml_needed_ids: dict[str, set[str]] = {}
+
+    for path, order in zip(xml_paths, orders):
+        xml_name = path.name
+        front_by_slot = {s: c.drive_id for c in order.fronts for s in c.slots}
+        needed: set[str] = set()
+        for orig_slot in sorted(front_by_slot):
+            ns = next_slot
+            next_slot += 1
+            fid = front_by_slot[orig_slot]
+            bid = order.back_for_slot(orig_slot)
+            front_slot_to_id[ns] = fid
+            back_slot_to_id[ns] = bid
+            needed.add(fid)
+            needed.add(bid)
+            if fid not in drive_id_context:
+                drive_id_context[fid] = (xml_name, ns + 1)
+            if bid not in drive_id_context:
+                drive_id_context[bid] = (xml_name, ns + 1)
+        needed.add(order.cardback_id)
+        xml_needed_ids[xml_name] = needed
+        for card in order.fronts + order.backs:
+            id_name_map[card.drive_id] = card.name
+        id_name_map[order.cardback_id] = "cardback.jpg"
+        if order.cardback_id not in drive_id_context:
+            drive_id_context[order.cardback_id] = (xml_name, 0)
+
+    return (
+        front_slot_to_id,
+        back_slot_to_id,
+        id_name_map,
+        drive_id_context,
+        xml_needed_ids,
+        next_slot,
     )
 
 
@@ -189,9 +269,7 @@ def _run_xmls(
     extra_backs_raw = list(extra_backs or [])
     extra_backs = [Path(p) if p is not None else None for p in extra_backs_raw]
     local_cardback_path = Path(local_cardback) if local_cardback else None
-    crop_map: dict[Path, bool] = {
-        Path(k): bool(v) for k, v in (local_crop_map or {}).items()
-    }
+    crop_map: dict[Path, bool] = {Path(k): bool(v) for k, v in (local_crop_map or {}).items()}
 
     output_dir = Path(output_dir)
     work_dir = Path(work_dir)
@@ -202,6 +280,7 @@ def _run_xmls(
         def _inner(done, total):
             if progress_callback:
                 progress_callback(stage, done, total)
+
         return _inner
 
     # 1. Parse all XMLs and concatenate slots into one global numbering.
@@ -212,33 +291,10 @@ def _run_xmls(
     if not orders and local_cardback_path is None:
         raise ValueError("Sin XML se requiere un cardback local (--local-cardback).")
 
-    front_slot_to_id: dict[int, str] = {}
-    back_slot_to_id: dict[int, str] = {}
-    id_name_map: dict[str, str] = {}
     local_id_to_path: dict[str, Path] = {}
-    # drive_id → (xml_filename, 1-based slot position) for friendly error messages
-    drive_id_context: dict[str, tuple[str, int]] = {}
-    next_slot = 0
-    for path, order in zip(xml_paths, orders):
-        xml_name = path.name
-        front_by_slot = {s: c.drive_id for c in order.fronts for s in c.slots}
-        back_by_slot  = {s: c.drive_id for c in order.backs  for s in c.slots}
-        for orig_slot in sorted(front_by_slot):
-            new_slot = next_slot
-            next_slot += 1
-            fid = front_by_slot[orig_slot]
-            front_slot_to_id[new_slot] = fid
-            back_slot_to_id[new_slot]  = back_by_slot.get(orig_slot, order.cardback_id)
-            if fid not in drive_id_context:
-                drive_id_context[fid] = (xml_name, new_slot + 1)
-            bid = back_slot_to_id[new_slot]
-            if bid not in drive_id_context:
-                drive_id_context[bid] = (xml_name, new_slot + 1)
-        for card in order.fronts + order.backs:
-            id_name_map[card.drive_id] = card.name
-        id_name_map[order.cardback_id] = "cardback.jpg"
-        if order.cardback_id not in drive_id_context:
-            drive_id_context[order.cardback_id] = (xml_name, 0)
+    front_slot_to_id, back_slot_to_id, id_name_map, drive_id_context, _, next_slot = (
+        _build_slot_maps(xml_paths, orders, 0)
+    )
 
     # Cardback fallback used for local fronts without a paired back.
     if local_cardback_path is not None:
@@ -265,16 +321,20 @@ def _run_xmls(
 
     # 2. Download (skip local IDs — they're already on disk).
     download_pairs = [
-        (did, name) for did, name in id_name_map.items()
-        if did not in local_id_to_path
+        (did, name) for did, name in id_name_map.items() if did not in local_id_to_path
     ]
-    _log.info("Phase 2 — download: %d images (%d local)", len(download_pairs), len(local_id_to_path))
+    _log.info(
+        "Phase 2 — download: %d images (%d local)", len(download_pairs), len(local_id_to_path)
+    )
 
     if progress_callback and download_pairs:
-        progress_callback("download", 0, len(download_pairs))
+        progress_callback(Stage.DOWNLOAD, 0, len(download_pairs))
     try:
         id_to_raw = download_all(
-            download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
+            download_pairs,
+            raw_dir,
+            _cb(Stage.DOWNLOAD),
+            cancel_event=cancel_event,
         )
     except DownloadPartialError as e:
         for drive_id, _ in e.permission_errors + e.timeout_errors:
@@ -298,7 +358,7 @@ def _run_xmls(
             progress_callback("crop", done, total)
 
     if progress_callback and crop_tasks:
-        progress_callback("crop", 0, len(crop_tasks))
+        progress_callback(Stage.CROP, 0, len(crop_tasks))
     id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop)
 
     _check_cancel(cancel_event)
@@ -307,9 +367,13 @@ def _run_xmls(
     _log.info("Phase 4 — generate PDF: %s (%d slots)", base_name, len(front_slot_to_id))
     ordered_slots = sorted(front_slot_to_id.keys())
     return generate(
-        output_dir, base_name, ordered_slots,
-        front_slot_to_id, back_slot_to_id, id_to_bled,
-        progress_callback=_cb("pdf"),
+        output_dir,
+        base_name,
+        ordered_slots,
+        front_slot_to_id,
+        back_slot_to_id,
+        id_to_bled,
+        progress_callback=_cb(Stage.PDF),
         cancel_event=cancel_event,
         fronts_only=fronts_only,
     )
@@ -318,6 +382,7 @@ def _run_xmls(
 # ---------------------------------------------------------------------------
 # run_plan — download-first multi-job orchestration
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _JobData:
@@ -343,38 +408,10 @@ def _build_job_data(
     Returns (job_data, updated next_slot). Does not download or crop anything."""
     orders = [parse(p) for p in xml_paths]
 
-    front_slot_to_id: dict[int, str] = {}
-    back_slot_to_id: dict[int, str] = {}
-    id_name_map: dict[str, str] = {}
     local_id_to_path: dict[str, Path] = {}
-    drive_id_context: dict[str, tuple[str, int]] = {}
-    xml_needed_ids: dict[str, set[str]] = {}
-
-    for path, order in zip(xml_paths, orders):
-        xml_name = path.name
-        front_by_slot = {s: c.drive_id for c in order.fronts for s in c.slots}
-        back_by_slot  = {s: c.drive_id for c in order.backs  for s in c.slots}
-        needed: set[str] = set()
-        for orig_slot in sorted(front_by_slot):
-            ns = next_slot
-            next_slot += 1
-            fid = front_by_slot[orig_slot]
-            front_slot_to_id[ns] = fid
-            back_slot_to_id[ns]  = back_by_slot.get(orig_slot, order.cardback_id)
-            needed.add(fid)
-            needed.add(back_slot_to_id[ns])
-            if fid not in drive_id_context:
-                drive_id_context[fid] = (xml_name, ns + 1)
-            bid = back_slot_to_id[ns]
-            if bid not in drive_id_context:
-                drive_id_context[bid] = (xml_name, ns + 1)
-        needed.add(order.cardback_id)
-        xml_needed_ids[xml_name] = needed
-        for card in order.fronts + order.backs:
-            id_name_map[card.drive_id] = card.name
-        id_name_map[order.cardback_id] = "cardback.jpg"
-        if order.cardback_id not in drive_id_context:
-            drive_id_context[order.cardback_id] = (xml_name, 0)
+    front_slot_to_id, back_slot_to_id, id_name_map, drive_id_context, xml_needed_ids, next_slot = (
+        _build_slot_maps(xml_paths, orders, next_slot)
+    )
 
     for i, fp in enumerate(extra_fronts):
         sid = _local_synthetic_id(fp)
@@ -427,34 +464,35 @@ def run_plan(
     crop completes, with the per-XML running totals.
     """
     output_dir = Path(output_dir)
-    work_dir   = Path(work_dir)
-    raw_dir    = work_dir / "raw"
-    bled_dir   = work_dir / "bled"
+    work_dir = Path(work_dir)
+    raw_dir = work_dir / "raw"
+    bled_dir = work_dir / "bled"
 
     extra_fronts_p = [Path(p) for p in (extra_fronts or [])]
-    extra_backs_p  = [Path(p) if p is not None else None for p in (extra_backs or [])]
+    extra_backs_p = [Path(p) if p is not None else None for p in (extra_backs or [])]
     crop_map: dict[Path, bool] = {Path(k): bool(v) for k, v in (local_crop_map or {}).items()}
 
     def _cb(stage):
         def _inner(done, total):
             if progress_callback:
                 progress_callback(stage, done, total)
+
         return _inner
 
     # --- Phase 1: parse all jobs ------------------------------------------------
     job_data_list: list[_JobData] = []
-    combined_id_name:  dict[str, str]            = {}
-    combined_locals:   dict[str, Path]           = {}
-    combined_context:  dict[str, tuple[str, int]] = {}
-    combined_xml_ids:  dict[str, set[str]]        = {}
+    combined_id_name: dict[str, str] = {}
+    combined_locals: dict[str, Path] = {}
+    combined_context: dict[str, tuple[str, int]] = {}
+    combined_xml_ids: dict[str, set[str]] = {}
     next_slot = 0
-    last_idx  = len(jobs) - 1
+    last_idx = len(jobs) - 1
 
     for i, job in enumerate(jobs):
-        is_last   = (i == last_idx)
-        ef        = extra_fronts_p if is_last else []
-        eb        = extra_backs_p  if is_last else []
-        fallback  = parse(Path(job.xml_paths[0])).cardback_id if job.xml_paths else ""
+        is_last = i == last_idx
+        ef = extra_fronts_p if is_last else []
+        eb = extra_backs_p if is_last else []
+        fallback = parse(Path(job.xml_paths[0])).cardback_id if job.xml_paths else ""
 
         jd, next_slot = _build_job_data(
             xml_paths=[Path(p) for p in job.xml_paths],
@@ -475,16 +513,13 @@ def run_plan(
 
     # --- Phase 2: download all images -------------------------------------------
     download_pairs = [
-        (did, name) for did, name in combined_id_name.items()
-        if did not in combined_locals
+        (did, name) for did, name in combined_id_name.items() if did not in combined_locals
     ]
 
     # Per-XML download progress tracking
     _dl_ids_set = {did for did, _ in download_pairs}
     _xml_totals = {
-        name: len(ids & _dl_ids_set)
-        for name, ids in combined_xml_ids.items()
-        if ids & _dl_ids_set
+        name: len(ids & _dl_ids_set) for name, ids in combined_xml_ids.items() if ids & _dl_ids_set
     }
     _xml_done: dict[str, int] = {name: 0 for name in _xml_totals}
     # Precompute reverse map: drive_id → xml_names that track it (O(1) dispatch)
@@ -502,11 +537,15 @@ def run_plan(
             on_xml_download_progress(xml_name, _xml_done[xml_name], _xml_totals[xml_name])
 
     if progress_callback and download_pairs:
-        progress_callback("download", 0, len(download_pairs))
+        progress_callback(Stage.DOWNLOAD, 0, len(download_pairs))
     try:
         id_to_raw = download_all(
-            download_pairs, raw_dir, _cb("download"), cancel_event=cancel_event,
-            on_image_done=_on_image_done, on_speed_update=on_speed_update,
+            download_pairs,
+            raw_dir,
+            _cb(Stage.DOWNLOAD),
+            cancel_event=cancel_event,
+            on_image_done=_on_image_done,
+            on_speed_update=on_speed_update,
         )
     except DownloadPartialError as e:
         for drive_id, _ in e.permission_errors + e.timeout_errors:
@@ -549,7 +588,7 @@ def run_plan(
                 on_xml_crop_progress(xml_name, _xml_crop_done[xml_name], _xml_crop_totals[xml_name])
 
     if progress_callback and crop_tasks:
-        progress_callback("crop", 0, len(crop_tasks))
+        progress_callback(Stage.CROP, 0, len(crop_tasks))
     id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop_plan)
 
     _check_cancel(cancel_event)
@@ -562,9 +601,13 @@ def run_plan(
         if on_job_pdf_start:
             on_job_pdf_start(job_idx, total_jobs, jd.base_name)
         outputs = generate(
-            output_dir, jd.base_name, jd.ordered_slots,
-            jd.front_slot_to_id, jd.back_slot_to_id, id_to_bled,
-            progress_callback=_cb("pdf"),
+            output_dir,
+            jd.base_name,
+            jd.ordered_slots,
+            jd.front_slot_to_id,
+            jd.back_slot_to_id,
+            id_to_bled,
+            progress_callback=_cb(Stage.PDF),
             cancel_event=cancel_event,
             fronts_only=fronts_only,
         )

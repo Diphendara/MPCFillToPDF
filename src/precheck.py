@@ -4,12 +4,14 @@ Print shops charge per A4 sheet whether the 3×3 grid is full or not, so we
 either merge small XMLs into bigger ones (when the global total is a multiple
 of 9) or warn the user before generating any PDF with paid empty slots.
 """
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 
+from src.constants import CARDS_PER_PAGE
 from src.parser import parse
 
 _THUMB_CHECK_URL = "https://drive.google.com/thumbnail?id={}&sz=w1"
@@ -25,9 +27,9 @@ def collect_drive_ids(xml_paths: list[Path]) -> list[tuple[str, str]]:
             order = parse(p)
         except Exception:
             continue
-        for card in order.fronts + order.backs:
-            pairs.setdefault(card.drive_id, card.name)
-        pairs.setdefault(order.cardback_id, "cardback.jpg")
+        name_map = {c.drive_id: c.name for c in order.fronts + order.backs}
+        for drive_id in order.all_drive_ids():
+            pairs.setdefault(drive_id, name_map.get(drive_id, "cardback.jpg"))
     return list(pairs.items())
 
 
@@ -63,10 +65,7 @@ def check_drive_access(
 
     done = 0
     with ThreadPoolExecutor(max_workers=_CHECK_THREADS) as ex:
-        futures = {
-            ex.submit(_check, did, name): (did, name)
-            for did, name in id_name_pairs
-        }
+        futures = {ex.submit(_check, did, name): (did, name) for did, name in id_name_pairs}
         for future in as_completed(futures):
             drive_id, name, ok = future.result()
             done += 1
@@ -76,8 +75,6 @@ def check_drive_access(
                 progress_callback(done, total)
 
     return inaccessible
-
-CARDS_PER_PAGE = 9
 
 
 @dataclass
@@ -139,7 +136,7 @@ def analyze(xml_paths: list[str | Path]) -> list[XmlReport]:
 @dataclass
 class Plan:
     jobs: list[PdfJob]
-    merged_xmls: list[XmlReport]   # which XMLs got fused into a merge job
+    merged_xmls: list[XmlReport]  # which XMLs got fused into a merge job
 
     @property
     def has_merge(self) -> bool:
@@ -164,7 +161,7 @@ def plan(reports: list[XmlReport], local_count: int = 0) -> Plan:
     - `local_count` is the number of local fronts that will be appended to the
       LAST job — included in that job's blank-slot calculation.
     """
-    aligned   = [r for r in reports if not r.has_blanks]
+    aligned = [r for r in reports if not r.has_blanks]
     unaligned = [r for r in reports if r.has_blanks]
 
     jobs = [PdfJob([r.path], r.path.stem, r.cards) for r in aligned]
@@ -215,9 +212,7 @@ def format_warning(plan_: Plan) -> str | None:
     for j in bad:
         s = "hueco" if j.blanks == 1 else "huecos"
         if j.extra_locals:
-            cards_info = (
-                f"{j.total_cards} cartas ({j.cards} XML + {j.extra_locals} local(es))"
-            )
+            cards_info = f"{j.total_cards} cartas ({j.cards} XML + {j.extra_locals} local(es))"
         else:
             cards_info = f"{j.total_cards} cartas"
         lines.append(f"  • {j.display_name}: {cards_info} → {j.blanks} {s} en blanco")

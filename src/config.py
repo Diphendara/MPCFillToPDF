@@ -17,6 +17,7 @@ def get_drive_api_key() -> str | None:
     """
     try:
         from src._bundled_key import _get_key  # noqa: PLC0415
+
         key = _get_key()
         if key:
             return key

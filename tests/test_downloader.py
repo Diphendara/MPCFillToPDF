@@ -1,7 +1,8 @@
 """Tests for src/downloader.py — single-image and batch download logic."""
+
 import threading
 from pathlib import Path
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -10,15 +11,15 @@ from src.cancellation import Cancelled
 from src.downloader import (
     DownloadPartialError,
     DownloadPermissionError,
-    DownloadTimeoutError,
     DownloadRateLimitError,
+    DownloadTimeoutError,
+    _is_rate_limit_error,
     download_all,
     download_image,
-    _is_rate_limit_error,
 )
 
-
 # ─── helpers ────────────────────────────────────────────────────────────────
+
 
 def _fake_gdown(url: str, path: str, quiet: bool) -> None:
     """Simulate a successful gdown download by writing a tiny file."""
@@ -30,6 +31,7 @@ class _FakeFileURLRetrievalError(Exception):
 
 
 # ─── _is_rate_limit_error ────────────────────────────────────────────────────
+
 
 def test_rate_limit_detected_by_status_code():
     exc = requests.HTTPError(response=type("R", (), {"status_code": 429})())
@@ -51,6 +53,7 @@ def test_rate_limit_not_detected_for_generic_error():
 
 
 # ─── download_image ──────────────────────────────────────────────────────────
+
 
 def test_download_cache_hit_skips_gdown(tmp_path):
     dest = tmp_path / "raw"
@@ -123,6 +126,7 @@ def test_download_rate_limit_retries_then_succeeds(tmp_path):
 
 
 # ─── download_all ────────────────────────────────────────────────────────────
+
 
 def test_download_all_returns_all_results(tmp_path):
     with patch("gdown.download", side_effect=_fake_gdown):
@@ -215,6 +219,7 @@ def test_download_all_propagates_timeout_error_as_partial(tmp_path):
 
 def test_download_all_continues_after_partial_failure(tmp_path):
     """Successful downloads complete even when some images fail."""
+
     def _mixed(url: str, path: str, quiet: bool) -> None:
         if "BAD" in url:
             raise _FakeFileURLRetrievalError("no access")

@@ -35,6 +35,7 @@ from source so it has a unique hash that AV vendors don't yet flag:
 
 After that, run `python build_exe.py` as usual.
 """
+
 import json
 import os
 import shutil
@@ -105,8 +106,7 @@ def _remove_bundled_key() -> None:
 
 def main() -> None:
     if shutil.which("pyinstaller") is None:
-        print("pyinstaller not found. Install it with: pip install pyinstaller",
-              file=sys.stderr)
+        print("pyinstaller not found. Install it with: pip install pyinstaller", file=sys.stderr)
         sys.exit(1)
 
     _embed_api_key()
@@ -117,7 +117,8 @@ def main() -> None:
         "--clean",
         "--onefile",
         "--windowed",
-        "--name", APP_NAME,
+        "--name",
+        APP_NAME,
         f"--version-file={VERSION_FILE}",
         f"--add-data={ASSETS}{';' if sys.platform == 'win32' else ':'}src/assets",
         # Make sure these packages are bundled even when discovered indirectly

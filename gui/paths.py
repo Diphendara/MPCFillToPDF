@@ -6,6 +6,7 @@ and bundled data is unpacked under `sys._MEIPASS`. We want `out/` and
 temp extraction dir — so the user finds their PDFs and cache after the
 .exe exits.
 """
+
 import sys
 from pathlib import Path
 

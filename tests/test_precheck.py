@@ -1,15 +1,11 @@
 """Tests for src/precheck.py — card analysis, planning, and manifest writing."""
+
 from pathlib import Path
-
-import pytest
-
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.precheck import (
-    CARDS_PER_PAGE,
-    XmlReport,
     PdfJob,
-    Plan,
+    XmlReport,
     analyze,
     check_drive_access,
     collect_drive_ids,
@@ -20,16 +16,16 @@ from src.precheck import (
 )
 from tests.conftest import make_xml
 
-
 # ─── helpers ────────────────────────────────────────────────────────────────
 
+
 def _xml(tmp_path: Path, n_cards: int, name: str = "deck") -> Path:
-    fronts = [{"id": f"ID{i:04d}", "name": f"Card{i}", "slots": str(i)}
-              for i in range(n_cards)]
+    fronts = [{"id": f"ID{i:04d}", "name": f"Card{i}", "slots": str(i)} for i in range(n_cards)]
     return make_xml(tmp_path / f"{name}.xml", fronts)
 
 
 # ─── analyze ────────────────────────────────────────────────────────────────
+
 
 def test_analyze_exact_multiple_of_9(tmp_path):
     p = _xml(tmp_path, 9)
@@ -71,6 +67,7 @@ def test_analyze_path_stored(tmp_path):
 
 # ─── PdfJob properties ───────────────────────────────────────────────────────
 
+
 def test_pdfjob_is_merged_single(tmp_path):
     j = PdfJob([tmp_path / "a.xml"], "a", 9)
     assert not j.is_merged
@@ -107,6 +104,7 @@ def test_pdfjob_display_name_merged(tmp_path):
 
 
 # ─── plan ───────────────────────────────────────────────────────────────────
+
 
 def test_plan_single_aligned_no_merge(tmp_path):
     r = XmlReport(tmp_path / "a.xml", 9, 0)
@@ -188,6 +186,7 @@ def test_plan_empty_reports(tmp_path):
 
 # ─── format helpers ──────────────────────────────────────────────────────────
 
+
 def test_format_merge_info_none_when_no_merge(tmp_path):
     r = XmlReport(tmp_path / "a.xml", 9, 0)
     p = plan([r])
@@ -227,6 +226,7 @@ def test_format_warning_mentions_local_count(tmp_path):
 
 
 # ─── write_manifest ──────────────────────────────────────────────────────────
+
 
 def test_write_manifest_returns_none_when_no_merge(tmp_path):
     r = XmlReport(tmp_path / "a.xml", 9, 0)
@@ -270,6 +270,7 @@ def test_write_manifest_content_has_xml_names(tmp_path):
 
 # ─── collect_drive_ids ───────────────────────────────────────────────────────
 
+
 def test_collect_drive_ids_returns_fronts_backs_cardback(tmp_path):
     p = make_xml(
         tmp_path / "a.xml",
@@ -285,8 +286,10 @@ def test_collect_drive_ids_returns_fronts_backs_cardback(tmp_path):
 def test_collect_drive_ids_deduplicates(tmp_path):
     p = make_xml(
         tmp_path / "a.xml",
-        fronts=[{"id": "SAME", "name": "X", "slots": "0"},
-                {"id": "SAME", "name": "X", "slots": "1"}],
+        fronts=[
+            {"id": "SAME", "name": "X", "slots": "0"},
+            {"id": "SAME", "name": "X", "slots": "1"},
+        ],
         cardback_id="CB01",
     )
     pairs = collect_drive_ids([p])
@@ -295,12 +298,12 @@ def test_collect_drive_ids_deduplicates(tmp_path):
 
 
 def test_collect_drive_ids_multiple_xmls(tmp_path):
-    p1 = make_xml(tmp_path / "a.xml",
-                  fronts=[{"id": "F01", "name": "A", "slots": "0"}],
-                  cardback_id="CB01")
-    p2 = make_xml(tmp_path / "b.xml",
-                  fronts=[{"id": "F02", "name": "B", "slots": "0"}],
-                  cardback_id="CB02")
+    p1 = make_xml(
+        tmp_path / "a.xml", fronts=[{"id": "F01", "name": "A", "slots": "0"}], cardback_id="CB01"
+    )
+    p2 = make_xml(
+        tmp_path / "b.xml", fronts=[{"id": "F02", "name": "B", "slots": "0"}], cardback_id="CB02"
+    )
     pairs = collect_drive_ids([p1, p2])
     ids = {did for did, _ in pairs}
     assert {"F01", "F02", "CB01", "CB02"} <= ids
@@ -309,9 +312,9 @@ def test_collect_drive_ids_multiple_xmls(tmp_path):
 def test_collect_drive_ids_skips_unparseable(tmp_path):
     bad = tmp_path / "bad.xml"
     bad.write_text("not xml", encoding="utf-8")
-    good = make_xml(tmp_path / "good.xml",
-                    fronts=[{"id": "F01", "name": "A", "slots": "0"}],
-                    cardback_id="CB01")
+    good = make_xml(
+        tmp_path / "good.xml", fronts=[{"id": "F01", "name": "A", "slots": "0"}], cardback_id="CB01"
+    )
     pairs = collect_drive_ids([bad, good])
     ids = {did for did, _ in pairs}
     assert "F01" in ids  # good XML processed; bad XML silently skipped
@@ -322,6 +325,7 @@ def test_collect_drive_ids_empty_list():
 
 
 # ─── check_drive_access ──────────────────────────────────────────────────────
+
 
 def _mock_response(status_code: int):
     r = MagicMock()
@@ -378,6 +382,7 @@ def test_check_drive_access_empty_list():
 
 
 # ─── write_manifest (existing test, kept here) ───────────────────────────────
+
 
 def test_write_manifest_removes_stale_file(tmp_path):
     out = tmp_path / "out"

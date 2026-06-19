@@ -1,6 +1,6 @@
 import logging
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -80,6 +80,9 @@ def parse(xml_path: str | Path) -> CardOrder:
     )
     _log.debug(
         "Parsed %s: %d fronts, %d backs, quantity=%d",
-        Path(xml_path).name, len(order.fronts), len(order.backs), quantity,
+        Path(xml_path).name,
+        len(order.fronts),
+        len(order.backs),
+        quantity,
     )
     return order

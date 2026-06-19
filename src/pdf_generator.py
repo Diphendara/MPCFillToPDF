@@ -6,6 +6,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 from src.cancellation import Cancelled
+from src.constants import CARDS_PER_PAGE, COLS, ROWS
 
 # Card trim size
 CARD_W = 63.5 * mm
@@ -17,11 +18,6 @@ BLEED = 1.0 * mm
 # Full image size (trim + bleed on all 4 sides)
 IMAGE_W = CARD_W + 2 * BLEED
 IMAGE_H = CARD_H + 2 * BLEED
-
-# Grid
-COLS = 3
-ROWS = 3
-CARDS_PER_PAGE = COLS * ROWS
 
 # Distance from page edge to the card trim line.
 # Values taken directly from examples/example.pdf vector coordinates
@@ -36,9 +32,9 @@ MARK_GAP = 3.0  # pt between trim line and tick endpoint
 # Printer-mark assets
 ASSETS_DIR = Path(__file__).parent / "assets"
 CORNER_MARK_PATH = ASSETS_DIR / "corner_mark.png"
-CORNER_MARK_PT = 10.0                 # 10×10pt registration crosshair at each page corner
+CORNER_MARK_PT = 10.0  # 10×10pt registration crosshair at each page corner
 COLOR_BAR_PATH = ASSETS_DIR / "color_bar.png"
-COLOR_BAR_W, COLOR_BAR_H = 200.0, 15.0    # top-center CMYK calibration bar
+COLOR_BAR_W, COLOR_BAR_H = 200.0, 15.0  # top-center CMYK calibration bar
 COLOR_BAR_X = 197.64
 
 PAGE_W, PAGE_H = A4
@@ -58,10 +54,12 @@ def _trim_origin(col: int, row: int) -> tuple[float, float]:
 
 def _draw_crop_marks(c: canvas.Canvas) -> None:
     """Trim-edge ticks in the page margins only (no lines crossing inner gaps)."""
-    xs = [MARGIN_X + col * (CARD_W + GAP_X) + dx
-          for col in range(COLS) for dx in (0.0, CARD_W)]
-    ys = [PAGE_H - MARGIN_Y - (row + 1) * CARD_H - row * GAP_Y + dy
-          for row in range(ROWS) for dy in (0.0, CARD_H)]
+    xs = [MARGIN_X + col * (CARD_W + GAP_X) + dx for col in range(COLS) for dx in (0.0, CARD_W)]
+    ys = [
+        PAGE_H - MARGIN_Y - (row + 1) * CARD_H - row * GAP_Y + dy
+        for row in range(ROWS)
+        for dy in (0.0, CARD_H)
+    ]
 
     c.saveState()
     c.setLineWidth(MARK_W)
@@ -87,10 +85,16 @@ def _draw_printer_marks(c: canvas.Canvas, page_label: str | None = None) -> None
     if CORNER_MARK_PATH.exists():
         s = CORNER_MARK_PT
         for x, y in [(0, 0), (PAGE_W - s, 0), (0, PAGE_H - s), (PAGE_W - s, PAGE_H - s)]:
-            c.drawImage(str(CORNER_MARK_PATH), x, y, width=s, height=s, mask='auto')
+            c.drawImage(str(CORNER_MARK_PATH), x, y, width=s, height=s, mask="auto")
     if COLOR_BAR_PATH.exists():
-        c.drawImage(str(COLOR_BAR_PATH), COLOR_BAR_X, PAGE_H - COLOR_BAR_H,
-                    width=COLOR_BAR_W, height=COLOR_BAR_H, mask='auto')
+        c.drawImage(
+            str(COLOR_BAR_PATH),
+            COLOR_BAR_X,
+            PAGE_H - COLOR_BAR_H,
+            width=COLOR_BAR_W,
+            height=COLOR_BAR_H,
+            mask="auto",
+        )
     if page_label:
         c.saveState()
         c.setFont("Helvetica", 8)
@@ -115,9 +119,7 @@ def _draw_page(
         if slot is not None and slot in slot_to_id:
             img_path = id_to_path.get(slot_to_id[slot])
             if img_path and img_path.exists():
-                c.drawImage(str(img_path),
-                            x - BLEED, y - BLEED,
-                            width=IMAGE_W, height=IMAGE_H)
+                c.drawImage(str(img_path), x - BLEED, y - BLEED, width=IMAGE_W, height=IMAGE_H)
 
 
 # Cap each generated PDF at 500 MB on disk (decimal MB, as reported by file
@@ -180,8 +182,9 @@ def generate(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pages = [ordered_slots[i:i + CARDS_PER_PAGE]
-             for i in range(0, len(ordered_slots), CARDS_PER_PAGE)]
+    pages = [
+        ordered_slots[i : i + CARDS_PER_PAGE] for i in range(0, len(ordered_slots), CARDS_PER_PAGE)
+    ]
 
     def id_bytes(drive_id: str) -> int:
         return _projected_pdf_bytes(id_to_path.get(drive_id))
@@ -231,7 +234,7 @@ def generate(
             if not fronts_only:
                 mirrored = []
                 for row in range(ROWS):
-                    mirrored.extend(reversed(padded[row * COLS:(row + 1) * COLS]))
+                    mirrored.extend(reversed(padded[row * COLS : (row + 1) * COLS]))
 
                 _draw_page(c, mirrored, id_to_path, back_slot_to_id, page_label=f"{pair_no}B")
                 c.showPage()
