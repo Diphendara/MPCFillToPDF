@@ -59,5 +59,6 @@ desktop.ini
 *.suo
 *.user
 
-# Claude Code local settings (machine-specific)
+# Claude Code settings (machine-specific, not shared)
+.claude/settings.json
 .claude/settings.local.json
