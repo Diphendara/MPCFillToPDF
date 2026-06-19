@@ -81,6 +81,17 @@ def _ellipsize(name: str, width: int) -> str:
     return name[: max(0, width - 1)] + "…"
 
 
+def _attach_context_menu(widget: tk.Widget) -> None:
+    """Attach a right-click context menu (cut/copy/paste/select all) to an Entry or Text widget."""
+    menu = tk.Menu(widget, tearoff=0)
+    menu.add_command(label="Cortar",          command=lambda: widget.event_generate("<<Cut>>"))
+    menu.add_command(label="Copiar",          command=lambda: widget.event_generate("<<Copy>>"))
+    menu.add_command(label="Pegar",           command=lambda: widget.event_generate("<<Paste>>"))
+    menu.add_separator()
+    menu.add_command(label="Seleccionar todo", command=lambda: widget.event_generate("<<SelectAll>>"))
+    widget.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+
+
 def _load_tab_icon(name: str, size: tuple[int, int] = (20, 20)) -> ImageTk.PhotoImage | None:
     if getattr(sys, "frozen", False):
         icons_dir = Path(getattr(sys, "_MEIPASS", "")) / "icons"
@@ -556,6 +567,7 @@ class App:
         self._op_url_entry = ttk.Entry(url_row, textvariable=self._op_url_var)
         self._op_url_entry.grid(row=0, column=1, sticky="ew")
         self._op_url_entry.bind("<Return>", lambda _e: self._op_load_deck())
+        _attach_context_menu(self._op_url_entry)
         self._op_load_btn = ttk.Button(url_row, text="Añadir", width=7,
                                        command=self._op_load_deck)
         self._op_load_btn.grid(row=0, column=2, padx=(6, 0))
@@ -867,6 +879,7 @@ class App:
         self._rb_url_entry = ttk.Entry(url_row, textvariable=self._rb_url_var)
         self._rb_url_entry.grid(row=0, column=1, sticky="ew")
         self._rb_url_entry.bind("<Return>", lambda _e: self._rb_load_deck())
+        _attach_context_menu(self._rb_url_entry)
         self._rb_load_btn = ttk.Button(url_row, text="Añadir", width=7,
                                        command=self._rb_load_deck)
         self._rb_load_btn.grid(row=0, column=2, padx=(6, 0))
@@ -2496,6 +2509,7 @@ class App:
         sb.grid(row=0, column=1, sticky="ns")
         txt.insert("1.0", message)
         txt.configure(state=tk.DISABLED)
+        _attach_context_menu(txt)
 
         btn_row = ttk.Frame(dlg)
         btn_row.pack(fill=tk.X, padx=12, pady=(0, 10))
