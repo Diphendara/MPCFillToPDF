@@ -1669,7 +1669,7 @@ class App:
             widget.destroy()
         self._preflight_labels.clear()
 
-        if not self.xml_paths and not self.local_fronts:
+        if not self.xml_paths and not self.local_fronts and not self._op_decks and not self._rb_decks:
             self._preflight_frame.pack_forget()
             return
 
@@ -1698,6 +1698,24 @@ class App:
             xml_total += n
             _row([
                 (f"• {p.name}: ", "normal"),
+                (f"{n}", "bold"),
+                (" cartas", "normal"),
+            ])
+
+        for deck in self._op_decks:
+            n = deck.total_slots
+            xml_total += n
+            _row([
+                (f"• One Piece – {_ellipsize(deck.name, 22)}: ", "normal"),
+                (f"{n}", "bold"),
+                (" cartas", "normal"),
+            ])
+
+        for deck in self._rb_decks:
+            n = deck.total_slots
+            xml_total += n
+            _row([
+                (f"• Riftbound – {_ellipsize(deck.name, 22)}: ", "normal"),
                 (f"{n}", "bold"),
                 (" cartas", "normal"),
             ])
@@ -1783,21 +1801,15 @@ class App:
         if self.running:
             return
 
-        # One Piece mode: OP decks loaded and no Magic content
-        if self._op_decks and not self.xml_paths and not self.local_fronts and not self._rb_decks:
-            self._start_op(fronts_only)
+        if (not self.xml_paths and not self.local_fronts
+                and not self._op_decks and not self._rb_decks):
+            messagebox.showerror(
+                APP_TITLE,
+                "Selecciona al menos un XML, imágenes locales, o un mazo de One Piece o Riftbound.",
+            )
             return
 
-        # Riftbound mode: RB decks loaded and no other content
-        if self._rb_decks and not self.xml_paths and not self.local_fronts and not self._op_decks:
-            self._start_rb(fronts_only)
-            return
-
-        if not self.xml_paths and not self.local_fronts:
-            messagebox.showerror(APP_TITLE, "Selecciona al menos un XML o imágenes locales.")
-            return
-
-        if not self.xml_paths and not self.local_backs:
+        if not self.xml_paths and self.local_fronts and not self.local_backs:
             messagebox.showerror(
                 APP_TITLE,
                 "Sin XMLs se necesita al menos un back local "
@@ -1841,17 +1853,35 @@ class App:
             if merge_info:
                 messagebox.showinfo(APP_TITLE, merge_info)
 
-            warning = format_warning(plan_)
-            if warning:
-                if not messagebox.askyesno(
-                    APP_TITLE,
-                    warning + "\n\n¿Continuar de todos modos?",
-                    icon=messagebox.WARNING,
-                ):
-                    return
+            if format_warning(plan_):
+                combined_total = (
+                    sum(r.cards for r in reports)
+                    + len(self.local_fronts)
+                    + sum(d.total_slots for d in self._op_decks)
+                    + sum(d.total_slots for d in self._rb_decks)
+                )
+                combined_rem = combined_total % CARDS_PER_PAGE
+                if combined_rem != 0:
+                    combined_blanks = CARDS_PER_PAGE - combined_rem
+                    s = "hueco" if combined_blanks == 1 else "huecos"
+                    combined_warning = (
+                        f"Aviso: {combined_total} carta(s) en total no es múltiplo de 9.\n"
+                        f"La última página tendrá {combined_blanks} {s} en blanco "
+                        "(la imprenta cobra la página entera aunque no esté llena)."
+                    )
+                    if not messagebox.askyesno(
+                        APP_TITLE,
+                        combined_warning + "\n\n¿Continuar de todos modos?",
+                        icon=messagebox.WARNING,
+                    ):
+                        return
         else:
-            # Locals-only: warn if total fronts is not a multiple of 9
-            total = len(self.local_fronts)
+            # No XML: warn if total (local + OP + RB) is not a multiple of 9
+            total = (
+                len(self.local_fronts)
+                + sum(d.total_slots for d in self._op_decks)
+                + sum(d.total_slots for d in self._rb_decks)
+            )
             rem = total % CARDS_PER_PAGE
             if rem:
                 blanks = CARDS_PER_PAGE - rem
@@ -2172,6 +2202,83 @@ class App:
                 if done == total and total > 0:
                     _phase_done[stage] = now
 
+            # ---- Download and prepare One Piece deck images (if any) --------
+            op_fronts: list[Path] = []
+            op_backs_resolved: list[Path] = []
+            op_crop_extra: dict[Path, bool] = {}
+            op_standard_back: Path | None = None
+
+            if self._op_decks:
+                op_raw_dir = wd / "op_raw"
+                op_label = " + ".join(d.name for d in self._op_decks)
+                op_total_unique = sum(len({c.card_id for c in d.cards}) for d in self._op_decks)
+                self.events.put(("progress", "download", 0, op_total_unique, f"One Piece – {op_label}"))
+                image_map_op: dict[str, Path] = {}
+                done_dl_op = 0
+                for deck in self._op_decks:
+                    _off_op = done_dl_op
+                    def _op_prog(done, total, _o=_off_op, _t=op_total_unique, _lbl=op_label):
+                        _track("download", _o + done, _t)
+                        self.events.put(("progress", "download", _o + done, _t, f"One Piece – {_lbl}"))
+                    part = op_download(deck, op_raw_dir, cancel_event=self.cancel_event, progress_cb=_op_prog)
+                    image_map_op.update(part)
+                    done_dl_op += len({c.card_id for c in deck.cards})
+                    if self.cancel_event.is_set():
+                        self.events.put(("cancelled", run_dir))
+                        return
+                op_standard_back, op_leader_back_res = get_op_backs()
+                leader_backs_op: dict[str, Path] = {}
+                for deck in self._op_decks:
+                    if deck.leader and deck.leader.card_id not in leader_backs_op:
+                        leader_backs_op[deck.leader.card_id] = op_leader_back_res
+                for deck in self._op_decks:
+                    lb = leader_backs_op.get(deck.leader.card_id) if deck.leader else None
+                    fronts_op, backs_op = op_expand(deck, image_map_op, lb, op_standard_back)
+                    op_fronts.extend(fronts_op)
+                    op_backs_resolved.extend(op_standard_back if b is None else b for b in backs_op)
+                op_all_back_paths = {op_standard_back} | set(leader_backs_op.values())
+                op_crop_extra = {p: False for p in set(op_fronts) | op_all_back_paths}
+
+            # ---- Download and prepare Riftbound deck images (if any) --------
+            rb_fronts: list[Path] = []
+            rb_backs_resolved: list[Path] = []
+            rb_crop_extra: dict[Path, bool] = {}
+            rb_default_back: Path | None = None
+
+            if self._rb_decks:
+                rb_raw_dir = wd / "rb_raw"
+                rb_label = " + ".join(d.name for d in self._rb_decks)
+                rb_total_unique = sum(len({c.variant_id for c in d.cards}) for d in self._rb_decks)
+                self.events.put(("progress", "download", 0, rb_total_unique, f"Riftbound – {rb_label}"))
+                image_map_rb: dict[str, Path] = {}
+                done_dl_rb = 0
+                for deck in self._rb_decks:
+                    _off_rb = done_dl_rb
+                    def _rb_prog(done, total, _o=_off_rb, _t=rb_total_unique, _lbl=rb_label):
+                        _track("download", _o + done, _t)
+                        self.events.put(("progress", "download", _o + done, _t, f"Riftbound – {_lbl}"))
+                    part = rb_download(deck, rb_raw_dir, cancel_event=self.cancel_event, progress_cb=_rb_prog)
+                    image_map_rb.update(part)
+                    done_dl_rb += len({c.variant_id for c in deck.cards})
+                    if self.cancel_event.is_set():
+                        self.events.put(("cancelled", run_dir))
+                        return
+                rb_backs_map = get_rb_backs()
+                rb_default_back = rb_backs_map.get("maindeck") or next(iter(rb_backs_map.values()))
+                rb_all_back_paths = set(rb_backs_map.values())
+                print_runes_flags = [row["print_runes_var"].get() for row in self._rb_deck_rows]
+                for idx, deck in enumerate(self._rb_decks):
+                    include_runes = print_runes_flags[idx] if idx < len(print_runes_flags) else True
+                    fronts_rb, backs_rb = rb_expand(deck, image_map_rb, rb_backs_map, include_runes=include_runes)
+                    rb_fronts.extend(fronts_rb)
+                    rb_backs_resolved.extend(rb_default_back if b is None else b for b in backs_rb)
+                rb_crop_extra = {p: False for p in set(rb_fronts) | rb_all_back_paths}
+
+            # ---- Combine all extra fronts/backs/crop maps -------------------
+            all_extra_fronts = list(self.local_fronts) + op_fronts + rb_fronts
+            all_extra_backs: list[Path | None] = list(extra_backs) + op_backs_resolved + rb_backs_resolved
+            all_crop_map = {**crop_map, **op_crop_extra, **rb_crop_extra}
+
             if plan_ is not None:
                 # --- Verify Drive access before downloading ---------------
                 xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
@@ -2227,9 +2334,9 @@ class App:
                 pdfs = run_plan(
                     plan_.jobs, run_dir, wd, cb,
                     cancel_event=self.cancel_event,
-                    extra_fronts=list(self.local_fronts) or None,
-                    extra_backs=list(extra_backs) or None,
-                    local_crop_map=dict(crop_map) or None,
+                    extra_fronts=all_extra_fronts or None,
+                    extra_backs=all_extra_backs or None,
+                    local_crop_map=all_crop_map or None,
                     on_job_pdf_start=on_job_pdf_start,
                     on_xml_download_progress=on_xml_download_progress,
                     on_xml_crop_progress=on_xml_crop_progress,
@@ -2239,18 +2346,33 @@ class App:
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
             else:
-                # Locals-only run. Back #1 acts as the default cardback.
-                base = "locales"
-                self.events.put(("file", 1, 1, f"{base} (solo imágenes locales)"))
+                # No XML: locals + OP + RB combined.
+                if not all_extra_fronts:
+                    raise ValueError("No hay cartas para generar.")
+                if self.local_fronts and self.local_backs:
+                    default_back: Path = self.local_backs[0]
+                elif op_standard_back is not None:
+                    default_back = op_standard_back
+                elif rb_default_back is not None:
+                    default_back = rb_default_back
+                else:
+                    raise ValueError("No se encontró reverso por defecto.")
+                parts = [p for p in [
+                    "locales" if self.local_fronts else None,
+                    "One Piece" if op_fronts else None,
+                    "Riftbound" if rb_fronts else None,
+                ] if p]
+                base = "_".join(parts) if parts else "combinado"
+                self.events.put(("file", 1, 1, base))
                 def cb(stage, done, total, _label=base):
                     _track(stage, done, total)
                     self.events.put(("progress", stage, done, total, _label))
                 pdfs = run_locals_only(
-                    list(self.local_fronts), self.local_backs[0],
+                    all_extra_fronts, default_back,
                     run_dir, base, wd, cb,
                     cancel_event=self.cancel_event,
-                    extra_backs=list(extra_backs),
-                    local_crop_map=dict(crop_map),
+                    extra_backs=all_extra_backs,
+                    local_crop_map=all_crop_map,
                     fronts_only=fronts_only,
                 )
                 generated.extend(pdfs)
