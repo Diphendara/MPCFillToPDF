@@ -1,4 +1,5 @@
 """One Piece Card Game deck scraper — supports onepiece.gg, deckbuilder.egmanevents.com, deckbuilder.cardkaizoku.com."""
+
 from __future__ import annotations
 
 import re
@@ -6,11 +7,13 @@ import sys
 import threading
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 from PIL import Image, ImageDraw
+
+from src.cancellation import Cancelled
 
 _HEADERS = {
     "User-Agent": (
@@ -20,33 +23,35 @@ _HEADERS = {
 }
 
 # ── dotgg (onepiece.gg) ────────────────────────────────────────────────────
-_DOTGG_DECK_API  = "https://api.dotgg.gg/cgfw/getdeck?game=onepiece&slug={slug}"
+_DOTGG_DECK_API = "https://api.dotgg.gg/cgfw/getdeck?game=onepiece&slug={slug}"
 _DOTGG_CARDS_API = "https://api.dotgg.gg/cgfw/getcards?game=onepiece&mode=indexed"
 _DOTGG_IMAGE_URL = "https://static.dotgg.gg/onepiece/card/{card_id}.webp"
 
 # ── egmanevents ────────────────────────────────────────────────────────────
-_EGMAN_CARDS_API  = "https://deckbuilder.egmanevents.com/api/cards/optcg"
-_EGMAN_IMAGE_URL  = "https://deckbuilder.egmanevents.com/api/images/optcg/{card_id}.png"
-_EGMAN_SUPABASE   = "https://resgvirjzcpamfumrygh.supabase.co"
-_EGMAN_SUPA_KEY   = "sb_publishable_bdDgor6ifmOvryEuZKWniw_RBzb3vuh"
+_EGMAN_CARDS_API = "https://deckbuilder.egmanevents.com/api/cards/optcg"
+_EGMAN_IMAGE_URL = "https://deckbuilder.egmanevents.com/api/images/optcg/{card_id}.png"
+_EGMAN_SUPABASE = "https://resgvirjzcpamfumrygh.supabase.co"
+_EGMAN_SUPA_KEY = "sb_publishable_bdDgor6ifmOvryEuZKWniw_RBzb3vuh"
 
 # ── cardkaizoku ────────────────────────────────────────────────────────────
-_KAIZOKU_CDN      = "https://cdn.cardkaizoku.com"
-_KAIZOKU_REFERER  = "https://deckbuilder.cardkaizoku.com/"
+_KAIZOKU_CDN = "https://cdn.cardkaizoku.com"
+_KAIZOKU_REFERER = "https://deckbuilder.cardkaizoku.com/"
+
 
 # ── Image URL callables keyed by source ───────────────────────────────────
 def _kaizoku_img(card_id: str) -> str:
     prefix = card_id.split("-")[0]
     return f"{_KAIZOKU_CDN}/cards_en/{prefix}/{card_id}.png"
 
+
 _IMAGE_URL_FUNC_BY_SOURCE = {
-    "dotgg":    lambda cid: _DOTGG_IMAGE_URL.format(card_id=cid),
-    "egman":    lambda cid: _EGMAN_IMAGE_URL.format(card_id=cid),
-    "kaizoku":  _kaizoku_img,
+    "dotgg": lambda cid: _DOTGG_IMAGE_URL.format(card_id=cid),
+    "egman": lambda cid: _EGMAN_IMAGE_URL.format(card_id=cid),
+    "kaizoku": _kaizoku_img,
 }
 _IMAGE_EXT_BY_SOURCE: dict[str, str] = {
-    "dotgg":   "webp",
-    "egman":   "png",
+    "dotgg": "webp",
+    "egman": "png",
     "kaizoku": "png",
 }
 _IMAGE_EXTRA_HEADERS_BY_SOURCE: dict[str, dict] = {
@@ -54,7 +59,7 @@ _IMAGE_EXTRA_HEADERS_BY_SOURCE: dict[str, dict] = {
 }
 
 # ── Resources ─────────────────────────────────────────────────────────────
-_STANDARD_BACK_BG     = "#0A1628"
+_STANDARD_BACK_BG = "#0A1628"
 _STANDARD_BACK_BORDER = "#B0B8C8"
 
 
@@ -70,7 +75,7 @@ def get_op_backs() -> tuple[Path, Path]:
     """
     op_dir = _resources_dir() / "backs" / "op"
     default = op_dir / "default.png"
-    leader  = op_dir / "lider.png"
+    leader = op_dir / "lider.png"
     if default.exists() and leader.exists():
         return default, leader
     return _generate_fallback_backs()
@@ -78,6 +83,7 @@ def get_op_backs() -> tuple[Path, Path]:
 
 def _generate_fallback_backs() -> tuple[Path, Path]:
     import tempfile
+
     tmp = Path(tempfile.mkdtemp())
     W, H = 480, 670
 
@@ -91,11 +97,12 @@ def _generate_fallback_backs() -> tuple[Path, Path]:
 
     return (
         _make(tmp / "default.png", _STANDARD_BACK_BG, _STANDARD_BACK_BORDER),
-        _make(tmp / "lider.png",   "#8B0000",          "#CCCCCC"),
+        _make(tmp / "lider.png", "#8B0000", "#CCCCCC"),
     )
 
 
 # ── Data model ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class OPCard:
@@ -124,6 +131,7 @@ class OPDeck:
 
 # ── URL routing ───────────────────────────────────────────────────────────
 
+
 def scrape_deck(url: str) -> OPDeck:
     """Detect the source site from the URL and dispatch to the right scraper."""
     host = urllib.parse.urlparse(url).netloc.lower()
@@ -140,6 +148,7 @@ def scrape_deck(url: str) -> OPDeck:
 
 
 # ── dotgg / onepiece.gg ──────────────────────────────────────────────────
+
 
 def _scrape_dotgg(url: str) -> OPDeck:
     m = re.search(r"/decks/([^/?#]+)", url)
@@ -163,13 +172,15 @@ def _scrape_dotgg(url: str) -> OPDeck:
         is_leader = meta.get("cardType", "").upper() == "LEADER"
         color_str = meta.get("Color", "")
         colors = [c.strip() for c in color_str.split("/") if c.strip()]
-        cards.append(OPCard(
-            card_id=card_id,
-            name=meta.get("name", card_id),
-            quantity=int(qty_str),
-            is_leader=is_leader,
-            colors=colors,
-        ))
+        cards.append(
+            OPCard(
+                card_id=card_id,
+                name=meta.get("name", card_id),
+                quantity=int(qty_str),
+                is_leader=is_leader,
+                colors=colors,
+            )
+        )
 
     return OPDeck(
         name=deck_data.get("humanname", slug),
@@ -180,6 +191,7 @@ def _scrape_dotgg(url: str) -> OPDeck:
 
 
 # ── egmanevents ──────────────────────────────────────────────────────────
+
 
 def _egman_cards_db() -> dict[str, dict]:
     r = requests.get(_EGMAN_CARDS_API, headers=_HEADERS, timeout=20)
@@ -198,14 +210,18 @@ def _egman_build_deck(
         meta = cards_db.get(card_id, {})
         is_leader = meta.get("category", "").lower() == "leader"
         raw_colors = meta.get("color", [])
-        colors = raw_colors if isinstance(raw_colors, list) else ([raw_colors] if raw_colors else [])
-        cards.append(OPCard(
-            card_id=card_id,
-            name=meta.get("name", card_id),
-            quantity=qty,
-            is_leader=is_leader,
-            colors=colors,
-        ))
+        colors = (
+            raw_colors if isinstance(raw_colors, list) else ([raw_colors] if raw_colors else [])
+        )
+        cards.append(
+            OPCard(
+                card_id=card_id,
+                name=meta.get("name", card_id),
+                quantity=qty,
+                is_leader=is_leader,
+                colors=colors,
+            )
+        )
 
     leader = next((c for c in cards if c.is_leader), None)
     name = f"{leader.name} Deck" if leader else slug
@@ -290,6 +306,7 @@ def _egman_load_short_code(code: str) -> tuple[dict[str, int], str]:
 
 # ── cardkaizoku ──────────────────────────────────────────────────────────
 
+
 def _scrape_kaizoku(url: str) -> OPDeck:
     """Parse ?deck={N}x{CARD_ID}|{N}x{CARD_ID}|... from cardkaizoku.com."""
     qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
@@ -310,13 +327,16 @@ def _scrape_kaizoku(url: str) -> OPDeck:
             deck_map[card_id] = deck_map.get(card_id, 0) + count
 
     if not deck_map:
-        raise ValueError("No se encontraron cartas en el parámetro ?deck= de la URL de cardkaizoku.")
+        raise ValueError(
+            "No se encontraron cartas en el parámetro ?deck= de la URL de cardkaizoku."
+        )
 
     cards_db = _egman_cards_db()
     return _egman_build_deck(deck_map, cards_db, "direct", source="kaizoku")
 
 
 # ── Image download ─────────────────────────────────────────────────────────
+
 
 def download_images(
     deck: OPDeck,
@@ -366,7 +386,7 @@ def download_images(
         futs = {ex.submit(_fetch, c): c for c in deck.cards}
         for fut in as_completed(futs):
             if cancel_event and cancel_event.is_set():
-                break
+                raise Cancelled()
             card_id, path = fut.result()
             image_map[card_id] = path
             done += 1
@@ -377,6 +397,7 @@ def download_images(
 
 
 # ── Deck expansion ────────────────────────────────────────────────────────
+
 
 def expand_deck(
     deck: OPDeck,

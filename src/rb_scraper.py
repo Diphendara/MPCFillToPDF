@@ -1,4 +1,5 @@
 """Riftbound deck scraper — piltoverarchive.com, riftmana.com, riftbinder.com, riftdex.com, riftbound.gg"""
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,8 @@ from urllib.parse import quote
 import requests
 from PIL import Image, ImageDraw
 
+from src.cancellation import Cancelled
+
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -26,7 +29,7 @@ _TRPC_BASE = "https://piltoverarchive.com/api/trpc"
 
 # ── riftmana.com ──────────────────────────────────────────────────────────────
 _RM_BASE = "https://riftmana.com"
-_RM_API  = "https://riftmana.com/wp-json/riftmana/v2/decks/{uuid}"
+_RM_API = "https://riftmana.com/wp-json/riftmana/v2/decks/{uuid}"
 
 # ── riftbinder.com (Firestore) ────────────────────────────────────────────────
 _RB_FS_BASE = (
@@ -36,9 +39,9 @@ _RB_FS_BASE = (
 _RB_IMG_CDN = "https://cdn.piltoverarchive.com/cards/{code}.webp"
 
 # ── riftbound.gg (dotgg) ─────────────────────────────────────────────────────
-_RBGG_DECK_API  = "https://api.dotgg.gg/cgfw/getdeck?game=riftbound&slug={slug}"
+_RBGG_DECK_API = "https://api.dotgg.gg/cgfw/getdeck?game=riftbound&slug={slug}"
 _RBGG_CARDS_API = "https://api.dotgg.gg/cgfw/getcards?game=riftbound&mode=indexed"
-_RBGG_IMG_URL   = "https://static.dotgg.gg/riftbound/cards/{code}.webp"
+_RBGG_IMG_URL = "https://static.dotgg.gg/riftbound/cards/{code}.webp"
 
 # ── riftdex.com (Supabase) ────────────────────────────────────────────────────
 _RDX_SUPA_URL = "https://duiehcongdospcckoydy.supabase.co"
@@ -60,16 +63,17 @@ _MAINDECK_SECTIONS = {"champion", "maindeck", "sideboard"}
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class RBCard:
     card_id: str
     variant_id: str
     name: str
-    card_type: str        # "Legend", "Unit", "Rune", "Battlefield", "Spell", …
+    card_type: str  # "Legend", "Unit", "Rune", "Battlefield", "Spell", …
     card_super: str | None  # "Champion", "Basic", None
     quantity: int
     image_url: str
-    section: str          # "legend" | "champion" | "battlefield" | "rune" | "maindeck" | "sideboard"
+    section: str  # "legend" | "champion" | "battlefield" | "rune" | "maindeck" | "sideboard"
 
 
 @dataclass
@@ -91,6 +95,7 @@ class RBDeck:
 
 # ── Resources ─────────────────────────────────────────────────────────────────
 
+
 def _resources_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS) / "resources"
@@ -108,30 +113,31 @@ def get_rb_backs() -> dict[str, Path]:
     """
     rb_dir = _resources_dir() / "backs" / "riftbound"
     black = rb_dir / "black.png"
-    blue  = rb_dir / "blue.png"
+    blue = rb_dir / "blue.png"
     white = rb_dir / "white.png"
 
     def _get(path: Path, fallback_key: str) -> Path:
         return path if path.exists() else _generate_fallback_back(fallback_key)
 
     return {
-        "legend":      _get(black, "legend"),
+        "legend": _get(black, "legend"),
         "battlefield": _get(black, "battlefield"),
-        "rune":        _get(white, "rune"),
-        "maindeck":    _get(blue,  "maindeck"),
+        "rune": _get(white, "rune"),
+        "maindeck": _get(blue, "maindeck"),
     }
 
 
 _FALLBACK_COLORS: dict[str, tuple[str, str]] = {
-    "legend":      ("#111111", "#888888"),
+    "legend": ("#111111", "#888888"),
     "battlefield": ("#111111", "#888888"),
-    "rune":        ("#eeeeee", "#444444"),
-    "maindeck":    ("#0d0d1a", "#5588cc"),
+    "rune": ("#eeeeee", "#444444"),
+    "maindeck": ("#0d0d1a", "#5588cc"),
 }
 
 
 def _generate_fallback_back(section: str) -> Path:
     import tempfile
+
     tmp = Path(tempfile.mkdtemp())
     bg, border = _FALLBACK_COLORS.get(section, ("#111111", "#888888"))
     W, H = 480, 670
@@ -145,6 +151,7 @@ def _generate_fallback_back(section: str) -> Path:
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
 
 def _type_to_section(card_type: str, card_super: str | None = None) -> str:
     """Map Riftbound card type + super to a deck section name."""
@@ -163,9 +170,11 @@ def _type_to_section(card_type: str, card_super: str | None = None) -> str:
 
 # ── URL routing ───────────────────────────────────────────────────────────────
 
+
 def scrape_deck(url: str) -> RBDeck:
     """Detect the source site from the URL and dispatch to the right scraper."""
     import urllib.parse
+
     host = urllib.parse.urlparse(url).netloc.lower()
     if "piltoverarchive.com" in host:
         m = re.search(r"/decks/view/([0-9a-f-]{36})", url, re.IGNORECASE)
@@ -191,6 +200,7 @@ def scrape_deck(url: str) -> RBDeck:
 
 
 # ── riftbound.gg scraper (dotgg) ─────────────────────────────────────────────
+
 
 def _scrape_riftbound_gg(url: str) -> RBDeck:
     m = re.search(r"/decks/([^/?#]+)", url)
@@ -223,32 +233,36 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
     for code, qty_str in deck_data.get("deck", {}).items():
         meta = cards_db.get(code, {})
         section = _type_to_section(meta.get("type", ""), meta.get("supertype"))
-        cards.append(RBCard(
-            card_id=code,
-            variant_id=code,
-            name=meta.get("name", code),
-            card_type=meta.get("type", ""),
-            card_super=meta.get("supertype"),
-            quantity=int(qty_str),
-            image_url=_RBGG_IMG_URL.format(code=code),
-            section=section,
-        ))
+        cards.append(
+            RBCard(
+                card_id=code,
+                variant_id=code,
+                name=meta.get("name", code),
+                card_type=meta.get("type", ""),
+                card_super=meta.get("supertype"),
+                quantity=int(qty_str),
+                image_url=_RBGG_IMG_URL.format(code=code),
+                section=section,
+            )
+        )
 
     # boards[1] = sideboard (boards[0] == deck)
     boards = deck_data.get("boards", [])
     if len(boards) > 1:
         for code, qty_str in boards[1].items():
             meta = cards_db.get(code, {})
-            cards.append(RBCard(
-                card_id=code,
-                variant_id=f"{code}_sb",
-                name=meta.get("name", code),
-                card_type=meta.get("type", ""),
-                card_super=meta.get("supertype"),
-                quantity=int(qty_str),
-                image_url=_RBGG_IMG_URL.format(code=code),
-                section="sideboard",
-            ))
+            cards.append(
+                RBCard(
+                    card_id=code,
+                    variant_id=f"{code}_sb",
+                    name=meta.get("name", code),
+                    card_type=meta.get("type", ""),
+                    card_super=meta.get("supertype"),
+                    quantity=int(qty_str),
+                    image_url=_RBGG_IMG_URL.format(code=code),
+                    section="sideboard",
+                )
+            )
 
     return RBDeck(
         deck_id=slug,
@@ -259,6 +273,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
 
 # ── riftmana.com scraper ──────────────────────────────────────────────────────
 
+
 def _scrape_riftmana(url: str) -> RBDeck:
     html_headers = {**_HEADERS, "Accept": "text/html"}
     r = requests.get(url, headers=html_headers, timeout=20)
@@ -266,9 +281,7 @@ def _scrape_riftmana(url: str) -> RBDeck:
 
     m = re.search(r'data-deck-uuid=["\']([0-9a-f-]{36})["\']', r.text)
     if not m:
-        raise ValueError(
-            f"No se encontró el UUID del mazo en la página de riftmana.com: {url}"
-        )
+        raise ValueError(f"No se encontró el UUID del mazo en la página de riftmana.com: {url}")
     uuid = m.group(1)
 
     api_r = requests.get(
@@ -283,41 +296,42 @@ def _scrape_riftmana(url: str) -> RBDeck:
     for item in data.get("cards", []):
         section = _type_to_section(item.get("type", ""), item.get("super"))
         code = item["code"].upper()
-        cards.append(RBCard(
-            card_id=code,
-            variant_id=code,
-            name=item.get("name", code),
-            card_type=item.get("type", ""),
-            card_super=item.get("super"),
-            quantity=int(item.get("quantity", 1)),
-            image_url=item.get("image", ""),
-            section=section,
-        ))
+        cards.append(
+            RBCard(
+                card_id=code,
+                variant_id=code,
+                name=item.get("name", code),
+                card_type=item.get("type", ""),
+                card_super=item.get("super"),
+                quantity=int(item.get("quantity", 1)),
+                image_url=item.get("image", ""),
+                section=section,
+            )
+        )
     for item in data.get("sideboard", []):
         code = item["code"].upper()
-        cards.append(RBCard(
-            card_id=code,
-            variant_id=f"{code}_sb",
-            name=item.get("name", code),
-            card_type=item.get("type", ""),
-            card_super=item.get("super"),
-            quantity=int(item.get("quantity", 1)),
-            image_url=item.get("image", ""),
-            section="sideboard",
-        ))
+        cards.append(
+            RBCard(
+                card_id=code,
+                variant_id=f"{code}_sb",
+                name=item.get("name", code),
+                card_type=item.get("type", ""),
+                card_super=item.get("super"),
+                quantity=int(item.get("quantity", 1)),
+                image_url=item.get("image", ""),
+                section="sideboard",
+            )
+        )
 
     return RBDeck(deck_id=uuid, name=data.get("name", uuid), cards=cards)
 
 
 # ── riftbinder.com scraper (Firestore) ────────────────────────────────────────
 
+
 def _fs_str(field: dict) -> str:
     """Extract a string value from a Firestore field object."""
-    return (
-        field.get("stringValue")
-        or field.get("integerValue")
-        or ""
-    )
+    return field.get("stringValue") or field.get("integerValue") or ""
 
 
 def _fs_arr(field: dict) -> list[dict]:
@@ -328,9 +342,7 @@ def _fs_arr(field: dict) -> list[dict]:
 def _scrape_riftbinder(url: str) -> RBDeck:
     m = re.search(r"/decks/([A-Za-z0-9_-]+)", url)
     if not m:
-        raise ValueError(
-            f"No se pudo extraer el ID del mazo de la URL de riftbinder.com: {url}"
-        )
+        raise ValueError(f"No se pudo extraer el ID del mazo de la URL de riftbinder.com: {url}")
     doc_id = m.group(1)
 
     r = requests.get(
@@ -346,16 +358,18 @@ def _scrape_riftbinder(url: str) -> RBDeck:
 
     def _add(code: str, qty: int, section: str) -> None:
         code = code.upper()
-        cards.append(RBCard(
-            card_id=code,
-            variant_id=f"{code}_{section}",
-            name=code,
-            card_type=section.capitalize(),
-            card_super=None,
-            quantity=qty,
-            image_url=_RB_IMG_CDN.format(code=code),
-            section=section,
-        ))
+        cards.append(
+            RBCard(
+                card_id=code,
+                variant_id=f"{code}_{section}",
+                name=code,
+                card_type=section.capitalize(),
+                card_super=None,
+                quantity=qty,
+                image_url=_RB_IMG_CDN.format(code=code),
+                section=section,
+            )
+        )
 
     legend_id = _fs_str(fields.get("legendId", {}))
     if legend_id:
@@ -442,21 +456,24 @@ def _scrape_riftdex(url: str) -> RBDeck:
         meta = card_db.get(cid, {})
         card_number = meta.get("card_number", cid)
         section = _type_to_section(meta.get("type", ""), meta.get("super"))
-        cards.append(RBCard(
-            card_id=card_number,
-            variant_id=cid,
-            name=meta.get("card_name", card_number),
-            card_type=meta.get("type", ""),
-            card_super=meta.get("super"),
-            quantity=qty,
-            image_url=meta.get("image_url", ""),
-            section=section,
-        ))
+        cards.append(
+            RBCard(
+                card_id=card_number,
+                variant_id=cid,
+                name=meta.get("card_name", card_number),
+                card_type=meta.get("type", ""),
+                card_super=meta.get("super"),
+                quantity=qty,
+                image_url=meta.get("image_url", ""),
+                section=section,
+            )
+        )
 
     return RBDeck(deck_id=deck_id, name=deck_data.get("name", deck_id), cards=cards)
 
 
 # ── API fetch ─────────────────────────────────────────────────────────────────
+
 
 def _trpc_get(proc: str, payload: dict) -> dict:
     inp = quote(json.dumps({"json": payload}))
@@ -482,92 +499,110 @@ def _resolve_image(item: dict) -> str:
 
 def _fetch_deck(deck_id: str) -> RBDeck:
     raw = _trpc_get("decks.getById", {"id": deck_id})
+    if raw is None:
+        raise ValueError(
+            f"No se encontró el mazo con ID {deck_id} en piltoverarchive.com.\n"
+            "Puede ser privado, haber sido eliminado, o el ID no ser válido."
+        )
 
     cards: list[RBCard] = []
 
     # ── Legend (always 1 copy, imageUrl directly on the object) ──────────────
     leg = raw.get("legend")
     if leg:
-        cards.append(RBCard(
-            card_id=leg["cardId"],
-            variant_id=leg["id"],
-            name=leg["card"]["name"],
-            card_type="Legend",
-            card_super=None,
-            quantity=1,
-            image_url=leg["imageUrl"],
-            section="legend",
-        ))
+        cards.append(
+            RBCard(
+                card_id=leg["cardId"],
+                variant_id=leg["id"],
+                name=leg["card"]["name"],
+                card_type="Legend",
+                card_super=None,
+                quantity=1,
+                image_url=leg["imageUrl"],
+                section="legend",
+            )
+        )
 
     # ── Champions ─────────────────────────────────────────────────────────────
     for item in raw.get("champions", []):
-        cards.append(RBCard(
-            card_id=item["cardId"],
-            variant_id=item["variantId"],
-            name=item["card"]["name"],
-            card_type=item["card"]["type"],
-            card_super=item["card"].get("super"),
-            quantity=item["quantity"],
-            image_url=_resolve_image(item),
-            section="champion",
-        ))
+        cards.append(
+            RBCard(
+                card_id=item["cardId"],
+                variant_id=item["variantId"],
+                name=item["card"]["name"],
+                card_type=item["card"]["type"],
+                card_super=item["card"].get("super"),
+                quantity=item["quantity"],
+                image_url=_resolve_image(item),
+                section="champion",
+            )
+        )
 
     # ── Battlefields ──────────────────────────────────────────────────────────
     for item in raw.get("battlefields", []):
-        cards.append(RBCard(
-            card_id=item["cardId"],
-            variant_id=item["variantId"],
-            name=item["card"]["name"],
-            card_type=item["card"]["type"],
-            card_super=item["card"].get("super"),
-            quantity=item["quantity"],
-            image_url=_resolve_image(item),
-            section="battlefield",
-        ))
+        cards.append(
+            RBCard(
+                card_id=item["cardId"],
+                variant_id=item["variantId"],
+                name=item["card"]["name"],
+                card_type=item["card"]["type"],
+                card_super=item["card"].get("super"),
+                quantity=item["quantity"],
+                image_url=_resolve_image(item),
+                section="battlefield",
+            )
+        )
 
     # ── Runes ─────────────────────────────────────────────────────────────────
     for item in raw.get("runes", []):
-        cards.append(RBCard(
-            card_id=item["cardId"],
-            variant_id=item["variantId"],
-            name=item["card"]["name"],
-            card_type=item["card"]["type"],
-            card_super=item["card"].get("super"),
-            quantity=item["quantity"],
-            image_url=_resolve_image(item),
-            section="rune",
-        ))
+        cards.append(
+            RBCard(
+                card_id=item["cardId"],
+                variant_id=item["variantId"],
+                name=item["card"]["name"],
+                card_type=item["card"]["type"],
+                card_super=item["card"].get("super"),
+                quantity=item["quantity"],
+                image_url=_resolve_image(item),
+                section="rune",
+            )
+        )
 
     # ── Maindeck ──────────────────────────────────────────────────────────────
     for item in raw.get("maindeck", []):
-        cards.append(RBCard(
-            card_id=item["cardId"],
-            variant_id=item["variantId"],
-            name=item["card"]["name"],
-            card_type=item["card"]["type"],
-            card_super=item["card"].get("super"),
-            quantity=item["quantity"],
-            image_url=_resolve_image(item),
-            section="maindeck",
-        ))
+        cards.append(
+            RBCard(
+                card_id=item["cardId"],
+                variant_id=item["variantId"],
+                name=item["card"]["name"],
+                card_type=item["card"]["type"],
+                card_super=item["card"].get("super"),
+                quantity=item["quantity"],
+                image_url=_resolve_image(item),
+                section="maindeck",
+            )
+        )
 
     # ── Sideboard ─────────────────────────────────────────────────────────────
     for item in raw.get("sideboard", []):
-        cards.append(RBCard(
-            card_id=item["cardId"],
-            variant_id=item["variantId"],
-            name=item["card"]["name"],
-            card_type=item["card"]["type"],
-            card_super=item["card"].get("super"),
-            quantity=item["quantity"],
-            image_url=_resolve_image(item),
-            section="sideboard",
-        ))
+        cards.append(
+            RBCard(
+                card_id=item["cardId"],
+                variant_id=item["variantId"],
+                name=item["card"]["name"],
+                card_type=item["card"]["type"],
+                card_super=item["card"].get("super"),
+                quantity=item["quantity"],
+                image_url=_resolve_image(item),
+                section="sideboard",
+            )
+        )
 
     return RBDeck(deck_id=deck_id, name=raw.get("name", deck_id), cards=cards)
 
 
 # ── Image download ────────────────────────────────────────────────────────────
+
 
 def download_images(
     deck: RBDeck,
@@ -598,7 +633,7 @@ def download_images(
         futs = {ex.submit(_fetch, c): c for c in unique.values()}
         for fut in as_completed(futs):
             if cancel_event and cancel_event.is_set():
-                break
+                raise Cancelled()
             vid, path = fut.result()
             seen[vid] = path
             done += 1
@@ -609,6 +644,7 @@ def download_images(
 
 
 # ── Deck expansion ────────────────────────────────────────────────────────────
+
 
 def expand_deck(
     deck: RBDeck,
