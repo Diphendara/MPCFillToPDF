@@ -45,7 +45,6 @@ from src.precheck import (
     analyze,
     check_drive_access,
     collect_drive_ids,
-    format_merge_info,
     format_warning,
     plan,
     write_manifest,
@@ -2022,10 +2021,6 @@ class App:
                 return
 
             plan_ = plan(reports, local_count=len(self.state.local_fronts))
-
-            merge_info = format_merge_info(plan_)
-            if merge_info:
-                messagebox.showinfo(APP_TITLE, merge_info)
 
             if format_warning(plan_):
                 combined_total = (
