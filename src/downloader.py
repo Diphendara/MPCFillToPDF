@@ -12,6 +12,7 @@ import requests
 
 from src.cancellation import Cancelled
 from src.config import get_drive_api_key
+from src.constants import ImageDoneCallback, ProgressCallback, SpeedCallback
 
 _log = logging.getLogger(__name__)
 
@@ -241,10 +242,10 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
 def download_all(
     id_name_pairs: list[tuple[str, str]],
     dest_dir: str | Path,
-    progress_callback=None,
+    progress_callback: ProgressCallback = None,
     cancel_event: Event | None = None,
-    on_image_done=None,
-    on_speed_update=None,
+    on_image_done: ImageDoneCallback = None,
+    on_speed_update: SpeedCallback = None,
 ) -> dict[str, Path]:
     """Download multiple images in parallel.
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import sys
 import threading
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,9 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw
 
 from src.cancellation import Cancelled
+from src.constants import ProgressCallback
+from src.scraper_utils import generate_fallback_back
+from src.scraper_utils import resources_dir as _resources_dir
 
 _HEADERS = {
     "User-Agent": (
@@ -63,12 +64,6 @@ _STANDARD_BACK_BG = "#0A1628"
 _STANDARD_BACK_BORDER = "#B0B8C8"
 
 
-def _resources_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "resources"
-    return Path(__file__).resolve().parent.parent / "resources"
-
-
 def get_op_backs() -> tuple[Path, Path]:
     """Return (default_back, leader_back) from resources/backs/op/.
     Falls back to generating simple colored images if the files are missing.
@@ -85,19 +80,9 @@ def _generate_fallback_backs() -> tuple[Path, Path]:
     import tempfile
 
     tmp = Path(tempfile.mkdtemp())
-    W, H = 480, 670
-
-    def _make(path: Path, bg: str, border: str) -> Path:
-        img = Image.new("RGB", (W, H), bg)
-        draw = ImageDraw.Draw(img)
-        bw = max(6, W // 25)
-        draw.rectangle([0, 0, W - 1, H - 1], outline=border, width=bw)
-        img.save(path, "PNG")
-        return path
-
     return (
-        _make(tmp / "default.png", _STANDARD_BACK_BG, _STANDARD_BACK_BORDER),
-        _make(tmp / "lider.png", "#8B0000", "#CCCCCC"),
+        generate_fallback_back(tmp / "default.png", _STANDARD_BACK_BG, _STANDARD_BACK_BORDER),
+        generate_fallback_back(tmp / "lider.png", "#8B0000", "#CCCCCC"),
     )
 
 
@@ -342,7 +327,7 @@ def download_images(
     deck: OPDeck,
     dest_dir: Path,
     cancel_event: threading.Event | None = None,
-    progress_cb=None,
+    progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
     """Download one image per unique card. Returns {card_id: local_path}."""
     dest_dir.mkdir(parents=True, exist_ok=True)

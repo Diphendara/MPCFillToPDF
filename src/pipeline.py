@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Event
 
 from src.cancellation import Cancelled
-from src.constants import Stage
+from src.constants import Stage, StageCallback
 from src.cropper import process_for_pdf
 from src.downloader import (
     DownloadPartialError,
@@ -51,7 +51,7 @@ def _build_crop_tasks(
 def _run_crop_parallel(
     tasks: list[tuple[str, Path, Path, bool]],
     cancel_event: Event | None,
-    on_done=None,  # (drive_id: str, done: int, total: int) → None
+    on_done: StageCallback = None,
 ) -> dict[str, Path]:
     """Crop images in parallel using CROP_THREADS workers."""
     total = len(tasks)
@@ -82,7 +82,7 @@ def run(
     xml_path: str | Path,
     output_dir: str | Path,
     work_dir: str | Path = "workdir",
-    progress_callback=None,
+    progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
@@ -119,7 +119,7 @@ def run_merged(
     output_dir: str | Path,
     base_name: str,
     work_dir: str | Path = "workdir",
-    progress_callback=None,
+    progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
@@ -154,7 +154,7 @@ def run_locals_only(
     output_dir: str | Path,
     base_name: str,
     work_dir: str | Path = "workdir",
-    progress_callback=None,
+    progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
@@ -254,7 +254,7 @@ def _run_xmls(
     base_name: str,
     output_dir: str | Path,
     work_dir: str | Path,
-    progress_callback=None,
+    progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
@@ -443,14 +443,14 @@ def run_plan(
     jobs: list,
     output_dir: str | Path,
     work_dir: str | Path = "workdir",
-    progress_callback=None,
+    progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
-    on_job_pdf_start=None,
-    on_xml_download_progress=None,
-    on_xml_crop_progress=None,
+    on_job_pdf_start: StageCallback = None,
+    on_xml_download_progress: StageCallback = None,
+    on_xml_crop_progress: StageCallback = None,
     fronts_only: bool = False,
     on_speed_update=None,
 ) -> list[Path]:

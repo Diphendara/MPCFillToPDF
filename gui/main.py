@@ -1,7 +1,6 @@
 """MPCFillToPDF GUI — pick XML(s) and optional local images, run the pipeline,
 open the output folder."""
 
-import io
 import logging
 import math
 import os
@@ -12,7 +11,6 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -25,11 +23,22 @@ try:
 except ImportError:
     _WINDND_AVAILABLE = False
 
-from PIL import Image, ImageTk
-
+from gui.locals_tab import LocalsTabMixin
+from gui.lorcana_tab import LorcanaTabMixin
+from gui.op_tab import OPTabMixin
 from gui.paths import output_dir, work_dir
+from gui.rb_tab import RBTabMixin
+from gui.widgets import (
+    APP_TITLE,
+    STAGE_LABELS,
+    attach_context_menu,
+    ellipsize,
+    load_tab_icon,
+    notify,
+)
+from gui.xml_tab import XmlTabMixin
 from src.cancellation import Cancelled
-from src.constants import CARDS_PER_PAGE, SUPPORTED_IMAGE_EXTS, Stage
+from src.constants import CARDS_PER_PAGE, Stage
 from src.downloader import (
     DownloadPartialError,
     DownloadPermissionError,
@@ -39,11 +48,10 @@ from src.downloader import (
 from src.lorcana_scraper import LocanaDeck, get_lorcana_back
 from src.lorcana_scraper import download_images as lorcana_download
 from src.lorcana_scraper import expand_deck as lorcana_expand
-from src.lorcana_scraper import scrape_deck as lorcana_scrape_deck
-from src.op_scraper import OPDeck, get_op_backs, scrape_deck
+from src.op_scraper import OPDeck, get_op_backs
 from src.op_scraper import download_images as op_download
 from src.op_scraper import expand_deck as op_expand
-from src.parser import CardOrder, parse
+from src.parser import CardOrder
 from src.pipeline import run_locals_only, run_plan
 from src.precheck import (
     analyze,
@@ -56,344 +64,9 @@ from src.precheck import (
 from src.rb_scraper import RBDeck, get_rb_backs
 from src.rb_scraper import download_images as rb_download
 from src.rb_scraper import expand_deck as rb_expand
-from src.rb_scraper import scrape_deck as rb_scrape_deck
-from src.validator import ValidationWarning, validate
+from src.validator import ValidationWarning
 
 _log = logging.getLogger(__name__)
-
-
-def _notify(title: str, message: str) -> None:
-    """Show a system notification (best-effort; silently ignored if plyer is missing)."""
-    try:
-        from plyer import notification as _n
-
-        _n.notify(title=title, message=message, app_name=APP_TITLE, timeout=8)
-    except Exception:
-        pass
-
-
-APP_TITLE = "MPCFillToPDF"
-STAGE_LABELS = {
-    Stage.VERIFY: "Verificando XML",
-    Stage.DOWNLOAD: "Descargando",
-    Stage.CROP: "Procesando imágenes",
-    Stage.PDF: "Generando PDF, Páginas",
-}
-
-IMAGE_FILETYPES = [
-    ("Imágenes", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
-    ("Todos", "*.*"),
-]
-
-FRONT_NAME_WIDTH = 28  # chars shown before ellipsizing a front filename
-
-
-def _ellipsize(name: str, width: int) -> str:
-    if len(name) <= width:
-        return name
-    return name[: max(0, width - 1)] + "…"
-
-
-def _attach_context_menu(widget: tk.Widget) -> None:
-    """Attach a right-click context menu (cut/copy/paste/select all) to an Entry or Text widget."""
-    menu = tk.Menu(widget, tearoff=0)
-    menu.add_command(label="Cortar", command=lambda: widget.event_generate("<<Cut>>"))
-    menu.add_command(label="Copiar", command=lambda: widget.event_generate("<<Copy>>"))
-    menu.add_command(label="Pegar", command=lambda: widget.event_generate("<<Paste>>"))
-    menu.add_separator()
-    menu.add_command(
-        label="Seleccionar todo", command=lambda: widget.event_generate("<<SelectAll>>")
-    )
-    widget.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
-
-
-def _load_tab_icon(name: str, size: tuple[int, int] = (20, 20)) -> ImageTk.PhotoImage | None:
-    if getattr(sys, "frozen", False):
-        icons_dir = Path(getattr(sys, "_MEIPASS", "")) / "icons"
-    else:
-        icons_dir = Path(__file__).resolve().parent.parent / "icons"
-    path = icons_dir / f"{name}.png"
-    if not path.exists():
-        return None
-    try:
-        img = Image.open(path).convert("RGBA")
-        img = img.resize(size, Image.LANCZOS)
-        return ImageTk.PhotoImage(img)
-    except Exception:
-        return None
-
-
-_PB_DOWNLOAD_COLOR = "#0078d4"  # Windows blue
-_PB_CROP_COLOR = "#2e7d32"  # dark green
-
-
-class _XmlPb(tk.Canvas):
-    """Canvas progress bar with centered text overlay — works on all themes."""
-
-    _W = 130
-    _H = 18
-    _TROUGH = "#dde5f0"
-    _BORDER = "#9aafc7"
-    _TEXT = "#f0f0f0"
-
-    def __init__(self, parent, **kw):
-        super().__init__(
-            parent,
-            width=self._W,
-            height=self._H,
-            bg=self._TROUGH,
-            highlightthickness=1,
-            highlightbackground=self._BORDER,
-            **kw,
-        )
-        self._bar = self.create_rectangle(0, 0, 0, self._H, fill=_PB_DOWNLOAD_COLOR, outline="")
-        self._lbl = self.create_text(
-            self._W // 2,
-            self._H // 2,
-            text="",
-            fill=self._TEXT,
-            font=("Segoe UI", 8),
-        )
-
-    def set_progress(self, pct: float, text: str = "", color: str | None = None) -> None:
-        if color is not None:
-            self.itemconfigure(self._bar, fill=color)
-        filled = int(self._W * max(0.0, min(100.0, pct)) / 100)
-        self.coords(self._bar, 0, 0, filled, self._H)
-        self.itemconfigure(self._lbl, text=text)
-
-
-class _ImageTooltip:
-    """Floating image preview that appears when the mouse hovers over a widget."""
-
-    _DELAY_MS = 350
-    _MAX_W = 240
-    _MAX_H = 336
-
-    def __init__(self, widget: tk.Widget, image_path: Path) -> None:
-        self._widget = widget
-        self._path = image_path
-        self._after_id: str | None = None
-        self._tip: tk.Toplevel | None = None
-        self._photo = None
-        widget.bind("<Enter>", self._schedule, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        widget.bind("<Motion>", self._on_motion, add="+")
-        widget.bind("<Destroy>", lambda _e: self._hide(), add="+")
-
-    def _schedule(self, event) -> None:
-        self._hide()
-        self._after_id = self._widget.after(
-            self._DELAY_MS,
-            lambda: self._show(event.x_root, event.y_root),
-        )
-
-    def _on_motion(self, event) -> None:
-        if self._tip and self._tip.winfo_exists():
-            self._move(event.x_root, event.y_root)
-
-    def _show(self, x_root: int, y_root: int) -> None:
-        if not self._widget.winfo_exists():
-            return
-        try:
-            img = Image.open(self._path).convert("RGB")
-        except Exception:
-            return
-        img.thumbnail((self._MAX_W, self._MAX_H), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(img)
-        parent = self._widget.winfo_toplevel()
-        self._tip = tk.Toplevel(parent)
-        self._tip.overrideredirect(True)
-        self._tip.attributes("-topmost", True)
-        border = tk.Frame(self._tip, bg="#444", padx=2, pady=2)
-        border.pack()
-        tk.Label(border, image=self._photo, bg="#444").pack()
-        self._tip.update_idletasks()
-        self._move(x_root, y_root)
-
-    def _move(self, x_root: int, y_root: int) -> None:
-        if not (self._tip and self._tip.winfo_exists()):
-            return
-        tw = self._tip.winfo_width()
-        th = self._tip.winfo_height()
-        sw = self._tip.winfo_screenwidth()
-        sh = self._tip.winfo_screenheight()
-        x = x_root + 18
-        y = y_root + 18
-        if x + tw > sw:
-            x = x_root - tw - 8
-        if y + th > sh:
-            y = y_root - th - 8
-        self._tip.geometry(f"+{max(0, x)}+{max(0, y)}")
-
-    def _hide(self, _event=None) -> None:
-        if self._after_id is not None:
-            try:
-                self._widget.after_cancel(self._after_id)
-            except Exception:
-                pass
-            self._after_id = None
-        if self._tip and self._tip.winfo_exists():
-            self._tip.destroy()
-        self._tip = None
-
-
-class PreviewWindow(tk.Toplevel):
-    _THUMB_W = 80
-    _THUMB_H = 112
-    _COLS = 4
-    _THUMB_URL = "https://drive.google.com/thumbnail?id={}&sz=w80"
-    _SPINNER = ["◐", "◓", "◑", "◒"]
-
-    def __init__(self, parent: tk.Misc, xml_path: Path, order: CardOrder) -> None:
-        super().__init__(parent)
-        self.title(f"Vista previa — {xml_path.name}")
-        self.geometry("700x520")
-        self.resizable(True, True)
-
-        self._cancel = threading.Event()
-        self._pending: queue.Queue = queue.Queue()
-        self._photo_refs: list = []
-        self._spinner_frame: int = 0
-        self._loading_labels: list[tk.Label] = []
-        self._loading_set: set[int] = set()
-
-        placeholder = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (210, 210, 210))
-        self._placeholder_photo = ImageTk.PhotoImage(placeholder)
-
-        frame = ttk.Frame(self)
-        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-
-        canvas = tk.Canvas(frame, highlightthickness=0)
-        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=sb.set)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        sb.grid(row=0, column=1, sticky="ns")
-        inner = ttk.Frame(canvas)
-        wid = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(wid, width=e.width))
-
-        def _scroll(event):
-            canvas.yview_scroll(int(-event.delta / 120), "units")
-
-        self.bind("<MouseWheel>", _scroll)
-        canvas.bind("<MouseWheel>", _scroll)
-        inner.bind("<MouseWheel>", _scroll)
-
-        self._img_labels: list[tk.Label] = []
-        for idx, card in enumerate(order.fronts):
-            r, c = divmod(idx, self._COLS)
-            cell = ttk.Frame(inner, relief=tk.RIDGE, borderwidth=1)
-            cell.grid(row=r, column=c, padx=4, pady=4)
-            cell.bind("<MouseWheel>", _scroll)
-
-            lbl_img = tk.Label(cell, image=self._placeholder_photo, bg="#d2d2d2")
-            lbl_img.pack()
-            lbl_img.bind("<MouseWheel>", _scroll)
-            self._img_labels.append(lbl_img)
-
-            loading_lbl = tk.Label(
-                cell,
-                text=self._SPINNER[0],
-                font=("Segoe UI", 9),
-                fg="#888",
-            )
-            loading_lbl.pack()
-            loading_lbl.bind("<MouseWheel>", _scroll)
-            self._loading_labels.append(loading_lbl)
-            self._loading_set.add(idx)
-
-            name = _ellipsize(card.name, 12) if card.name else "(sin nombre)"
-            name_lbl = tk.Label(cell, text=name, font=("Segoe UI", 7), wraplength=self._THUMB_W)
-            name_lbl.pack()
-            name_lbl.bind("<MouseWheel>", _scroll)
-            count = len(card.slots)
-            if count > 1:
-                count_lbl = tk.Label(
-                    cell, text=f"x{count}", font=("Segoe UI", 7, "bold"), fg="#555"
-                )
-                count_lbl.pack()
-                count_lbl.bind("<MouseWheel>", _scroll)
-
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(80, self._drain)
-        self.after(200, self._tick_spinner)
-
-        self._executor = ThreadPoolExecutor(max_workers=4)
-        threading.Thread(target=self._load_all, args=(order,), daemon=True).start()
-
-    def _tick_spinner(self) -> None:
-        if self._cancel.is_set() or not self._loading_set:
-            return
-        self._spinner_frame = (self._spinner_frame + 1) % len(self._SPINNER)
-        ch = self._SPINNER[self._spinner_frame]
-        for idx in self._loading_set:
-            if idx < len(self._loading_labels):
-                self._loading_labels[idx].configure(text=ch)
-        self.after(200, self._tick_spinner)
-
-    def _fetch(self, drive_id: str) -> bytes:
-        import requests as _req
-
-        resp = _req.get(self._THUMB_URL.format(drive_id), timeout=(5, 15))
-        resp.raise_for_status()
-        return resp.content
-
-    def _load_all(self, order: CardOrder) -> None:
-        futs = {
-            self._executor.submit(self._fetch, card.drive_id): idx
-            for idx, card in enumerate(order.fronts)
-        }
-        for fut in as_completed(futs):
-            if self._cancel.is_set():
-                break
-            idx = futs[fut]
-            try:
-                self._pending.put((idx, fut.result()))
-            except Exception:
-                self._pending.put((idx, None))
-
-    def _drain(self) -> None:
-        if self._cancel.is_set():
-            return
-        try:
-            while True:
-                idx, data = self._pending.get_nowait()
-                self._apply(idx, data)
-        except queue.Empty:
-            pass
-        finally:
-            if not self._cancel.is_set():
-                self.after(80, self._drain)
-
-    def _apply(self, idx: int, data: bytes | None) -> None:
-        if idx >= len(self._img_labels):
-            return
-        self._loading_set.discard(idx)
-        if idx < len(self._loading_labels):
-            self._loading_labels[idx].pack_forget()
-        if data is None:
-            return
-        try:
-            img = Image.open(io.BytesIO(data)).convert("RGB")
-            img.thumbnail((self._THUMB_W, self._THUMB_H), Image.LANCZOS)
-            padded = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (210, 210, 210))
-            ox = (self._THUMB_W - img.width) // 2
-            oy = (self._THUMB_H - img.height) // 2
-            padded.paste(img, (ox, oy))
-            photo = ImageTk.PhotoImage(padded)
-            self._photo_refs.append(photo)
-            self._img_labels[idx].configure(image=photo)
-        except Exception:
-            pass
-
-    def _on_close(self) -> None:
-        self._cancel.set()
-        self._executor.shutdown(wait=False)
-        self.destroy()
 
 
 @dataclass
@@ -406,7 +79,7 @@ class AppState:
     local_back_crop: list[bool] = field(default_factory=list)
 
 
-class App:
+class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_TITLE)
@@ -418,7 +91,6 @@ class App:
         self._xml_card_counts: dict[Path, int] = {}
         self._xml_orders: dict[Path, CardOrder] = {}
         self._xml_validations: dict[Path, list[ValidationWarning]] = {}
-        # Tk widgets per row (parallel to local_fronts / local_backs).
         self._front_rows: list[dict] = []
         self._back_rows: list[dict] = []
 
@@ -430,15 +102,12 @@ class App:
         self._dl_speed_str: str = ""
         self._custom_output_dir: Path | None = None
 
-        # One Piece state
         self._op_decks: list[OPDeck] = []
         self._op_deck_rows: list[dict] = []
 
-        # Riftbound state
         self._rb_decks: list[RBDeck] = []
         self._rb_deck_rows: list[dict] = []
 
-        # Lorcana state
         self._lorcana_decks: list[LocanaDeck] = []
         self._lorcana_deck_rows: list[dict] = []
 
@@ -446,17 +115,11 @@ class App:
         self.root.after(80, self._drain_events)
         self.root.after(200, self._setup_dnd)
 
-    # ------------------------------------------------------------------
-    # Layout
-    # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 6}
-        # Contenedor principal que ocupa toda la ventana
         frm = ttk.Frame(self.root)
         frm.pack(fill=tk.BOTH, expand=True, **pad)
 
-        # 1. SECCIÓN INFERIOR (Controles y Progreso)
-        # La empaquetamos primero con side=tk.BOTTOM para que "reserve" su espacio
         bottom_controls = ttk.Frame(frm)
         bottom_controls.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
@@ -514,15 +177,11 @@ class App:
             anchor=tk.W,
         ).pack(fill=tk.X)
 
-        # Pre-flight summary (updates whenever XMLs / locals change)
         self._preflight_frame = ttk.LabelFrame(bottom_controls, text="Resumen")
-        # Initially hidden; _update_preflight shows it when there's content.
         self._preflight_inner = ttk.Frame(self._preflight_frame)
         self._preflight_inner.pack(fill=tk.X, padx=6, pady=4)
         self._preflight_labels: list[ttk.Label] = []
 
-        # 2. SECCIÓN SUPERIOR (Paneles de archivos)
-        # Usamos un frame intermedio que ocupará el RESTO del espacio
         top = ttk.Frame(frm)
         top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         top.columnconfigure(0, weight=1, uniform="cols")
@@ -537,10 +196,10 @@ class App:
         notebook.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         self._game_notebook = notebook
 
-        self._mtg_icon_img = _load_tab_icon("mtg_icon")
-        self._op_icon_img = _load_tab_icon("op_icon")
-        self._rb_icon_img = _load_tab_icon("riftbound_icon")
-        self._lorcana_icon_img = _load_tab_icon("lorcana_icon")
+        self._mtg_icon_img = load_tab_icon("mtg_icon")
+        self._op_icon_img = load_tab_icon("op_icon")
+        self._rb_icon_img = load_tab_icon("riftbound_icon")
+        self._lorcana_icon_img = load_tab_icon("lorcana_icon")
 
         magic_frame = ttk.Frame(notebook)
         magic_kw: dict = {"text": " Magic"}
@@ -574,195 +233,8 @@ class App:
         notebook.add(lorcana_frame, **lorcana_kw)
         self._build_lorcana_tab(lorcana_frame)
 
-    def _build_magic_tab(self, parent: ttk.Frame) -> None:
-        self._xml_drop_frame = parent
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
-
-        xml_list_frame = ttk.Frame(parent)
-        xml_list_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=(6, 2))
-        xml_list_frame.columnconfigure(0, weight=1)
-        xml_list_frame.rowconfigure(0, weight=1)
-
-        self.xml_canvas, self.xml_inner, self._xml_window = self._build_scrollable_rows(
-            xml_list_frame
-        )
-        self.xml_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel(self.xml_canvas, True))
-        self.xml_canvas.bind("<Leave>", lambda _e: self._bind_mousewheel(self.xml_canvas, False))
-
-        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
-        self._xml_empty_label = ttk.Label(
-            self.xml_inner,
-            text=f"(sin XMLs — usa «Seleccionar XMLs…»{dnd_hint})",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._xml_empty_label.pack(anchor="w")
-
-        xml_btn_row = ttk.Frame(parent)
-        xml_btn_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
-        ttk.Button(xml_btn_row, text="Seleccionar XMLs…", command=self._pick_xmls).pack(
-            side=tk.LEFT
-        )
-        ttk.Button(xml_btn_row, text="Vaciar", command=self._clear_xmls).pack(side=tk.LEFT, padx=6)
-
-    def _build_onepiece_tab(self, parent: ttk.Frame) -> None:
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
-
-        url_row = ttk.Frame(parent)
-        url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
-        url_row.columnconfigure(1, weight=1)
-        ttk.Label(
-            url_row,
-            text="Webs aceptadas: onepiece.gg, egmanevents.com, cardkaizoku.com",
-            foreground="#999",
-            font=("Segoe UI", 8),
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
-        self._op_url_var = tk.StringVar()
-        self._op_url_entry = ttk.Entry(url_row, textvariable=self._op_url_var)
-        self._op_url_entry.grid(row=1, column=1, sticky="ew")
-        self._op_url_entry.bind("<Return>", lambda _e: self._op_load_deck())
-        _attach_context_menu(self._op_url_entry)
-        self._op_load_btn = ttk.Button(url_row, text="Añadir", width=7, command=self._op_load_deck)
-        self._op_load_btn.grid(row=1, column=2, padx=(6, 0))
-
-        self._op_status_var = tk.StringVar(value="")
-        ttk.Label(url_row, textvariable=self._op_status_var, foreground="#555", anchor="w").grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
-        )
-
-        op_list_frame = ttk.Frame(parent)
-        op_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))
-        op_list_frame.columnconfigure(0, weight=1)
-        op_list_frame.rowconfigure(0, weight=1)
-
-        self._op_canvas, self._op_inner, _ = self._build_scrollable_rows(op_list_frame)
-        self._op_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel(self._op_canvas, True))
-        self._op_canvas.bind("<Leave>", lambda _e: self._bind_mousewheel(self._op_canvas, False))
-
-        self._op_empty_label = ttk.Label(
-            self._op_inner,
-            text="(introduce una URL de mazo y haz clic en «Añadir»)",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._op_empty_label.pack(anchor="w")
-
-        op_btn_row = ttk.Frame(parent)
-        op_btn_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
-        ttk.Button(op_btn_row, text="Vaciar todo", command=self._op_clear).pack(side=tk.LEFT)
-
-    def _build_locals_pane(self, parent: ttk.Frame) -> None:
-        local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
-        local_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        self._locals_drop_frame = local_frame
-        local_frame.columnconfigure(0, weight=1)
-        local_frame.rowconfigure(1, weight=1, uniform="locals")  # backs
-        local_frame.rowconfigure(3, weight=2, uniform="locals")  # fronts
-
-        # --- Backs (top) ----------------------------------------------
-        backs_hdr = ttk.Frame(local_frame)
-        backs_hdr.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        ttk.Label(backs_hdr, text="Traseras (numeradas 1, 2, …):").pack(side=tk.LEFT)
-        self._back_crop_all = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            backs_hdr,
-            text="Recortar todas",
-            variable=self._back_crop_all,
-            command=self._on_back_crop_all,
-        ).pack(side=tk.RIGHT, padx=(8, 0))
-
-        backs_block = ttk.Frame(local_frame)
-        backs_block.grid(row=1, column=0, sticky="nsew", padx=6)
-        backs_block.columnconfigure(0, weight=1)
-        backs_block.rowconfigure(0, weight=1)
-
-        self.backs_canvas, self.backs_inner, self._backs_window = self._build_scrollable_rows(
-            backs_block
-        )
-        self.backs_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel(self.backs_canvas, True))
-        self.backs_canvas.bind(
-            "<Leave>", lambda _e: self._bind_mousewheel(self.backs_canvas, False)
-        )
-
-        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
-        self._backs_empty_label = ttk.Label(
-            self.backs_inner,
-            text=f"(sin traseras — usa «Seleccionar imágenes…»{dnd_hint})",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._backs_empty_label.pack(anchor="w")
-
-        backs_btn_row = ttk.Frame(backs_block)
-        backs_btn_row.grid(row=1, column=0, sticky="ew", pady=(2, 6))
-        ttk.Button(
-            backs_btn_row, text="Seleccionar imágenes…", command=self._pick_local_backs
-        ).pack(side=tk.LEFT)
-        ttk.Button(backs_btn_row, text="Vaciar", command=self._clear_local_backs).pack(
-            side=tk.LEFT, padx=6
-        )
-
-        ttk.Separator(local_frame, orient=tk.HORIZONTAL).grid(
-            row=2, column=0, sticky="ew", padx=6, pady=(4, 4)
-        )
-
-        # --- Fronts (bottom, scrollable rows with per-front back combo) -----
-        fronts_block = ttk.Frame(local_frame)
-        fronts_block.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
-        fronts_block.columnconfigure(0, weight=1)
-        fronts_block.rowconfigure(1, weight=1)
-
-        fronts_hdr = ttk.Frame(fronts_block)
-        fronts_hdr.grid(row=0, column=0, sticky="ew", pady=(2, 4))
-        self._fronts_header_var = tk.StringVar(value="Frontales (asignar trasera por carta):")
-        ttk.Label(fronts_hdr, textvariable=self._fronts_header_var).pack(side=tk.LEFT)
-        self._front_crop_all = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            fronts_hdr,
-            text="Recortar todas",
-            variable=self._front_crop_all,
-            command=self._on_front_crop_all,
-        ).pack(side=tk.RIGHT, padx=(8, 0))
-
-        fronts_holder = ttk.Frame(fronts_block)
-        fronts_holder.grid(row=1, column=0, sticky="nsew")
-        fronts_holder.columnconfigure(0, weight=1)
-        fronts_holder.rowconfigure(0, weight=1)
-
-        self.fronts_canvas, self.fronts_inner, self._fronts_window = self._build_scrollable_rows(
-            fronts_holder
-        )
-        self.fronts_canvas.bind(
-            "<Enter>", lambda _e: self._bind_mousewheel(self.fronts_canvas, True)
-        )
-        self.fronts_canvas.bind(
-            "<Leave>", lambda _e: self._bind_mousewheel(self.fronts_canvas, False)
-        )
-
-        dnd_hint = " o arrastra aquí" if _WINDND_AVAILABLE else ""
-        self._fronts_empty_label = ttk.Label(
-            self.fronts_inner,
-            text=f"(sin frontales — usa «Seleccionar imágenes…»{dnd_hint})",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._fronts_empty_label.pack(anchor="w")
-
-        fronts_btn_row = ttk.Frame(fronts_block)
-        fronts_btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-        ttk.Button(
-            fronts_btn_row, text="Seleccionar imágenes…", command=self._pick_local_fronts
-        ).pack(side=tk.LEFT)
-        ttk.Button(fronts_btn_row, text="Vaciar", command=self._clear_local_fronts).pack(
-            side=tk.LEFT, padx=6
-        )
-
     def _build_scrollable_rows(self, parent: ttk.Frame):
-        """Create a Canvas + inner Frame pair for a vertically scrolling list
-        of per-row widgets. Returns (canvas, inner_frame, window_id)."""
+        """Create a Canvas + inner Frame for a vertically scrolling list of rows."""
         holder = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
         holder.grid(row=0, column=0, sticky="nsew")
         holder.columnconfigure(0, weight=1)
@@ -784,1148 +256,6 @@ class App:
         )
         return canvas, inner, window_id
 
-    # ------------------------------------------------------------------
-    # One Piece tab actions
-    # ------------------------------------------------------------------
-    def _op_load_deck(self) -> None:
-        url = self._op_url_var.get().strip()
-        if not url:
-            messagebox.showwarning(APP_TITLE, "Introduce una URL de mazo de One Piece.")
-            return
-
-        self._op_load_btn.state(["disabled"])
-        self._op_status_var.set("Cargando mazo…")
-
-        def _fetch():
-            try:
-                deck = scrape_deck(url)
-                self.events.put(("op_deck_loaded", deck))
-            except Exception as e:
-                self.events.put(("op_deck_error", str(e)))
-
-        threading.Thread(target=_fetch, daemon=True).start()
-
-    def _op_refresh_rows(self) -> None:
-        for row in self._op_deck_rows:
-            row["outer"].destroy()
-        self._op_deck_rows.clear()
-
-        if not self._op_decks:
-            self._op_empty_label.pack(anchor="w")
-            return
-        self._op_empty_label.pack_forget()
-
-        for idx, deck in enumerate(self._op_decks):
-            leader = deck.leader
-
-            # Outer container for summary + collapsible detail
-            outer = ttk.Frame(self._op_inner, relief="groove", borderwidth=1)
-            outer.pack(fill=tk.X, pady=3, padx=2)
-            outer.columnconfigure(0, weight=1)
-
-            # ── Summary row ──────────────────────────────────────────
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
-            summary.columnconfigure(1, weight=1)
-
-            # Deck name
-            ttk.Label(
-                summary, text=_ellipsize(deck.name, 22), font=("Segoe UI", 9, "bold"), anchor="w"
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-            # Leader info
-            if leader:
-                color_txt = " / ".join(leader.colors)
-                leader_txt = f"Líder: {_ellipsize(leader.name, 18)}  ({color_txt})"
-            else:
-                leader_txt = "(sin líder)"
-            ttk.Label(summary, text=leader_txt, foreground="#555", anchor="w").grid(
-                row=0, column=1, sticky="w"
-            )
-
-            # Slots count
-            ttk.Label(
-                summary, text=f"{deck.total_slots} cartas", foreground="#888", anchor="e"
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
-
-            # Toggle details button
-            expanded_var = tk.BooleanVar(value=False)
-            toggle_btn = ttk.Button(
-                summary,
-                text="Detalles ▼",
-                width=10,
-                command=lambda i=idx: self._op_toggle_details(i),
-            )
-            toggle_btn.grid(row=0, column=3, padx=(0, 4))
-
-            # Remove button
-            ttk.Button(
-                summary,
-                text="✕",
-                width=2,
-                command=lambda i=idx: self._op_remove_deck(i),
-            ).grid(row=0, column=4)
-
-            # ── Collapsible detail frame ──────────────────────────────
-            detail = ttk.Frame(outer)
-            # Not packed initially (collapsed)
-
-            for card in deck.cards:
-                row_f = ttk.Frame(detail)
-                row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-
-                if card.is_leader:
-                    badge_text, badge_fg = "LÍDER", "#1565C0"
-                    badge_font = ("Segoe UI", 8, "bold")
-                else:
-                    badge_text, badge_fg = f"x{card.quantity}", "#444"
-                    badge_font = ("Segoe UI", 8)
-                ttk.Label(
-                    row_f,
-                    text=badge_text,
-                    foreground=badge_fg,
-                    font=badge_font,
-                    width=6,
-                    anchor="e",
-                ).pack(side=tk.LEFT, padx=(0, 6))
-                ttk.Label(row_f, text=_ellipsize(card.name, 24), anchor="w", width=25).pack(
-                    side=tk.LEFT
-                )
-                ttk.Label(
-                    row_f,
-                    text=card.card_id,
-                    foreground="#888",
-                    font=("Segoe UI", 8),
-                    anchor="w",
-                    width=10,
-                ).pack(side=tk.LEFT, padx=(4, 0))
-                if card.colors:
-                    ttk.Label(
-                        row_f, text=" / ".join(card.colors), foreground="#555", font=("Segoe UI", 8)
-                    ).pack(side=tk.LEFT, padx=(6, 0))
-
-            self._op_deck_rows.append(
-                {
-                    "outer": outer,
-                    "detail": detail,
-                    "toggle_btn": toggle_btn,
-                    "expanded": expanded_var,
-                    "deck": deck,
-                }
-            )
-
-        self._op_inner.update_idletasks()
-        self._op_canvas.configure(scrollregion=self._op_canvas.bbox("all"))
-
-    def _op_toggle_details(self, idx: int) -> None:
-        if idx >= len(self._op_deck_rows):
-            return
-        row = self._op_deck_rows[idx]
-        expanded = row["expanded"]
-        if expanded.get():
-            row["detail"].pack_forget()
-            row["toggle_btn"].configure(text="Detalles ▼")
-            expanded.set(False)
-        else:
-            row["detail"].pack(fill=tk.X, padx=0, pady=(0, 4))
-            row["toggle_btn"].configure(text="Detalles ▲")
-            expanded.set(True)
-        self._op_inner.update_idletasks()
-        self._op_canvas.configure(scrollregion=self._op_canvas.bbox("all"))
-
-    def _op_remove_deck(self, idx: int) -> None:
-        if 0 <= idx < len(self._op_decks):
-            del self._op_decks[idx]
-            self._op_refresh_rows()
-            self._refresh_generate_state()
-
-    def _op_clear(self) -> None:
-        self._op_decks.clear()
-        self._op_url_var.set("")
-        self._op_status_var.set("")
-        self._op_load_btn.state(["!disabled"])
-        self._op_refresh_rows()
-        self._refresh_generate_state()
-
-    # ------------------------------------------------------------------
-    # Riftbound tab
-    # ------------------------------------------------------------------
-    def _build_riftbound_tab(self, parent: ttk.Frame) -> None:
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
-
-        url_row = ttk.Frame(parent)
-        url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
-        url_row.columnconfigure(1, weight=1)
-        ttk.Label(
-            url_row,
-            text="Webs aceptadas: piltoverarchive.com, riftbound.gg, riftmana.com, riftbinder.com, riftdex.com",
-            foreground="#999",
-            font=("Segoe UI", 8),
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
-        self._rb_url_var = tk.StringVar()
-        self._rb_url_entry = ttk.Entry(url_row, textvariable=self._rb_url_var)
-        self._rb_url_entry.grid(row=1, column=1, sticky="ew")
-        self._rb_url_entry.bind("<Return>", lambda _e: self._rb_load_deck())
-        _attach_context_menu(self._rb_url_entry)
-        self._rb_load_btn = ttk.Button(url_row, text="Añadir", width=7, command=self._rb_load_deck)
-        self._rb_load_btn.grid(row=1, column=2, padx=(6, 0))
-
-        self._rb_status_var = tk.StringVar(value="")
-        ttk.Label(url_row, textvariable=self._rb_status_var, foreground="#555", anchor="w").grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
-        )
-
-        rb_list_frame = ttk.Frame(parent)
-        rb_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))
-        rb_list_frame.columnconfigure(0, weight=1)
-        rb_list_frame.rowconfigure(0, weight=1)
-
-        self._rb_canvas, self._rb_inner, _ = self._build_scrollable_rows(rb_list_frame)
-        self._rb_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel(self._rb_canvas, True))
-        self._rb_canvas.bind("<Leave>", lambda _e: self._bind_mousewheel(self._rb_canvas, False))
-
-        self._rb_empty_label = ttk.Label(
-            self._rb_inner,
-            text="(introduce una URL de piltoverarchive.com, riftbound.gg, riftmana.com, riftbinder.com o riftdex.com)",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._rb_empty_label.pack(anchor="w")
-
-        rb_btn_row = ttk.Frame(parent)
-        rb_btn_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
-        ttk.Button(rb_btn_row, text="Vaciar todo", command=self._rb_clear).pack(side=tk.LEFT)
-
-    def _rb_load_deck(self) -> None:
-        url = self._rb_url_var.get().strip()
-        if not url:
-            messagebox.showwarning(APP_TITLE, "Introduce una URL de mazo de Riftbound.")
-            return
-
-        self._rb_load_btn.state(["disabled"])
-        self._rb_status_var.set("Cargando mazo…")
-
-        def _fetch():
-            try:
-                deck = rb_scrape_deck(url)
-                self.events.put(("rb_deck_loaded", deck))
-            except Exception as e:
-                self.events.put(("rb_deck_error", str(e)))
-
-        threading.Thread(target=_fetch, daemon=True).start()
-
-    def _rb_refresh_rows(self) -> None:
-        for row in self._rb_deck_rows:
-            row["outer"].destroy()
-        self._rb_deck_rows.clear()
-
-        if not self._rb_decks:
-            self._rb_empty_label.pack(anchor="w")
-            return
-        self._rb_empty_label.pack_forget()
-
-        _SECTION_LABELS = {
-            "legend": "Leyenda",
-            "champion": "Campeón",
-            "battlefield": "Campo de batalla",
-            "rune": "Runa",
-            "maindeck": "Mazo principal",
-            "sideboard": "Sideboard",
-        }
-
-        for idx, deck in enumerate(self._rb_decks):
-            outer = ttk.Frame(self._rb_inner, relief="groove", borderwidth=1)
-            outer.pack(fill=tk.X, pady=3, padx=2)
-            outer.columnconfigure(0, weight=1)
-
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
-            summary.columnconfigure(1, weight=1)
-
-            ttk.Label(
-                summary, text=_ellipsize(deck.name, 28), font=("Segoe UI", 9, "bold"), anchor="w"
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-            by_sec = deck.by_section()
-            sec_parts = [
-                f"{_SECTION_LABELS.get(s, s)}: {sum(c.quantity for c in cards)}"
-                for s, cards in by_sec.items()
-                if cards
-            ]
-            ttk.Label(
-                summary,
-                text="  |  ".join(sec_parts),
-                foreground="#555",
-                anchor="w",
-                font=("Segoe UI", 8),
-            ).grid(row=0, column=1, sticky="w")
-
-            ttk.Label(
-                summary, text=f"{deck.total_slots} cartas", foreground="#888", anchor="e"
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
-
-            print_runes_var = tk.BooleanVar(value=True)
-            has_runes = bool(by_sec.get("rune"))
-            runes_cb = ttk.Checkbutton(
-                summary,
-                text="imprimir runas",
-                variable=print_runes_var,
-            )
-            if not has_runes:
-                runes_cb.state(["disabled"])
-            runes_cb.grid(row=0, column=3, padx=(4, 8))
-
-            expanded_var = tk.BooleanVar(value=False)
-            toggle_btn = ttk.Button(
-                summary,
-                text="Detalles ▼",
-                width=10,
-                command=lambda i=idx: self._rb_toggle_details(i),
-            )
-            toggle_btn.grid(row=0, column=4, padx=(0, 4))
-
-            ttk.Button(
-                summary,
-                text="✕",
-                width=2,
-                command=lambda i=idx: self._rb_remove_deck(i),
-            ).grid(row=0, column=5)
-
-            detail = ttk.Frame(outer)
-
-            for section, cards in by_sec.items():
-                if not cards:
-                    continue
-                sec_lbl = _SECTION_LABELS.get(section, section)
-                ttk.Label(
-                    detail,
-                    text=f"── {sec_lbl} ──",
-                    foreground="#888",
-                    font=("Segoe UI", 8, "italic"),
-                    padding=(12, 2, 0, 0),
-                ).pack(anchor="w")
-                for card in cards:
-                    row_f = ttk.Frame(detail)
-                    row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-                    ttk.Label(
-                        row_f,
-                        text=f"x{card.quantity}",
-                        foreground="#444",
-                        font=("Segoe UI", 8),
-                        width=4,
-                        anchor="e",
-                    ).pack(side=tk.LEFT, padx=(0, 6))
-                    ttk.Label(row_f, text=_ellipsize(card.name, 26), anchor="w", width=27).pack(
-                        side=tk.LEFT
-                    )
-                    ttk.Label(
-                        row_f,
-                        text=card.card_type,
-                        foreground="#888",
-                        font=("Segoe UI", 8),
-                        anchor="w",
-                        width=12,
-                    ).pack(side=tk.LEFT, padx=(4, 0))
-
-            self._rb_deck_rows.append(
-                {
-                    "outer": outer,
-                    "detail": detail,
-                    "toggle_btn": toggle_btn,
-                    "expanded": expanded_var,
-                    "deck": deck,
-                    "print_runes_var": print_runes_var,
-                }
-            )
-
-        self._rb_inner.update_idletasks()
-        self._rb_canvas.configure(scrollregion=self._rb_canvas.bbox("all"))
-
-    def _rb_toggle_details(self, idx: int) -> None:
-        if idx >= len(self._rb_deck_rows):
-            return
-        row = self._rb_deck_rows[idx]
-        expanded = row["expanded"]
-        if expanded.get():
-            row["detail"].pack_forget()
-            row["toggle_btn"].configure(text="Detalles ▼")
-            expanded.set(False)
-        else:
-            row["detail"].pack(fill=tk.X, padx=0, pady=(0, 4))
-            row["toggle_btn"].configure(text="Detalles ▲")
-            expanded.set(True)
-        self._rb_inner.update_idletasks()
-        self._rb_canvas.configure(scrollregion=self._rb_canvas.bbox("all"))
-
-    def _rb_remove_deck(self, idx: int) -> None:
-        if 0 <= idx < len(self._rb_decks):
-            del self._rb_decks[idx]
-            self._rb_refresh_rows()
-            self._refresh_generate_state()
-
-    def _rb_clear(self) -> None:
-        self._rb_decks.clear()
-        self._rb_url_var.set("")
-        self._rb_status_var.set("")
-        self._rb_load_btn.state(["!disabled"])
-        self._rb_refresh_rows()
-        self._refresh_generate_state()
-
-    # ------------------------------------------------------------------
-    # Lorcana tab
-    # ------------------------------------------------------------------
-    def _build_lorcana_tab(self, parent: ttk.Frame) -> None:
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
-
-        url_row = ttk.Frame(parent)
-        url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
-        url_row.columnconfigure(1, weight=1)
-        ttk.Label(
-            url_row,
-            text="Webs aceptadas: lorcana.gg, inkdecks.com, dreamborn.ink",
-            foreground="#999",
-            font=("Segoe UI", 8),
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
-        self._lorcana_url_var = tk.StringVar()
-        self._lorcana_url_entry = ttk.Entry(url_row, textvariable=self._lorcana_url_var)
-        self._lorcana_url_entry.grid(row=1, column=1, sticky="ew")
-        self._lorcana_url_entry.bind("<Return>", lambda _e: self._lorcana_load_deck())
-        _attach_context_menu(self._lorcana_url_entry)
-        self._lorcana_load_btn = ttk.Button(
-            url_row, text="Añadir", width=7, command=self._lorcana_load_deck
-        )
-        self._lorcana_load_btn.grid(row=1, column=2, padx=(6, 0))
-
-        self._lorcana_status_var = tk.StringVar(value="")
-        ttk.Label(
-            url_row, textvariable=self._lorcana_status_var, foreground="#555", anchor="w"
-        ).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0))
-
-        lorcana_list_frame = ttk.Frame(parent)
-        lorcana_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))
-        lorcana_list_frame.columnconfigure(0, weight=1)
-        lorcana_list_frame.rowconfigure(0, weight=1)
-
-        self._lorcana_canvas, self._lorcana_inner, _ = self._build_scrollable_rows(
-            lorcana_list_frame
-        )
-        self._lorcana_canvas.bind(
-            "<Enter>", lambda _e: self._bind_mousewheel(self._lorcana_canvas, True)
-        )
-        self._lorcana_canvas.bind(
-            "<Leave>", lambda _e: self._bind_mousewheel(self._lorcana_canvas, False)
-        )
-
-        self._lorcana_empty_label = ttk.Label(
-            self._lorcana_inner,
-            text="(introduce una URL de lorcana.gg, inkdecks.com o dreamborn.ink)",
-            foreground="#777",
-            padding=(8, 10),
-        )
-        self._lorcana_empty_label.pack(anchor="w")
-
-        lorcana_btn_row = ttk.Frame(parent)
-        lorcana_btn_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
-        ttk.Button(lorcana_btn_row, text="Vaciar todo", command=self._lorcana_clear).pack(
-            side=tk.LEFT
-        )
-
-    def _lorcana_load_deck(self) -> None:
-        url = self._lorcana_url_var.get().strip()
-        if not url:
-            messagebox.showwarning(APP_TITLE, "Introduce una URL de mazo de Lorcana.")
-            return
-
-        self._lorcana_load_btn.state(["disabled"])
-        self._lorcana_status_var.set("Cargando mazo…")
-
-        def _fetch():
-            try:
-                deck = lorcana_scrape_deck(url)
-                self.events.put(("lorcana_deck_loaded", deck))
-            except Exception as e:
-                self.events.put(("lorcana_deck_error", str(e)))
-
-        threading.Thread(target=_fetch, daemon=True).start()
-
-    def _lorcana_refresh_rows(self) -> None:
-        for row in self._lorcana_deck_rows:
-            row["outer"].destroy()
-        self._lorcana_deck_rows.clear()
-
-        if not self._lorcana_decks:
-            self._lorcana_empty_label.pack(anchor="w")
-            return
-        self._lorcana_empty_label.pack_forget()
-
-        for idx, deck in enumerate(self._lorcana_decks):
-            outer = ttk.Frame(self._lorcana_inner, relief="groove", borderwidth=1)
-            outer.pack(fill=tk.X, pady=3, padx=2)
-            outer.columnconfigure(0, weight=1)
-
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
-            summary.columnconfigure(1, weight=1)
-
-            ttk.Label(
-                summary,
-                text=_ellipsize(deck.name, 28),
-                font=("Segoe UI", 9, "bold"),
-                anchor="w",
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-            source_labels = {
-                "lorcana_gg": "lorcana.gg",
-                "inkdecks": "inkdecks.com",
-                "dreamborn": "dreamborn.ink",
-            }
-            source_txt = source_labels.get(deck.source, deck.source)
-            ttk.Label(
-                summary,
-                text=source_txt,
-                foreground="#555",
-                anchor="w",
-                font=("Segoe UI", 8),
-            ).grid(row=0, column=1, sticky="w")
-
-            ttk.Label(
-                summary,
-                text=f"{deck.total_slots} cartas",
-                foreground="#888",
-                anchor="e",
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
-
-            expanded_var = tk.BooleanVar(value=False)
-            toggle_btn = ttk.Button(
-                summary,
-                text="Detalles ▼",
-                width=10,
-                command=lambda i=idx: self._lorcana_toggle_details(i),
-            )
-            toggle_btn.grid(row=0, column=3, padx=(0, 4))
-
-            ttk.Button(
-                summary,
-                text="✕",
-                width=2,
-                command=lambda i=idx: self._lorcana_remove_deck(i),
-            ).grid(row=0, column=4)
-
-            detail = ttk.Frame(outer)
-
-            for card in deck.cards:
-                row_f = ttk.Frame(detail)
-                row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-                ttk.Label(
-                    row_f,
-                    text=f"x{card.quantity}",
-                    foreground="#444",
-                    font=("Segoe UI", 8),
-                    width=4,
-                    anchor="e",
-                ).pack(side=tk.LEFT, padx=(0, 6))
-                ttk.Label(
-                    row_f,
-                    text=_ellipsize(card.name, 30),
-                    anchor="w",
-                    width=31,
-                ).pack(side=tk.LEFT)
-                ttk.Label(
-                    row_f,
-                    text=card.card_id,
-                    foreground="#888",
-                    font=("Segoe UI", 8),
-                    anchor="w",
-                    width=10,
-                ).pack(side=tk.LEFT, padx=(4, 0))
-
-            self._lorcana_deck_rows.append(
-                {
-                    "outer": outer,
-                    "detail": detail,
-                    "toggle_btn": toggle_btn,
-                    "expanded": expanded_var,
-                    "deck": deck,
-                }
-            )
-
-        self._lorcana_inner.update_idletasks()
-        self._lorcana_canvas.configure(scrollregion=self._lorcana_canvas.bbox("all"))
-
-    def _lorcana_toggle_details(self, idx: int) -> None:
-        if idx >= len(self._lorcana_deck_rows):
-            return
-        row = self._lorcana_deck_rows[idx]
-        expanded = row["expanded"]
-        if expanded.get():
-            row["detail"].pack_forget()
-            row["toggle_btn"].configure(text="Detalles ▼")
-            expanded.set(False)
-        else:
-            row["detail"].pack(fill=tk.X, padx=0, pady=(0, 4))
-            row["toggle_btn"].configure(text="Detalles ▲")
-            expanded.set(True)
-        self._lorcana_inner.update_idletasks()
-        self._lorcana_canvas.configure(scrollregion=self._lorcana_canvas.bbox("all"))
-
-    def _lorcana_remove_deck(self, idx: int) -> None:
-        if 0 <= idx < len(self._lorcana_decks):
-            del self._lorcana_decks[idx]
-            self._lorcana_refresh_rows()
-            self._refresh_generate_state()
-
-    def _lorcana_clear(self) -> None:
-        self._lorcana_decks.clear()
-        self._lorcana_url_var.set("")
-        self._lorcana_status_var.set("")
-        self._lorcana_load_btn.state(["!disabled"])
-        self._lorcana_refresh_rows()
-        self._refresh_generate_state()
-
-    # ------------------------------------------------------------------
-    # XML pickers
-    # ------------------------------------------------------------------
-    def _pick_xmls(self) -> None:
-        paths = filedialog.askopenfilenames(
-            title="Selecciona archivos XML de MPCFill",
-            filetypes=[("Archivos XML", "*.xml"), ("Todos", "*.*")],
-        )
-        added = 0
-        for p in paths:
-            pp = Path(p)
-            if pp not in self.state.xml_paths:
-                self.state.xml_paths.append(pp)
-                added += 1
-                if pp not in self._xml_card_counts:
-                    try:
-                        rpts = analyze([pp])
-                        if rpts:
-                            self._xml_card_counts[pp] = rpts[0].cards
-                    except Exception:
-                        pass
-                if pp not in self._xml_orders:
-                    try:
-                        self._xml_orders[pp] = parse(pp)
-                    except Exception:
-                        pass
-                if pp not in self._xml_validations:
-                    try:
-                        self._xml_validations[pp] = validate(pp)
-                    except Exception:
-                        self._xml_validations[pp] = []
-        if added:
-            self._refresh_xml_rows()
-            self.status_var.set(f"{len(self.state.xml_paths)} XML(s) en cola.")
-        self._refresh_generate_state()
-
-    def _remove_xml(self, idx: int) -> None:
-        if 0 <= idx < len(self.state.xml_paths):
-            p = self.state.xml_paths[idx]
-            self._xml_card_counts.pop(p, None)
-            self._xml_orders.pop(p, None)
-            self._xml_validations.pop(p, None)
-            del self.state.xml_paths[idx]
-            self._refresh_xml_rows()
-            self._refresh_generate_state()
-
-    def _clear_xmls(self) -> None:
-        self.state.xml_paths.clear()
-        self._xml_card_counts.clear()
-        self._xml_orders.clear()
-        self._xml_validations.clear()
-        self._refresh_xml_rows()
-        self._refresh_generate_state()
-
-    def _refresh_xml_rows(self) -> None:
-        for row in self._xml_rows:
-            row["frame"].destroy()
-        self._xml_rows.clear()
-
-        if not self.state.xml_paths:
-            self._xml_empty_label.pack(anchor="w")
-            return
-        self._xml_empty_label.pack_forget()
-
-        for i, xml_path in enumerate(self.state.xml_paths):
-            frame = ttk.Frame(self.xml_inner)
-            frame.pack(fill=tk.X, pady=1, padx=2)
-            frame.columnconfigure(0, weight=1)
-
-            ttk.Label(
-                frame,
-                text=_ellipsize(xml_path.name, 32),
-                anchor="w",
-            ).grid(row=0, column=0, sticky="ew", padx=(4, 8))
-
-            card_count = self._xml_card_counts.get(xml_path)
-            cards_text = f"{card_count} cartas" if card_count is not None else ""
-            ttk.Label(frame, text=cards_text, foreground="#555", width=10, anchor="e").grid(
-                row=0,
-                column=1,
-                padx=(0, 8),
-            )
-
-            pb = _XmlPb(frame)
-            pb.grid(row=0, column=2, padx=(0, 4))
-            pb.grid_remove()
-
-            count_var = tk.StringVar(value="")
-            count_lbl = ttk.Label(frame, textvariable=count_var, width=9, anchor="e")
-            count_lbl.grid(row=0, column=3, padx=(0, 4))
-            count_lbl.grid_remove()
-
-            ttk.Button(
-                frame,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_xml_up(idx),
-            ).grid(row=0, column=4, padx=(0, 1))
-            ttk.Button(
-                frame,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_xml_down(idx),
-            ).grid(row=0, column=5, padx=(0, 1))
-            ttk.Button(
-                frame,
-                text="✕",
-                width=2,
-                command=lambda idx=i: self._remove_xml(idx),
-            ).grid(row=0, column=6, padx=(0, 1))
-            ttk.Button(
-                frame,
-                text="Ver…",
-                width=4,
-                command=lambda p=xml_path: self._show_preview(p),
-            ).grid(row=0, column=7, padx=(0, 2))
-
-            xml_warnings = self._xml_validations.get(xml_path, [])
-            warn_btn = ttk.Button(
-                frame,
-                text="⚠",
-                width=2,
-                command=lambda p=xml_path: self._show_xml_warnings(p),
-            )
-            warn_btn.grid(row=0, column=8, padx=(0, 2))
-            if not xml_warnings:
-                warn_btn.grid_remove()
-
-            self._xml_rows.append(
-                {
-                    "frame": frame,
-                    "pb": pb,
-                    "count_var": count_var,
-                    "count_lbl": count_lbl,
-                    "warn_btn": warn_btn,
-                }
-            )
-
-        self.xml_inner.update_idletasks()
-        self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))
-
-    def _show_xml_download_progress(self, xml_name: str, done: int, total: int) -> None:
-        for xml_path, row in zip(self.state.xml_paths, self._xml_rows):
-            if xml_path.name == xml_name:
-                pct = (done / total * 100.0) if total else 100.0
-                row["pb"].set_progress(pct, "Descargando", color=_PB_DOWNLOAD_COLOR)
-                row["count_var"].set(f"{done}/{total}")
-                row["pb"].grid()
-                row["count_lbl"].grid()
-                break
-
-    def _show_xml_crop_progress(self, xml_name: str, done: int, total: int) -> None:
-        for xml_path, row in zip(self.state.xml_paths, self._xml_rows):
-            if xml_path.name == xml_name:
-                pct = (done / total * 100.0) if total else 100.0
-                row["pb"].set_progress(pct, "Recortando", color=_PB_CROP_COLOR)
-                row["count_var"].set(f"{done}/{total}")
-                row["pb"].grid()
-                row["count_lbl"].grid()
-                break
-
-    def _reset_xml_download_progress(self) -> None:
-        for row in self._xml_rows:
-            row["pb"].set_progress(0, "")
-            row["count_var"].set("")
-            row["pb"].grid_remove()
-            row["count_lbl"].grid_remove()
-
-    def _show_preview(self, xml_path: Path) -> None:
-        order = self._xml_orders.get(xml_path)
-        if order is None:
-            messagebox.showinfo(APP_TITLE, "No hay datos de cartas para esta XML.")
-            return
-        PreviewWindow(self.root, xml_path, order)
-
-    def _show_xml_warnings(self, xml_path: Path) -> None:
-        warnings = self._xml_validations.get(xml_path, [])
-        if not warnings:
-            return
-        msg = "\n".join(f"• {w.message}" for w in warnings)
-        messagebox.showwarning(
-            APP_TITLE,
-            f"Advertencias en {xml_path.name}:\n\n{msg}",
-        )
-
-    # ------------------------------------------------------------------
-    # Local back pickers
-    # ------------------------------------------------------------------
-    def _pick_local_backs(self) -> None:
-        paths = filedialog.askopenfilenames(
-            title="Selecciona imágenes locales (traseras)",
-            filetypes=IMAGE_FILETYPES,
-        )
-        was_empty = not self.state.local_backs
-        added = False
-        for p in paths:
-            pp = Path(p)
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
-        if added:
-            # Going from 0 → ≥1 backs: auto-assign the new first back to any
-            # fronts that don't already have an explicit pick.
-            if was_empty and self.state.local_backs:
-                first = self.state.local_backs[0]
-                for i, assigned in enumerate(self.state.front_back_paths):
-                    if assigned is None:
-                        self.state.front_back_paths[i] = first
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-            self._refresh_generate_state()
-
-    def _remove_back(self, idx: int) -> None:
-        if not (0 <= idx < len(self.state.local_backs)):
-            return
-        removed_path = self.state.local_backs[idx]
-        del self.state.local_backs[idx]
-        del self.state.local_back_crop[idx]
-        for i, assigned in enumerate(self.state.front_back_paths):
-            if assigned == removed_path:
-                self.state.front_back_paths[i] = None
-        self._refresh_back_rows()
-        self._refresh_front_rows()
-        self._refresh_generate_state()
-
-    def _clear_local_backs(self) -> None:
-        if not self.state.local_backs:
-            return
-        self.state.local_backs.clear()
-        self.state.local_back_crop.clear()
-        # All explicit assignments are now invalid → fall back to default.
-        self.state.front_back_paths = [None] * len(self.state.front_back_paths)
-        self._refresh_back_rows()
-        self._refresh_front_rows()
-        self._refresh_generate_state()
-
-    def _on_back_crop_change(self, idx: int, var: tk.BooleanVar) -> None:
-        if 0 <= idx < len(self.state.local_back_crop):
-            self.state.local_back_crop[idx] = bool(var.get())
-
-    def _refresh_back_rows(self) -> None:
-        for row in self._back_rows:
-            row["frame"].destroy()
-        self._back_rows.clear()
-
-        if not self.state.local_backs:
-            self._backs_empty_label.pack(anchor="w")
-            return
-        self._backs_empty_label.pack_forget()
-
-        for i, back_path in enumerate(self.state.local_backs):
-            row = ttk.Frame(self.backs_inner)
-            row.pack(fill=tk.X, pady=1, padx=2)
-
-            ttk.Label(row, text=f"{i + 1:>3}.", width=4, anchor="e").pack(side=tk.LEFT)
-            name_lbl = ttk.Label(
-                row,
-                text=_ellipsize(back_path.name, FRONT_NAME_WIDTH),
-                width=FRONT_NAME_WIDTH + 1,
-                anchor="w",
-            )
-            name_lbl.pack(side=tk.LEFT, padx=(4, 8))
-            _ImageTooltip(name_lbl, back_path)
-
-            crop_var = tk.BooleanVar(value=self.state.local_back_crop[i])
-            ttk.Checkbutton(
-                row,
-                text="Recortar bordes extra",
-                variable=crop_var,
-                command=lambda idx=i, v=crop_var: self._on_back_crop_change(idx, v),
-            ).pack(side=tk.LEFT, padx=(4, 6))
-
-            ttk.Button(
-                row,
-                text="✕",
-                width=2,
-                command=lambda idx=i: self._remove_back(idx),
-            ).pack(side=tk.RIGHT)
-            ttk.Button(
-                row,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_back_down(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-            ttk.Button(
-                row,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_back_up(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-
-            self._back_rows.append({"frame": row, "crop_var": crop_var})
-
-        self.backs_inner.update_idletasks()
-        self.backs_canvas.configure(scrollregion=self.backs_canvas.bbox("all"))
-
-    # ------------------------------------------------------------------
-    # Local front pickers + per-row widgets
-    # ------------------------------------------------------------------
-    def _pick_local_fronts(self) -> None:
-        paths = filedialog.askopenfilenames(
-            title="Selecciona imágenes locales (frontales)",
-            filetypes=IMAGE_FILETYPES,
-        )
-        default_back = self.state.local_backs[0] if self.state.local_backs else None
-        added = False
-        for p in paths:
-            pp = Path(p)
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
-        if added:
-            self._refresh_front_rows()
-            self._refresh_generate_state()
-
-    def _clear_local_fronts(self) -> None:
-        if not self.state.local_fronts:
-            return
-        self.state.local_fronts.clear()
-        self.state.front_back_paths.clear()
-        self.state.local_front_crop.clear()
-        self._refresh_front_rows()
-        self._refresh_generate_state()
-
-    def _remove_front(self, idx: int) -> None:
-        if 0 <= idx < len(self.state.local_fronts):
-            del self.state.local_fronts[idx]
-            del self.state.front_back_paths[idx]
-            del self.state.local_front_crop[idx]
-            self._refresh_front_rows()
-            self._refresh_generate_state()
-
-    def _on_front_back_change(self, idx: int, var: tk.StringVar) -> None:
-        """Combobox callback: maps the displayed choice back to a Path or None."""
-        choice = var.get()
-        try:
-            n = int(choice)
-        except (TypeError, ValueError):
-            self.state.front_back_paths[idx] = None  # "—" = no explicit choice
-            return
-        if 1 <= n <= len(self.state.local_backs):
-            self.state.front_back_paths[idx] = self.state.local_backs[n - 1]
-
-    def _on_front_crop_change(self, idx: int, var: tk.BooleanVar) -> None:
-        if 0 <= idx < len(self.state.local_front_crop):
-            self.state.local_front_crop[idx] = bool(var.get())
-
-    def _on_front_crop_all(self) -> None:
-        val = bool(self._front_crop_all.get())
-        for i in range(len(self.state.local_front_crop)):
-            self.state.local_front_crop[i] = val
-        self._refresh_front_rows()
-
-    def _on_back_crop_all(self) -> None:
-        val = bool(self._back_crop_all.get())
-        for i in range(len(self.state.local_back_crop)):
-            self.state.local_back_crop[i] = val
-        self._refresh_back_rows()
-
-    def _refresh_front_rows(self) -> None:
-        """Tear down and rebuild the per-front rows so indices/combos stay in
-        sync with `self.state.local_fronts` and `self.state.local_backs`."""
-        for row in self._front_rows:
-            row["frame"].destroy()
-        self._front_rows.clear()
-
-        if not self.state.local_fronts:
-            self._fronts_empty_label.pack(anchor="w")
-            self._fronts_header_var.set("Frontales (asignar trasera por carta):")
-            return
-        self._fronts_empty_label.pack_forget()
-
-        numbered = [str(i) for i in range(1, len(self.state.local_backs) + 1)]
-        combo_values = ["—", *numbered]
-        backs_present = bool(numbered)
-
-        for i, front_path in enumerate(self.state.local_fronts):
-            row = ttk.Frame(self.fronts_inner)
-            row.pack(fill=tk.X, pady=1, padx=2)
-
-            ttk.Label(row, text=f"{i + 1:>3}.", width=4, anchor="e").pack(side=tk.LEFT)
-            front_name_lbl = ttk.Label(
-                row,
-                text=_ellipsize(front_path.name, FRONT_NAME_WIDTH),
-                width=FRONT_NAME_WIDTH + 1,
-                anchor="w",
-            )
-            front_name_lbl.pack(side=tk.LEFT, padx=(4, 8))
-            _ImageTooltip(front_name_lbl, front_path)
-
-            ttk.Label(row, text="Trasera:").pack(side=tk.LEFT)
-
-            # If a previously picked back is no longer in the list, drop the
-            # assignment so the combo shows "—" (use XML cardback fallback).
-            assigned = self.state.front_back_paths[i]
-            if assigned is not None and assigned not in self.state.local_backs:
-                assigned = None
-                self.state.front_back_paths[i] = None
-            var = tk.StringVar()
-            if assigned is None:
-                var.set("—")
-            else:
-                var.set(str(self.state.local_backs.index(assigned) + 1))
-            combo = ttk.Combobox(
-                row,
-                values=combo_values,
-                textvariable=var,
-                state="readonly" if backs_present else "disabled",
-                width=4,
-            )
-            combo.bind(
-                "<<ComboboxSelected>>",
-                lambda _e, idx=i, v=var: self._on_front_back_change(idx, v),
-            )
-            combo.pack(side=tk.LEFT, padx=(4, 6))
-
-            crop_var = tk.BooleanVar(value=self.state.local_front_crop[i])
-            ttk.Checkbutton(
-                row,
-                text="Recortar bordes extra",
-                variable=crop_var,
-                command=lambda idx=i, v=crop_var: self._on_front_crop_change(idx, v),
-            ).pack(side=tk.LEFT, padx=(4, 6))
-
-            ttk.Button(
-                row,
-                text="✕",
-                width=2,
-                command=lambda idx=i: self._remove_front(idx),
-            ).pack(side=tk.RIGHT)
-            ttk.Button(
-                row,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_front_down(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-            ttk.Button(
-                row,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_front_up(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-
-            self._front_rows.append(
-                {"frame": row, "var": var, "combo": combo, "crop_var": crop_var},
-            )
-
-        # Keep scrollregion fresh after layout settles.
-        self.fronts_inner.update_idletasks()
-        self.fronts_canvas.configure(scrollregion=self.fronts_canvas.bbox("all"))
-
-        total = len(self.state.local_fronts)
-        self._fronts_header_var.set(
-            f"Frontales (asignar trasera por carta):   Actualmente: {total} cartas"
-        )
-
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # Reorder helpers
-    # ------------------------------------------------------------------
-    def _move_xml_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.xml_paths[idx], self.state.xml_paths[idx - 1] = (
-                self.state.xml_paths[idx - 1],
-                self.state.xml_paths[idx],
-            )
-            self._refresh_xml_rows()
-
-    def _move_xml_down(self, idx: int) -> None:
-        if idx < len(self.state.xml_paths) - 1:
-            self.state.xml_paths[idx], self.state.xml_paths[idx + 1] = (
-                self.state.xml_paths[idx + 1],
-                self.state.xml_paths[idx],
-            )
-            self._refresh_xml_rows()
-
-    def _move_back_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.local_backs[idx], self.state.local_backs[idx - 1] = (
-                self.state.local_backs[idx - 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx - 1] = (
-                self.state.local_back_crop[idx - 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
-    def _move_back_down(self, idx: int) -> None:
-        if idx < len(self.state.local_backs) - 1:
-            self.state.local_backs[idx], self.state.local_backs[idx + 1] = (
-                self.state.local_backs[idx + 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx + 1] = (
-                self.state.local_back_crop[idx + 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
-    def _move_front_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.local_fronts[idx], self.state.local_fronts[idx - 1] = (
-                self.state.local_fronts[idx - 1],
-                self.state.local_fronts[idx],
-            )
-            self.state.front_back_paths[idx], self.state.front_back_paths[idx - 1] = (
-                self.state.front_back_paths[idx - 1],
-                self.state.front_back_paths[idx],
-            )
-            self.state.local_front_crop[idx], self.state.local_front_crop[idx - 1] = (
-                self.state.local_front_crop[idx - 1],
-                self.state.local_front_crop[idx],
-            )
-            self._refresh_front_rows()
-
-    def _move_front_down(self, idx: int) -> None:
-        if idx < len(self.state.local_fronts) - 1:
-            self.state.local_fronts[idx], self.state.local_fronts[idx + 1] = (
-                self.state.local_fronts[idx + 1],
-                self.state.local_fronts[idx],
-            )
-            self.state.front_back_paths[idx], self.state.front_back_paths[idx + 1] = (
-                self.state.front_back_paths[idx + 1],
-                self.state.front_back_paths[idx],
-            )
-            self.state.local_front_crop[idx], self.state.local_front_crop[idx + 1] = (
-                self.state.local_front_crop[idx + 1],
-                self.state.local_front_crop[idx],
-            )
-            self._refresh_front_rows()
-
-    # ------------------------------------------------------------------
-    # Drag-and-drop
-    # ------------------------------------------------------------------
     @staticmethod
     def _decode_drop(files) -> list[Path]:
         result = []
@@ -1937,74 +267,6 @@ class App:
                     f = f.decode("cp1252", errors="replace")
             result.append(Path(str(f)))
         return result
-
-    def _on_drop_xmls(self, files) -> None:
-        paths = self._decode_drop(files)
-        added = 0
-        for pp in paths:
-            if pp.suffix.lower() != ".xml":
-                continue
-            if pp not in self.state.xml_paths:
-                self.state.xml_paths.append(pp)
-                added += 1
-                if pp not in self._xml_card_counts:
-                    try:
-                        rpts = analyze([pp])
-                        if rpts:
-                            self._xml_card_counts[pp] = rpts[0].cards
-                    except Exception:
-                        pass
-                if pp not in self._xml_orders:
-                    try:
-                        self._xml_orders[pp] = parse(pp)
-                    except Exception:
-                        pass
-                if pp not in self._xml_validations:
-                    try:
-                        self._xml_validations[pp] = validate(pp)
-                    except Exception:
-                        self._xml_validations[pp] = []
-        if added:
-            self._refresh_xml_rows()
-            self.status_var.set(f"{len(self.state.xml_paths)} XML(s) en cola.")
-        self._refresh_generate_state()
-
-    def _on_drop_backs(self, files) -> None:
-        paths = self._decode_drop(files)
-        was_empty = not self.state.local_backs
-        added = False
-        for pp in paths:
-            if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
-                continue
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
-        if added:
-            if was_empty and self.state.local_backs:
-                first = self.state.local_backs[0]
-                for i, assigned in enumerate(self.state.front_back_paths):
-                    if assigned is None:
-                        self.state.front_back_paths[i] = first
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-            self._refresh_generate_state()
-
-    def _on_drop_fronts(self, files) -> None:
-        paths = self._decode_drop(files)
-        default_back = self.state.local_backs[0] if self.state.local_backs else None
-        added = False
-        for pp in paths:
-            if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
-                continue
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
-        if added:
-            self._refresh_front_rows()
-            self._refresh_generate_state()
 
     def _setup_dnd(self) -> None:
         if not _WINDND_AVAILABLE:
@@ -2019,8 +281,6 @@ class App:
         except Exception:
             pass
 
-    # Mousewheel scroll over the active row list
-    # ------------------------------------------------------------------
     def _bind_mousewheel(self, canvas: tk.Canvas, on: bool) -> None:
         if on:
             self._active_scroll_canvas = canvas
@@ -2044,9 +304,6 @@ class App:
         else:
             canvas.yview_scroll(int(-event.delta / 120), "units")
 
-    # ------------------------------------------------------------------
-    # Run controls
-    # ------------------------------------------------------------------
     def _pick_output_dir(self) -> None:
         chosen = filedialog.askdirectory(
             title="Selecciona la carpeta de salida para los PDFs",
@@ -2062,7 +319,6 @@ class App:
         return d
 
     def _update_preflight(self) -> None:
-        """Refresh the pre-flight summary panel from current XML + local state."""
         for widget in self._preflight_labels:
             widget.destroy()
         self._preflight_labels.clear()
@@ -2078,7 +334,6 @@ class App:
             return
 
         def _row(parts: list[tuple[str, str]]) -> None:
-            """Create one line: list of (text, style) where style is 'normal', 'bold', or 'warn'."""
             frame = ttk.Frame(self._preflight_inner)
             frame.pack(fill=tk.X)
             self._preflight_labels.append(frame)
@@ -2113,7 +368,7 @@ class App:
             xml_total += n
             _row(
                 [
-                    (f"• One Piece – {_ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"• One Piece – {ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
                 ]
@@ -2124,7 +379,7 @@ class App:
             xml_total += n
             _row(
                 [
-                    (f"• Riftbound – {_ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"• Riftbound – {ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
                 ]
@@ -2135,7 +390,7 @@ class App:
             xml_total += n
             _row(
                 [
-                    (f"• Lorcana – {_ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"• Lorcana – {ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
                 ]
@@ -2182,17 +437,13 @@ class App:
         self._preflight_frame.pack(fill=tk.X, pady=(8, 0))
 
     def _refresh_generate_state(self) -> None:
-        ready = False
-        if self.state.xml_paths:
-            ready = True
-        elif self.state.local_fronts and self.state.local_backs:
-            ready = True
-        elif self._op_decks:
-            ready = True
-        elif self._rb_decks:
-            ready = True
-        elif self._lorcana_decks:
-            ready = True
+        ready = (
+            bool(self.state.xml_paths)
+            or (self.state.local_fronts and self.state.local_backs)
+            or self._op_decks
+            or self._rb_decks
+            or self._lorcana_decks
+        )
         if ready and not self.running:
             self.soriano_btn.state(["!disabled"])
             self.fronts_only_btn.state(["!disabled"])
@@ -2202,21 +453,12 @@ class App:
         self._update_preflight()
 
     def _resolve_extra_backs(self) -> list[Path | None]:
-        """One entry per local front: the explicit Path the user chose, or
-        `None` to fall back to the XML cardback (or `local_cardback` in
-        locals-only mode)."""
-        result: list[Path | None] = []
-        for i, _ in enumerate(self.state.local_fronts):
-            assigned = (
-                self.state.front_back_paths[i] if i < len(self.state.front_back_paths) else None
-            )
-            result.append(assigned)
-        return result
+        return [
+            self.state.front_back_paths[i] if i < len(self.state.front_back_paths) else None
+            for i in range(len(self.state.local_fronts))
+        ]
 
     def _build_crop_map(self) -> dict[Path, bool]:
-        """Per-image crop setting for every local image. Same path appearing
-        as both a front and a back gets the front's setting last (overrides
-        the back's), which is fine — they map to the same on-disk file."""
         m: dict[Path, bool] = {}
         for p, c in zip(self.state.local_backs, self.state.local_back_crop):
             m[p] = c
@@ -2253,7 +495,6 @@ class App:
         reports = []
         plan_ = None
         if self.state.xml_paths:
-            # Show a single confirmation if any XML has validation warnings.
             all_xml_warnings = [
                 (p, ws) for p in self.state.xml_paths if (ws := self._xml_validations.get(p))
             ]
@@ -2304,7 +545,6 @@ class App:
                     ):
                         return
         else:
-            # No XML: warn if total (local + OP + RB + Lorcana) is not a multiple of 9
             total = (
                 len(self.state.local_fronts)
                 + sum(d.total_slots for d in self._op_decks)
@@ -2342,274 +582,6 @@ class App:
         )
         self.worker.start()
 
-    def _start_op(self, fronts_only: bool = False) -> None:
-        self.running = True
-        self.cancel_event.clear()
-        self._dl_speed_str = ""
-        self.timing_var.set("")
-        self.soriano_btn.state(["disabled"])
-        self.fronts_only_btn.state(["disabled"])
-        self.stop_btn.state(["!disabled"])
-        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.fronts_only_btn)
-        self.progress["value"] = 0
-        self.status_var.set("Preparando One Piece…")
-        self.worker = threading.Thread(
-            target=self._work_op,
-            args=(fronts_only,),
-            daemon=True,
-        )
-        self.worker.start()
-
-    def _start_rb(self, fronts_only: bool = False) -> None:
-        print_runes_flags = [row["print_runes_var"].get() for row in self._rb_deck_rows]
-        self.running = True
-        self.cancel_event.clear()
-        self._dl_speed_str = ""
-        self.timing_var.set("")
-        self.soriano_btn.state(["disabled"])
-        self.fronts_only_btn.state(["disabled"])
-        self.stop_btn.state(["!disabled"])
-        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.fronts_only_btn)
-        self.progress["value"] = 0
-        self.status_var.set("Preparando Riftbound…")
-        self.worker = threading.Thread(
-            target=self._work_rb,
-            args=(fronts_only, print_runes_flags),
-            daemon=True,
-        )
-        self.worker.start()
-
-    def _work_rb(
-        self, fronts_only: bool = False, print_runes_flags: list[bool] | None = None
-    ) -> None:
-        run_dir = None
-        try:
-            decks = self._rb_decks
-            if not decks:
-                raise ValueError("No hay mazos de Riftbound cargados.")
-
-            out = self._effective_output_dir()
-            wd = work_dir()
-            run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            _run_start = time.time()
-            label = " + ".join(d.name for d in decks)
-
-            rb_raw_dir = wd / "rb_raw"
-            total_unique = sum(len({c.variant_id for c in d.cards}) for d in decks)
-            self.events.put(("progress", "download", 0, total_unique, label))
-
-            image_map: dict[str, Path] = {}
-            done_dl_offset = 0
-
-            for deck in decks:
-                _offset = done_dl_offset
-
-                def _dl_progress(done, total, _off=_offset):
-                    self.events.put(("progress", "download", _off + done, total_unique, label))
-
-                partial = rb_download(
-                    deck,
-                    rb_raw_dir,
-                    cancel_event=self.cancel_event,
-                    progress_cb=_dl_progress,
-                )
-                image_map.update(partial)
-                done_dl_offset += len({c.variant_id for c in deck.cards})
-
-                if self.cancel_event.is_set():
-                    self.events.put(("cancelled", run_dir))
-                    return
-
-            backs = get_rb_backs()
-
-            all_fronts: list[Path] = []
-            all_backs: list[Path | None] = []
-            for idx, deck in enumerate(decks):
-                include_runes = (
-                    print_runes_flags[idx]
-                    if print_runes_flags and idx < len(print_runes_flags)
-                    else True
-                )
-                fronts, per_backs = rb_expand(deck, image_map, backs, include_runes=include_runes)
-                all_fronts.extend(fronts)
-                all_backs.extend(per_backs)
-
-            if not all_fronts:
-                raise ValueError("No se pudieron expandir las cartas.")
-
-            default_back = backs.get("maindeck") or next(iter(backs.values()))
-            all_back_paths = set(backs.values())
-            crop_map = {p: False for p in set(all_fronts) | all_back_paths}
-
-            base_name = "_".join(d.deck_id[:8] for d in decks)[:60]
-            self.events.put(("file", 1, 1, label))
-
-            _phase_first: dict[str, float] = {}
-            _phase_done: dict[str, float] = {}
-
-            def cb(stage, done, total):
-                now = time.time()
-                if stage not in _phase_first:
-                    _phase_first[stage] = now
-                if done == total and total > 0:
-                    _phase_done[stage] = now
-                self.events.put(("progress", stage, done, total, label))
-
-            pdfs = run_locals_only(
-                all_fronts,
-                default_back,
-                run_dir,
-                base_name,
-                wd,
-                cb,
-                cancel_event=self.cancel_event,
-                extra_backs=all_backs,
-                local_crop_map=crop_map,
-                fronts_only=fronts_only,
-            )
-
-            def _fmt_dur(sec: float) -> str:
-                return f"{int(sec) // 60}m {int(sec) % 60}s" if sec >= 60 else f"{sec:.0f}s"
-
-            timing_parts = []
-            for stage in ("download", "crop", "pdf"):
-                if stage in _phase_first and stage in _phase_done:
-                    dur = _phase_done[stage] - _phase_first[stage]
-                    lbl = {"download": "Descarga", "crop": "Recorte", "pdf": "PDF"}.get(
-                        stage, stage
-                    )
-                    timing_parts.append(f"{lbl}: {_fmt_dur(dur)}")
-            total_dur = time.time() - _run_start
-            timing_str = "  ".join(timing_parts)
-            if timing_str:
-                timing_str += f"  Total: {_fmt_dur(total_dur)}"
-
-            self.events.put(("done", pdfs, None, run_dir, timing_str))
-
-        except Exception as e:
-            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir))
-
-    def _work_op(self, fronts_only: bool = False) -> None:
-        run_dir = None
-        try:
-            decks = self._op_decks
-            if not decks:
-                raise ValueError("No hay mazos de One Piece cargados.")
-
-            out = self._effective_output_dir()
-            wd = work_dir()
-            run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            _run_start = time.time()
-            label = " + ".join(d.name for d in decks)
-
-            # 1. Download images per deck (preserves source so URL/headers are correct).
-            # The dest_dir file-existence check in download_images handles deduplication
-            # within the same source; different sources may produce different file extensions
-            # for the same card_id, but both contain the same image.
-            op_raw_dir = wd / "op_raw"
-            total_unique = sum(len({c.card_id for c in d.cards}) for d in decks)
-            self.events.put(("progress", "download", 0, total_unique, label))
-
-            image_map: dict[str, Path] = {}
-            done_dl_offset = 0
-
-            for deck in decks:
-                _offset = done_dl_offset
-
-                def _dl_progress(done, total, _off=_offset):
-                    self.events.put(("progress", "download", _off + done, total_unique, label))
-
-                partial = op_download(
-                    deck,
-                    op_raw_dir,
-                    cancel_event=self.cancel_event,
-                    progress_cb=_dl_progress,
-                )
-                image_map.update(partial)
-                done_dl_offset += len({c.card_id for c in deck.cards})
-
-                if self.cancel_event.is_set():
-                    self.events.put(("cancelled", run_dir))
-                    return
-
-            # 2. Resolve backs from resources (or generate fallbacks)
-            standard_back, leader_back_res = get_op_backs()
-
-            leader_backs: dict[str, Path] = {}
-            for deck in decks:
-                leader = deck.leader
-                if leader and leader.card_id not in leader_backs:
-                    leader_backs[leader.card_id] = leader_back_res
-
-            # 3. Expand all decks and concatenate
-            all_fronts: list[Path] = []
-            all_backs: list[Path | None] = []
-            for deck in decks:
-                leader = deck.leader
-                lb = leader_backs.get(leader.card_id) if leader else None
-                fronts, backs = op_expand(deck, image_map, lb, standard_back)
-                all_fronts.extend(fronts)
-                all_backs.extend(backs)
-
-            if not all_fronts:
-                raise ValueError("No se pudieron expandir las cartas.")
-
-            all_back_paths = {standard_back} | set(leader_backs.values())
-            crop_map = {p: False for p in set(all_fronts) | all_back_paths}
-
-            # 4. Run pipeline
-            base_name = "_".join(d.slug for d in decks)[:60]
-            self.events.put(("file", 1, 1, label))
-
-            _phase_first: dict[str, float] = {}
-            _phase_done: dict[str, float] = {}
-
-            def cb(stage, done, total):
-                now = time.time()
-                if stage not in _phase_first:
-                    _phase_first[stage] = now
-                if done == total and total > 0:
-                    _phase_done[stage] = now
-                self.events.put(("progress", stage, done, total, label))
-
-            pdfs = run_locals_only(
-                all_fronts,
-                standard_back,
-                run_dir,
-                base_name,
-                wd,
-                cb,
-                cancel_event=self.cancel_event,
-                extra_backs=all_backs,
-                local_crop_map=crop_map,
-                fronts_only=fronts_only,
-            )
-
-            def _fmt_dur(sec: float) -> str:
-                return f"{int(sec) // 60}m {int(sec) % 60}s" if sec >= 60 else f"{sec:.0f}s"
-
-            timing_parts = []
-            for stage in ("download", "crop", "pdf"):
-                if stage in _phase_first and stage in _phase_done:
-                    dur = _phase_done[stage] - _phase_first[stage]
-                    lbl = {"download": "Descarga", "crop": "Recorte", "pdf": "PDF"}.get(
-                        stage, stage
-                    )
-                    timing_parts.append(f"{lbl}: {_fmt_dur(dur)}")
-            total_dur = time.time() - _run_start
-            timing_str = "  ".join(timing_parts)
-            if timing_str:
-                timing_str += f"  Total: {_fmt_dur(total_dur)}"
-
-            self.events.put(("done", pdfs, None, run_dir, timing_str))
-
-        except Exception as e:
-            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir))
-
     def _request_stop(self) -> None:
         if not self.running:
             return
@@ -2630,7 +602,6 @@ class App:
             out = self._effective_output_dir()
             wd = work_dir()
 
-            # Checkpoint: notify if cached crops exist from a previous failed run
             bled_dir = wd / "bled"
             if bled_dir.exists():
                 cached = [f for f in bled_dir.iterdir() if f.is_file()]
@@ -2643,7 +614,6 @@ class App:
             extra_backs = self._resolve_extra_backs()
             crop_map = self._build_crop_map()
 
-            # Phase timing tracking
             _run_start = time.time()
             _phase_first: dict[str, float] = {}
             _phase_done: dict[str, float] = {}
@@ -2655,7 +625,6 @@ class App:
                 if done == total and total > 0:
                     _phase_done[stage] = now
 
-            # ---- Download and prepare One Piece deck images (if any) --------
             op_fronts: list[Path] = []
             op_backs_resolved: list[Path] = []
             op_crop_extra: dict[Path, bool] = {}
@@ -2700,7 +669,6 @@ class App:
                 op_all_back_paths = {op_standard_back} | set(leader_backs_op.values())
                 op_crop_extra = {p: False for p in set(op_fronts) | op_all_back_paths}
 
-            # ---- Download and prepare Riftbound deck images (if any) --------
             rb_fronts: list[Path] = []
             rb_backs_resolved: list[Path] = []
             rb_crop_extra: dict[Path, bool] = {}
@@ -2745,7 +713,6 @@ class App:
                     rb_backs_resolved.extend(rb_default_back if b is None else b for b in backs_rb)
                 rb_crop_extra = {p: False for p in set(rb_fronts) | rb_all_back_paths}
 
-            # ---- Download and prepare Lorcana deck images (if any) ----------
             lorcana_fronts: list[Path] = []
             lorcana_backs_resolved: list[Path | None] = []
             lorcana_crop_extra: dict[Path, bool] = {}
@@ -2800,7 +767,6 @@ class App:
                     )
                 lorcana_crop_extra = {p: False for p in set(lorcana_fronts) | {lorcana_back}}
 
-            # ---- Combine all extra fronts/backs/crop maps -------------------
             all_extra_fronts = (
                 list(self.state.local_fronts) + op_fronts + rb_fronts + lorcana_fronts
             )
@@ -2810,7 +776,6 @@ class App:
             all_crop_map = {**crop_map, **op_crop_extra, **rb_crop_extra, **lorcana_crop_extra}
 
             if plan_ is not None:
-                # --- Verify Drive access before downloading ---------------
                 xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
                 all_ids = collect_drive_ids(xml_paths_flat)
                 raw_dir = wd / "raw"
@@ -2841,7 +806,6 @@ class App:
                     self.events.put(("cancelled", run_dir))
                     return
 
-                # label shown during download/crop (global phases)
                 _pdf_label = [""]
 
                 def cb(stage, done, total):
@@ -2882,7 +846,6 @@ class App:
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
             else:
-                # No XML: locals + OP + RB combined.
                 if not all_extra_fronts:
                     raise ValueError("No hay cartas para generar.")
                 if self.state.local_fronts and self.state.local_backs:
@@ -2930,7 +893,6 @@ class App:
             if not self.keep_cache.get():
                 self._cleanup_workdir(wd)
 
-            # Build timing summary
             def _fmt_dur(sec: float) -> str:
                 return f"{int(sec) // 60}m {int(sec) % 60}s" if sec >= 60 else f"{sec:.0f}s"
 
@@ -3053,7 +1015,7 @@ class App:
                 self.timing_var.set(f"Tiempos — {timing_str}")
                 _log.info("Phase timings: %s", timing_str)
             self._finish_running()
-            _notify(APP_TITLE, f"¡Listo! {len(pdfs)} PDF(s) generados correctamente.")
+            notify(APP_TITLE, f"¡Listo! {len(pdfs)} PDF(s) generados correctamente.")
             self._open_output_folder(run_dir)
         elif kind == "xml_download_progress":
             _, xml_name, done, total = ev
@@ -3135,7 +1097,6 @@ class App:
             self._show_error_dialog("\n\n".join(parts))
         elif kind == "op_deck_loaded":
             _, deck = ev
-            # Avoid duplicates by slug
             if not any(d.slug == deck.slug for d in self._op_decks):
                 self._op_decks.append(deck)
                 self._op_refresh_rows()
@@ -3214,7 +1175,7 @@ class App:
         sb.grid(row=0, column=1, sticky="ns")
         txt.insert("1.0", message)
         txt.configure(state=tk.DISABLED)
-        _attach_context_menu(txt)
+        attach_context_menu(txt)
 
         btn_row = ttk.Frame(dlg)
         btn_row.pack(fill=tk.X, padx=12, pady=(0, 10))
@@ -3238,7 +1199,7 @@ class App:
 
     def _open_output_folder(self, path: Path) -> None:
         try:
-            os.startfile(str(path))  # Windows
+            os.startfile(str(path))
         except AttributeError:
             import subprocess
 

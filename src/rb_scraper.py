@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -12,9 +11,11 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from PIL import Image, ImageDraw
 
 from src.cancellation import Cancelled
+from src.constants import ProgressCallback
+from src.scraper_utils import generate_fallback_back
+from src.scraper_utils import resources_dir as _resources_dir
 
 _HEADERS = {
     "User-Agent": (
@@ -96,12 +97,6 @@ class RBDeck:
 # ── Resources ─────────────────────────────────────────────────────────────────
 
 
-def _resources_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "resources"
-    return Path(__file__).resolve().parent.parent / "resources"
-
-
 def get_rb_backs() -> dict[str, Path]:
     """Return {section: back_image_path} for each Riftbound card section.
 
@@ -140,14 +135,7 @@ def _generate_fallback_back(section: str) -> Path:
 
     tmp = Path(tempfile.mkdtemp())
     bg, border = _FALLBACK_COLORS.get(section, ("#111111", "#888888"))
-    W, H = 480, 670
-    img = Image.new("RGB", (W, H), bg)
-    draw = ImageDraw.Draw(img)
-    bw = max(6, W // 25)
-    draw.rectangle([0, 0, W - 1, H - 1], outline=border, width=bw)
-    path = tmp / f"{section}.png"
-    img.save(path, "PNG")
-    return path
+    return generate_fallback_back(tmp / f"{section}.png", bg, border)
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -608,7 +596,7 @@ def download_images(
     deck: RBDeck,
     dest_dir: Path,
     cancel_event: threading.Event | None = None,
-    progress_cb=None,
+    progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
     """Download one image per unique (card_id, variant_id) pair.
     Returns {variant_id: local_path}.

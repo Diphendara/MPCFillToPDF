@@ -16,9 +16,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw
 
 from src.cancellation import Cancelled
+from src.constants import ProgressCallback
+from src.scraper_utils import generate_fallback_back
+from src.scraper_utils import resources_dir as _resources_dir
 
 _HEADERS = {
     "User-Agent": (
@@ -76,12 +78,6 @@ class LocanaDeck:
 # ── Resources ─────────────────────────────────────────────────────────────────
 
 
-def _resources_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "resources"
-    return Path(__file__).resolve().parent.parent / "resources"
-
-
 def _work_dir() -> Path:
     """Return the pipeline working directory for cached files."""
     if getattr(sys, "frozen", False):
@@ -128,13 +124,7 @@ def _generate_fallback_back() -> Path:
         import tempfile
 
         tmp = Path(tempfile.mkdtemp())
-        W, H = 480, 670
-        img = Image.new("RGB", (W, H), "#0a1f44")
-        draw = ImageDraw.Draw(img)
-        bw = max(6, W // 25)
-        draw.rectangle([0, 0, W - 1, H - 1], outline="#c8a84b", width=bw)
-        path = tmp / "back.png"
-        img.save(path, "PNG")
+        path = generate_fallback_back(tmp / "back.png", "#0a1f44", "#c8a84b")
         _fallback_back_path = path
         return path
 
@@ -610,7 +600,7 @@ def download_images(
     deck: LocanaDeck,
     dest_dir: Path,
     cancel_event: threading.Event | None = None,
-    progress_cb=None,
+    progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
     """Download one image per unique card_id. Returns {card_id: local_path}."""
     dest_dir.mkdir(parents=True, exist_ok=True)
