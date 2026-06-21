@@ -45,6 +45,20 @@ Pega la URL del mazo en la pestaña **Riftbound** de la interfaz gráfica y puls
 
 ---
 
+### Lorcana
+
+| Web | URL de ejemplo |
+|-----|---------------|
+| [lorcana.gg](https://lorcana.gg) | `https://lorcana.gg/decks/nombre-del-mazo/` |
+| [inkdecks.com](https://inkdecks.com) | `https://inkdecks.com/lorcana-metagame/deck-nombre-ID` |
+| [dreamborn.ink](https://dreamborn.ink) | `https://dreamborn.ink/es/decks/ID` |
+
+Pega la URL del mazo en la pestaña **Lorcana** de la interfaz gráfica y pulsa **Añadir**.
+
+> **Nota:** dreamborn.ink requiere que **Google Chrome** esté instalado, ya que la web usa protección anti-bots que solo un navegador real puede superar. El programa abre Chrome minimizado, carga la página y lo cierra automáticamente.
+
+---
+
 ## Clave de API de Google Drive (recomendado)
 
 Las imágenes de los XMLs de MPCFill están alojadas en Google Drive. Sin configuración adicional, el programa las descarga usando `gdown` (peticiones anónimas), que puede recibir errores **429 — rate limit** al descargar muchas imágenes seguidas.

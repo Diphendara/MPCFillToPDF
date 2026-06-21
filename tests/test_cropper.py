@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageOps
 
 from src.cropper import (
     _BLEED_X,
@@ -12,6 +12,7 @@ from src.cropper import (
     BLEED_MM,
     CARD_H_MM,
     CARD_W_MM,
+    _add_mirror_bleed,
     crop_image,
     process_for_pdf,
 )
@@ -140,3 +141,64 @@ def test_crop_image_invalid_raises(tmp_path):
     out = tmp_path / "out.jpg"
     with pytest.raises(RuntimeError, match="abrir"):
         crop_image(bad, out)
+
+
+# ─── _add_mirror_bleed ──────────────────────────────────────────────────────
+
+
+def _gradient_image(w: int, h: int) -> Image.Image:
+    img = Image.new("RGB", (w, h))
+    for y in range(h):
+        for x in range(w):
+            img.putpixel((x, y), (x * 13 % 251 + 1, y * 17 % 251 + 1, (x + y) * 7 % 251 + 1))
+    return img
+
+
+class TestAddMirrorBleed:
+    def test_output_size(self):
+        img = _gradient_image(10, 12)
+        out = _add_mirror_bleed(img, bx=2, by=3)
+        assert out.size == (14, 18)
+
+    def test_center_matches_original(self):
+        img = _gradient_image(10, 12)
+        bx, by = 2, 3
+        out = _add_mirror_bleed(img, bx=bx, by=by)
+        center = out.crop((bx, by, bx + 10, by + 12))
+        assert list(center.getdata()) == list(img.getdata())
+
+    def test_left_bleed_is_mirror_of_left_strip(self):
+        img = _gradient_image(10, 12)
+        bx, by = 2, 3
+        out = _add_mirror_bleed(img, bx=bx, by=by)
+        expected = ImageOps.mirror(img.crop((0, 0, bx, 12)))
+        actual = out.crop((0, by, bx, by + 12))
+        assert list(actual.getdata()) == list(expected.getdata())
+
+    def test_right_bleed_is_mirror_of_right_strip(self):
+        img = _gradient_image(10, 12)
+        bx, by = 2, 3
+        w, h = 10, 12
+        nw = w + 2 * bx
+        out = _add_mirror_bleed(img, bx=bx, by=by)
+        expected = ImageOps.mirror(img.crop((w - bx, 0, w, h)))
+        actual = out.crop((nw - bx, by, nw, by + h))
+        assert list(actual.getdata()) == list(expected.getdata())
+
+    def test_top_bleed_is_flip_of_top_strip(self):
+        img = _gradient_image(10, 12)
+        bx, by = 2, 3
+        out = _add_mirror_bleed(img, bx=bx, by=by)
+        expected = ImageOps.flip(img.crop((0, 0, 10, by)))
+        actual = out.crop((bx, 0, bx + 10, by))
+        assert list(actual.getdata()) == list(expected.getdata())
+
+    def test_bottom_bleed_is_flip_of_bottom_strip(self):
+        img = _gradient_image(10, 12)
+        bx, by = 2, 3
+        w, h = 10, 12
+        nh = h + 2 * by
+        out = _add_mirror_bleed(img, bx=bx, by=by)
+        expected = ImageOps.flip(img.crop((0, h - by, w, h)))
+        actual = out.crop((bx, nh - by, bx + w, nh))
+        assert list(actual.getdata()) == list(expected.getdata())

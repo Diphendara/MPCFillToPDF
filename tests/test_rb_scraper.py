@@ -24,11 +24,19 @@ from src.rb_scraper import (
     SECTION_ORDER,
     RBCard,
     RBDeck,
+    _fetch_deck,
     _fs_arr,
     _fs_str,
+    _resolve_image,
     _scrape_riftbinder,
+    _scrape_riftbound_gg,
+    _scrape_riftdex,
+    _scrape_riftmana,
+    _trpc_get,
     _type_to_section,
+    download_images,
     expand_deck,
+    get_rb_backs,
     scrape_deck,
 )
 
@@ -473,6 +481,337 @@ class TestDownloadImagesCancellation:
         with patch("src.rb_scraper.requests.get", return_value=mock_resp):
             with pytest.raises(Cancelled):
                 download_images(deck, tmp_path, cancel_event=cancel)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _trpc_get
+# ---------------------------------------------------------------------------
+
+
+class TestTrpcGet:
+    def test_builds_url_and_parses_result(self):
+        mock_r = MagicMock()
+        mock_r.json.return_value = {"result": {"data": {"json": {"key": "value"}}}}
+        with patch("src.rb_scraper.requests.get", return_value=mock_r) as mock_get:
+            result = _trpc_get("decks.getById", {"id": "abc"})
+        assert result == {"key": "value"}
+        call_url = mock_get.call_args[0][0]
+        assert "decks.getById" in call_url
+        assert "piltoverarchive.com" in call_url
+
+    def test_passes_encoded_payload(self):
+        mock_r = MagicMock()
+        mock_r.json.return_value = {"result": {"data": {"json": {}}}}
+        with patch("src.rb_scraper.requests.get", return_value=mock_r) as mock_get:
+            _trpc_get("proc", {"id": "xyz"})
+        call_url = mock_get.call_args[0][0]
+        assert "input=" in call_url
+        assert "xyz" in call_url
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _resolve_image
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImage:
+    def test_returns_matching_variant_url(self):
+        item = {
+            "variantId": "v002",
+            "card": {
+                "cardVariants": [
+                    {"id": "v001", "imageUrl": "url1"},
+                    {"id": "v002", "imageUrl": "url2"},
+                ]
+            },
+        }
+        assert _resolve_image(item) == "url2"
+
+    def test_falls_back_to_first_variant_when_preferred_missing(self):
+        item = {
+            "variantId": "v999",
+            "card": {"cardVariants": [{"id": "v001", "imageUrl": "url1"}]},
+        }
+        assert _resolve_image(item) == "url1"
+
+    def test_returns_empty_when_no_variants(self):
+        item = {"variantId": "v001", "card": {"cardVariants": []}}
+        assert _resolve_image(item) == ""
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _fetch_deck (piltoverarchive)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchDeck:
+    def _raw(self):
+        return {
+            "name": "PA Deck",
+            "legend": {
+                "cardId": "L001",
+                "id": "v-leg",
+                "imageUrl": "https://example.com/L001.webp",
+                "card": {"name": "The Legend", "type": "Legend"},
+            },
+            "champions": [],
+            "battlefields": [],
+            "runes": [],
+            "maindeck": [
+                {
+                    "cardId": "C001",
+                    "variantId": "v001",
+                    "quantity": 4,
+                    "card": {
+                        "name": "A Unit",
+                        "type": "Unit",
+                        "super": None,
+                        "cardVariants": [
+                            {"id": "v001", "imageUrl": "https://example.com/C001.webp"}
+                        ],
+                    },
+                }
+            ],
+            "sideboard": [],
+        }
+
+    def test_parses_legend_and_maindeck(self):
+        with patch("src.rb_scraper._trpc_get", return_value=self._raw()):
+            deck = _fetch_deck("test-id")
+        assert deck.name == "PA Deck"
+        sections = {c.section for c in deck.cards}
+        assert "legend" in sections
+        assert "maindeck" in sections
+        qtys = {c.card_id: c.quantity for c in deck.cards}
+        assert qtys["C001"] == 4
+
+    def test_legend_gets_image_url_directly(self):
+        with patch("src.rb_scraper._trpc_get", return_value=self._raw()):
+            deck = _fetch_deck("test-id")
+        legend = next(c for c in deck.cards if c.section == "legend")
+        assert legend.image_url == "https://example.com/L001.webp"
+
+    def test_not_found_raises(self):
+        with patch("src.rb_scraper._trpc_get", return_value=None):
+            with pytest.raises(ValueError, match="No se encontró"):
+                _fetch_deck("missing-id")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _scrape_riftbound_gg
+# ---------------------------------------------------------------------------
+
+
+class TestScrapeRiftboundGg:
+    def _deck_json(self):
+        return {
+            "humanname": "RBgg Deck",
+            "deck": {"CARD-001": "4", "CARD-002": "1"},
+            "boards": [],
+        }
+
+    def _cards_json(self):
+        return {
+            "names": ["id", "name", "type", "supertype"],
+            "data": [
+                ["CARD-001", "Unit Card", "Unit", None],
+                ["CARD-002", "Legend Card", "Legend", None],
+            ],
+        }
+
+    def test_parses_deck_and_cards(self):
+        r1 = MagicMock()
+        r1.text = "nonempty"
+        r1.json.return_value = self._deck_json()
+        r2 = MagicMock()
+        r2.json.return_value = self._cards_json()
+        with patch("src.rb_scraper.requests.get", side_effect=[r1, r2]):
+            deck = _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
+        assert deck.name == "RBgg Deck"
+        qtys = {c.card_id: c.quantity for c in deck.cards}
+        assert qtys["CARD-001"] == 4
+        assert qtys["CARD-002"] == 1
+
+    def test_assigns_section_from_type(self):
+        r1 = MagicMock()
+        r1.text = "nonempty"
+        r1.json.return_value = self._deck_json()
+        r2 = MagicMock()
+        r2.json.return_value = self._cards_json()
+        with patch("src.rb_scraper.requests.get", side_effect=[r1, r2]):
+            deck = _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
+        sections = {c.card_id: c.section for c in deck.cards}
+        assert sections["CARD-002"] == "legend"
+        assert sections["CARD-001"] == "maindeck"
+
+    def test_empty_body_raises(self):
+        r1 = MagicMock()
+        r1.text = "  "
+        with patch("src.rb_scraper.requests.get", return_value=r1):
+            with pytest.raises(ValueError, match="privado"):
+                _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
+
+    def test_bad_url_raises(self):
+        with pytest.raises(ValueError, match="slug"):
+            _scrape_riftbound_gg("https://riftbound.gg/")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _scrape_riftmana
+# ---------------------------------------------------------------------------
+
+
+class TestScrapeRiftmana:
+    def test_extracts_uuid_and_fetches_api(self):
+        uuid = "aaaabbbb-1111-2222-3333-ccccddddeeee"
+        html_r = MagicMock()
+        html_r.text = f'<div data-deck-uuid="{uuid}"></div>'
+        api_r = MagicMock()
+        api_r.json.return_value = {
+            "data": {
+                "deck": {
+                    "name": "RM Deck",
+                    "cards": [
+                        {
+                            "code": "card-001",
+                            "name": "C1",
+                            "type": "Unit",
+                            "super": None,
+                            "quantity": 3,
+                            "image": "https://example.com/c1.webp",
+                        }
+                    ],
+                    "sideboard": [],
+                }
+            }
+        }
+        with patch("src.rb_scraper.requests.get", side_effect=[html_r, api_r]):
+            deck = _scrape_riftmana("https://riftmana.com/decks/my-deck")
+        assert deck.name == "RM Deck"
+        assert deck.deck_id == uuid
+        assert len(deck.cards) == 1
+        assert deck.cards[0].card_id == "CARD-001"
+        assert deck.cards[0].quantity == 3
+
+    def test_uuid_not_found_raises(self):
+        html_r = MagicMock()
+        html_r.text = "<html>no uuid here</html>"
+        with patch("src.rb_scraper.requests.get", return_value=html_r):
+            with pytest.raises(ValueError, match="UUID"):
+                _scrape_riftmana("https://riftmana.com/decks/my-deck")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _scrape_riftdex
+# ---------------------------------------------------------------------------
+
+
+class TestScrapeRiftdex:
+    DECK_UUID = "00000000-1111-2222-3333-444455556666"
+    CARD_UUID = "aaaabbbb-0000-0000-0000-111122223333"
+
+    def test_parses_deck_with_card_lookup(self):
+        deck_r = MagicMock()
+        deck_r.json.return_value = [
+            {"name": "RD Deck", "cards": [{"cardId": self.CARD_UUID, "count": 2}]}
+        ]
+        cards_r = MagicMock()
+        cards_r.json.return_value = [
+            {
+                "id": self.CARD_UUID,
+                "card_name": "My Card",
+                "card_number": "RD-001",
+                "type": "Unit",
+                "super": None,
+                "image_url": "https://example.com/rd001.webp",
+            }
+        ]
+        with patch("src.rb_scraper.requests.get", side_effect=[deck_r, cards_r]):
+            deck = _scrape_riftdex(f"https://riftdex.com/deck/{self.DECK_UUID}")
+        assert deck.name == "RD Deck"
+        assert deck.cards[0].card_id == "RD-001"
+        assert deck.cards[0].quantity == 2
+
+    def test_not_found_raises(self):
+        r = MagicMock()
+        r.json.return_value = []
+        with patch("src.rb_scraper.requests.get", return_value=r):
+            with pytest.raises(ValueError, match="No se encontró"):
+                _scrape_riftdex(f"https://riftdex.com/deck/{self.DECK_UUID}")
+
+    def test_bad_url_raises(self):
+        with pytest.raises(ValueError, match="UUID"):
+            _scrape_riftdex("https://riftdex.com/deck/not-a-uuid")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — download_images (rb_scraper)
+# ---------------------------------------------------------------------------
+
+
+class TestRBDownloadImages:
+    def _make_card(self, variant_id: str = "v001") -> RBCard:
+        return RBCard(
+            card_id="C001",
+            variant_id=variant_id,
+            name="Card",
+            card_type="Unit",
+            card_super=None,
+            quantity=2,
+            image_url=f"https://example.com/{variant_id}.webp",
+            section="maindeck",
+        )
+
+    def test_downloads_and_saves_image(self, tmp_path):
+        card = self._make_card()
+        deck = RBDeck(deck_id="d1", name="Test", cards=[card])
+        mock_r = MagicMock()
+        mock_r.content = b"image_bytes"
+        with patch("src.rb_scraper.requests.get", return_value=mock_r):
+            result = download_images(deck, tmp_path)
+        assert "v001" in result
+        assert result["v001"].read_bytes() == b"image_bytes"
+
+    def test_deduplicates_by_variant_id(self, tmp_path):
+        card = self._make_card("v001")
+        deck = RBDeck(deck_id="d1", name="Test", cards=[card, card])
+        mock_r = MagicMock()
+        mock_r.content = b"bytes"
+        call_count = 0
+
+        def _track(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            return mock_r
+
+        with patch("src.rb_scraper.requests.get", side_effect=_track):
+            result = download_images(deck, tmp_path)
+        assert call_count == 1
+        assert "v001" in result
+
+    def test_uses_cached_file(self, tmp_path):
+        card = self._make_card()
+        deck = RBDeck(deck_id="d1", name="Test", cards=[card])
+        cached = tmp_path / "v001.webp"
+        cached.write_bytes(b"cached")
+        with patch("src.rb_scraper.requests.get") as mock_get:
+            result = download_images(deck, tmp_path)
+        mock_get.assert_not_called()
+        assert result["v001"] == cached
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — get_rb_backs fallback
+# ---------------------------------------------------------------------------
+
+
+class TestGetRbBacksFallback:
+    def test_generates_fallback_when_files_missing(self, tmp_path):
+        with patch("src.rb_scraper._resources_dir", return_value=tmp_path / "missing"):
+            backs = get_rb_backs()
+        for section in ("legend", "battlefield", "rune", "maindeck"):
+            assert section in backs
+            assert backs[section].exists()
 
 
 # ---------------------------------------------------------------------------

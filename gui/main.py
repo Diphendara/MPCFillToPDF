@@ -613,18 +613,24 @@ class App:
         url_row = ttk.Frame(parent)
         url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
         url_row.columnconfigure(1, weight=1)
-        ttk.Label(url_row, text="URL del mazo:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(
+            url_row,
+            text="Webs aceptadas: onepiece.gg, egmanevents.com, cardkaizoku.com",
+            foreground="#999",
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._op_url_var = tk.StringVar()
         self._op_url_entry = ttk.Entry(url_row, textvariable=self._op_url_var)
-        self._op_url_entry.grid(row=0, column=1, sticky="ew")
+        self._op_url_entry.grid(row=1, column=1, sticky="ew")
         self._op_url_entry.bind("<Return>", lambda _e: self._op_load_deck())
         _attach_context_menu(self._op_url_entry)
         self._op_load_btn = ttk.Button(url_row, text="Añadir", width=7, command=self._op_load_deck)
-        self._op_load_btn.grid(row=0, column=2, padx=(6, 0))
+        self._op_load_btn.grid(row=1, column=2, padx=(6, 0))
 
         self._op_status_var = tk.StringVar(value="")
         ttk.Label(url_row, textvariable=self._op_status_var, foreground="#555", anchor="w").grid(
-            row=1, column=0, columnspan=3, sticky="ew", pady=(2, 0)
+            row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
         )
 
         op_list_frame = ttk.Frame(parent)
@@ -951,18 +957,24 @@ class App:
         url_row = ttk.Frame(parent)
         url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
         url_row.columnconfigure(1, weight=1)
-        ttk.Label(url_row, text="URL del mazo:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(
+            url_row,
+            text="Webs aceptadas: piltoverarchive.com, riftbound.gg, riftmana.com, riftbinder.com, riftdex.com",
+            foreground="#999",
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._rb_url_var = tk.StringVar()
         self._rb_url_entry = ttk.Entry(url_row, textvariable=self._rb_url_var)
-        self._rb_url_entry.grid(row=0, column=1, sticky="ew")
+        self._rb_url_entry.grid(row=1, column=1, sticky="ew")
         self._rb_url_entry.bind("<Return>", lambda _e: self._rb_load_deck())
         _attach_context_menu(self._rb_url_entry)
         self._rb_load_btn = ttk.Button(url_row, text="Añadir", width=7, command=self._rb_load_deck)
-        self._rb_load_btn.grid(row=0, column=2, padx=(6, 0))
+        self._rb_load_btn.grid(row=1, column=2, padx=(6, 0))
 
         self._rb_status_var = tk.StringVar(value="")
         ttk.Label(url_row, textvariable=self._rb_status_var, foreground="#555", anchor="w").grid(
-            row=1, column=0, columnspan=3, sticky="ew", pady=(2, 0)
+            row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
         )
 
         rb_list_frame = ttk.Frame(parent)
@@ -1171,21 +1183,27 @@ class App:
         url_row = ttk.Frame(parent)
         url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
         url_row.columnconfigure(1, weight=1)
-        ttk.Label(url_row, text="URL del mazo:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Label(
+            url_row,
+            text="Webs aceptadas: lorcana.gg, inkdecks.com, dreamborn.ink",
+            foreground="#999",
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._lorcana_url_var = tk.StringVar()
         self._lorcana_url_entry = ttk.Entry(url_row, textvariable=self._lorcana_url_var)
-        self._lorcana_url_entry.grid(row=0, column=1, sticky="ew")
+        self._lorcana_url_entry.grid(row=1, column=1, sticky="ew")
         self._lorcana_url_entry.bind("<Return>", lambda _e: self._lorcana_load_deck())
         _attach_context_menu(self._lorcana_url_entry)
         self._lorcana_load_btn = ttk.Button(
             url_row, text="Añadir", width=7, command=self._lorcana_load_deck
         )
-        self._lorcana_load_btn.grid(row=0, column=2, padx=(6, 0))
+        self._lorcana_load_btn.grid(row=1, column=2, padx=(6, 0))
 
         self._lorcana_status_var = tk.StringVar(value="")
         ttk.Label(
             url_row, textvariable=self._lorcana_status_var, foreground="#555", anchor="w"
-        ).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(2, 0))
+        ).grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0))
 
         lorcana_list_frame = ttk.Frame(parent)
         lorcana_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))

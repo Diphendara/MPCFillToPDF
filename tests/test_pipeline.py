@@ -12,7 +12,15 @@ import pytest
 
 from src.cancellation import Cancelled
 from src.downloader import DownloadPermissionError
-from src.pipeline import _local_synthetic_id, run_locals_only, run_plan
+from src.parser import parse
+from src.pipeline import (
+    _build_slot_maps,
+    _local_synthetic_id,
+    run,
+    run_locals_only,
+    run_merged,
+    run_plan,
+)
 from src.precheck import analyze
 from src.precheck import plan as make_plan
 from tests.conftest import make_rgb_image, make_xml
@@ -320,3 +328,143 @@ def test_local_synthetic_id_starts_with_local(tmp_path):
     p = tmp_path / "image.jpg"
     p.write_bytes(b"x")
     assert _local_synthetic_id(p).startswith("local_")
+
+
+# ─── _build_slot_maps ────────────────────────────────────────────────────────
+
+
+class TestBuildSlotMaps:
+    def test_single_xml_assigns_slots_from_zero(self, tmp_path):
+        xml = make_xml(
+            tmp_path / "deck.xml",
+            fronts=[
+                {"id": "F001", "name": "Card1", "slots": "0"},
+                {"id": "F002", "name": "Card2", "slots": "1"},
+            ],
+            cardback_id="CB001",
+            quantity=2,
+        )
+        order = parse(xml)
+        front_map, back_map, id_name, _, _, next_slot = _build_slot_maps([xml], [order], 0)
+        assert next_slot == 2
+        assert front_map[0] == "F001"
+        assert front_map[1] == "F002"
+        assert back_map[0] == "CB001"
+        assert back_map[1] == "CB001"
+
+    def test_two_xmls_get_consecutive_slots(self, tmp_path):
+        xml1 = make_xml(
+            tmp_path / "a.xml",
+            fronts=[{"id": "F001", "name": "A", "slots": "0"}],
+            cardback_id="CB001",
+            quantity=1,
+        )
+        xml2 = make_xml(
+            tmp_path / "b.xml",
+            fronts=[{"id": "F002", "name": "B", "slots": "0"}],
+            cardback_id="CB002",
+            quantity=1,
+        )
+        front_map, back_map, _, _, _, next_slot = _build_slot_maps(
+            [xml1, xml2], [parse(xml1), parse(xml2)], 0
+        )
+        assert next_slot == 2
+        assert front_map[0] == "F001"
+        assert front_map[1] == "F002"
+        assert back_map[0] == "CB001"
+        assert back_map[1] == "CB002"
+
+    def test_respects_starting_next_slot(self, tmp_path):
+        xml = make_xml(
+            tmp_path / "deck.xml",
+            fronts=[{"id": "F001", "name": "A", "slots": "0"}],
+            cardback_id="CB001",
+            quantity=1,
+        )
+        front_map, _, _, _, _, next_slot = _build_slot_maps([xml], [parse(xml)], 5)
+        assert 5 in front_map
+        assert front_map[5] == "F001"
+        assert next_slot == 6
+
+    def test_id_name_map_includes_all_ids(self, tmp_path):
+        xml = make_xml(
+            tmp_path / "deck.xml",
+            fronts=[{"id": "F001", "name": "TestCard", "slots": "0"}],
+            cardback_id="CB001",
+            quantity=1,
+        )
+        _, _, id_name, _, _, _ = _build_slot_maps([xml], [parse(xml)], 0)
+        assert "F001" in id_name
+        assert "CB001" in id_name
+
+    def test_empty_xml_list_returns_empty_maps(self):
+        front_map, back_map, _, _, _, next_slot = _build_slot_maps([], [], 0)
+        assert front_map == {}
+        assert back_map == {}
+        assert next_slot == 0
+
+
+# ─── run / run_merged ────────────────────────────────────────────────────────
+
+
+class TestRun:
+    def test_produces_pdf_for_single_xml(self, tmp_path):
+        xml = _one_card_xml(tmp_path)
+        with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
+            results = run(xml, tmp_path / "out", tmp_path / "work")
+        assert len(results) == 1
+        assert results[0].exists()
+        assert results[0].suffix == ".pdf"
+
+    def test_output_named_after_xml_stem(self, tmp_path):
+        xml = make_xml(
+            tmp_path / "my_cards.xml",
+            fronts=[{"id": "F1", "name": "C", "slots": "0"}],
+            cardback_id="CB",
+            quantity=1,
+        )
+        with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
+            results = run(xml, tmp_path / "out", tmp_path / "work")
+        assert "my_cards" in results[0].stem
+
+
+class TestRunMerged:
+    def test_merged_combines_slots_from_two_xmls(self, tmp_path):
+        xml1 = make_xml(
+            tmp_path / "deck1.xml",
+            fronts=[{"id": f"F1_{i}", "name": f"A{i}", "slots": str(i)} for i in range(9)],
+            cardback_id="CB1",
+        )
+        xml2 = make_xml(
+            tmp_path / "deck2.xml",
+            fronts=[{"id": f"F2_{i}", "name": f"B{i}", "slots": str(i)} for i in range(9)],
+            cardback_id="CB2",
+        )
+        with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
+            results = run_merged(
+                [xml1, xml2],
+                tmp_path / "out",
+                "merged",
+                tmp_path / "work",
+            )
+        assert len(results) == 1
+        assert results[0].exists()
+        assert "merged" in results[0].stem
+
+    def test_merged_pdf_is_larger_than_single(self, tmp_path):
+        xml1 = make_xml(
+            tmp_path / "a.xml",
+            fronts=[{"id": "F1", "name": "A", "slots": "0"}],
+            cardback_id="CB1",
+            quantity=1,
+        )
+        xml2 = make_xml(
+            tmp_path / "b.xml",
+            fronts=[{"id": "F2", "name": "B", "slots": "0"}],
+            cardback_id="CB2",
+            quantity=1,
+        )
+        with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
+            single = run(xml1, tmp_path / "out_s", tmp_path / "work_s")
+            merged = run_merged([xml1, xml2], tmp_path / "out_m", "merged", tmp_path / "work_m")
+        assert merged[0].stat().st_size > single[0].stat().st_size
