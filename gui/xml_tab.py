@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -13,8 +14,10 @@ from gui.widgets import (
     WINDND_AVAILABLE,
     PreviewWindow,
     XmlPb,
+    attach_context_menu,
     ellipsize,
 )
+from src.deck_importer import DeckImportError, fetch_deck
 from src.parser import parse
 from src.precheck import analyze
 from src.validator import validate
@@ -52,6 +55,9 @@ class XmlTabMixin:
         xml_btn_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
         ttk.Button(xml_btn_row, text="Seleccionar XMLs…", command=self._pick_xmls).pack(
             side=tk.LEFT
+        )
+        ttk.Button(xml_btn_row, text="Añadir desde URL", command=self._open_url_dialog).pack(
+            side=tk.LEFT, padx=(6, 0)
         )
         ttk.Button(xml_btn_row, text="Vaciar", command=self._clear_xmls).pack(side=tk.LEFT, padx=6)
 
@@ -134,6 +140,7 @@ class XmlTabMixin:
         self._xml_card_counts.clear()
         self._xml_orders.clear()
         self._xml_validations.clear()
+        self.state.mtg_url_decks.clear()
         self._refresh_xml_rows()
         self._refresh_generate_state()
 
@@ -141,8 +148,11 @@ class XmlTabMixin:
         for row in self._xml_rows:
             row["frame"].destroy()
         self._xml_rows.clear()
+        for row in self._mtg_deck_rows:
+            row["frame"].destroy()
+        self._mtg_deck_rows.clear()
 
-        if not self.state.xml_paths:
+        if not self.state.xml_paths and not self.state.mtg_url_decks:
             self._xml_empty_label.pack(anchor="w")
             return
         self._xml_empty_label.pack_forget()
@@ -150,64 +160,55 @@ class XmlTabMixin:
         for i, xml_path in enumerate(self.state.xml_paths):
             frame = ttk.Frame(self.xml_inner)
             frame.pack(fill=tk.X, pady=1, padx=2)
-            frame.columnconfigure(0, weight=1)
+            frame.columnconfigure(0, weight=1, uniform="half")
+            frame.columnconfigure(2, weight=1, uniform="half")
 
             ttk.Label(
                 frame,
                 text=ellipsize(xml_path.name, 32),
                 anchor="w",
-            ).grid(row=0, column=0, sticky="ew", padx=(4, 8))
+            ).grid(row=0, column=0, sticky="ew", padx=(4, 0))
+
+            ttk.Label(frame, text=" - ").grid(row=0, column=1)
+
+            right = ttk.Frame(frame)
+            right.grid(row=0, column=2, sticky="ew")
 
             card_count = self._xml_card_counts.get(xml_path)
             cards_text = f"{card_count} cartas" if card_count is not None else ""
-            ttk.Label(frame, text=cards_text, foreground="#555", width=10, anchor="e").grid(
-                row=0,
-                column=1,
-                padx=(0, 8),
+            ttk.Label(right, text=cards_text, foreground="#555", anchor="w").grid(
+                row=0, column=0, sticky="w", padx=(0, 6)
             )
 
-            pb = XmlPb(frame)
-            pb.grid(row=0, column=2, padx=(0, 4))
+            pb = XmlPb(right)
+            pb.grid(row=0, column=1, padx=(0, 4))
             pb.grid_remove()
 
             count_var = tk.StringVar(value="")
-            count_lbl = ttk.Label(frame, textvariable=count_var, width=9, anchor="e")
-            count_lbl.grid(row=0, column=3, padx=(0, 4))
+            count_lbl = ttk.Label(right, textvariable=count_var, width=9, anchor="w")
+            count_lbl.grid(row=0, column=2, padx=(0, 4))
             count_lbl.grid_remove()
 
             ttk.Button(
-                frame,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_xml_up(idx),
-            ).grid(row=0, column=4, padx=(0, 1))
+                right,
+                text="Ver cartas",
+                command=lambda p=xml_path: self._show_preview(p),
+            ).grid(row=0, column=4, padx=(0, 2))
             ttk.Button(
-                frame,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_xml_down(idx),
-            ).grid(row=0, column=5, padx=(0, 1))
-            ttk.Button(
-                frame,
+                right,
                 text="✕",
                 width=2,
                 command=lambda idx=i: self._remove_xml(idx),
-            ).grid(row=0, column=6, padx=(0, 1))
-            ttk.Button(
-                frame,
-                text="Ver…",
-                width=4,
-                command=lambda p=xml_path: self._show_preview(p),
-            ).grid(row=0, column=7, padx=(0, 2))
+            ).grid(row=0, column=3, padx=(0, 1))
 
             xml_warnings = self._xml_validations.get(xml_path, [])
             warn_btn = ttk.Button(
-                frame,
+                right,
                 text="⚠",
                 width=2,
                 command=lambda p=xml_path: self._show_xml_warnings(p),
             )
-            warn_btn.grid(row=0, column=8, padx=(0, 2))
+            warn_btn.grid(row=0, column=5, padx=(0, 2))
             if not xml_warnings:
                 warn_btn.grid_remove()
 
@@ -220,6 +221,52 @@ class XmlTabMixin:
                     "warn_btn": warn_btn,
                 }
             )
+
+        for i, deck in enumerate(self.state.mtg_url_decks):
+            frame = ttk.Frame(self.xml_inner)
+            frame.pack(fill=tk.X, pady=1, padx=2)
+            frame.columnconfigure(0, weight=1, uniform="half")
+            frame.columnconfigure(2, weight=1, uniform="half")
+
+            ttk.Label(
+                frame,
+                text=ellipsize(deck.display_name, 32),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=(4, 0))
+
+            ttk.Label(frame, text=" - ").grid(row=0, column=1)
+
+            right = ttk.Frame(frame)
+            right.grid(row=0, column=2, sticky="ew")
+
+            main_count = sum(c.quantity for c in deck.cards if c.zone == "main")
+            side_count = sum(c.quantity for c in deck.cards if c.zone == "side")
+            count_text = f"{main_count} cartas" + (f" +{side_count} side" if side_count else "")
+            ttk.Label(right, text=count_text, foreground="#555", anchor="w").grid(
+                row=0, column=0, sticky="w", padx=(0, 6)
+            )
+
+            col = 1
+            if side_count:
+                side_var = tk.BooleanVar(value=deck.include_side)
+
+                def _toggle_side(idx=i, var=side_var):
+                    self.state.mtg_url_decks[idx].include_side = var.get()
+                    self._refresh_generate_state()
+
+                ttk.Checkbutton(
+                    right, text="Incluir sideboard", variable=side_var, command=_toggle_side
+                ).grid(row=0, column=col, padx=(0, 4))
+                col += 1
+
+            ttk.Button(
+                right,
+                text="✕",
+                width=2,
+                command=lambda idx=i: self._remove_mtg_deck(idx),
+            ).grid(row=0, column=col, padx=(0, 2))
+
+            self._mtg_deck_rows.append({"frame": frame})
 
         self.xml_inner.update_idletasks()
         self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))
@@ -268,18 +315,75 @@ class XmlTabMixin:
             f"Advertencias en {xml_path.name}:\n\n{msg}",
         )
 
-    def _move_xml_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.xml_paths[idx], self.state.xml_paths[idx - 1] = (
-                self.state.xml_paths[idx - 1],
-                self.state.xml_paths[idx],
-            )
+    def _remove_mtg_deck(self, idx: int) -> None:
+        if 0 <= idx < len(self.state.mtg_url_decks):
+            del self.state.mtg_url_decks[idx]
             self._refresh_xml_rows()
+            self._refresh_generate_state()
 
-    def _move_xml_down(self, idx: int) -> None:
-        if idx < len(self.state.xml_paths) - 1:
-            self.state.xml_paths[idx], self.state.xml_paths[idx + 1] = (
-                self.state.xml_paths[idx + 1],
-                self.state.xml_paths[idx],
-            )
-            self._refresh_xml_rows()
+    def _open_url_dialog(self) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Añadir mazo desde URL")
+        dlg.geometry("460x148")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.columnconfigure(0, weight=1)
+        self._mtg_url_dialog = dlg
+
+        ttk.Label(
+            dlg,
+            text="Ten en cuenta que al usar esta opción puede que las imágenes tengan menos calidad que las de MPCFill",
+            foreground="#b86000",
+            font=("Segoe UI", 8),
+            wraplength=440,
+        ).pack(anchor="w", padx=10, pady=(10, 2))
+
+        ttk.Label(
+            dlg,
+            text="Webs aceptadas: moxfield.com, archidekt.com",
+            foreground="#999",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=10, pady=(0, 2))
+
+        url_frame = ttk.Frame(dlg)
+        url_frame.pack(fill=tk.X, padx=10)
+        url_frame.columnconfigure(1, weight=1)
+        ttk.Label(url_frame, text="URL:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        url_var = tk.StringVar()
+        url_entry = ttk.Entry(url_frame, textvariable=url_var)
+        url_entry.grid(row=0, column=1, sticky="ew")
+        attach_context_menu(url_entry)
+        url_entry.focus_set()
+
+        status_var = tk.StringVar(value="")
+        self._mtg_url_status_var = status_var
+
+        status_lbl = ttk.Label(dlg, textvariable=status_var, foreground="#555")
+        status_lbl.pack(anchor="w", padx=10, pady=(6, 0))
+
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill=tk.X, padx=10, pady=(6, 10))
+
+        def _do_import():
+            url = url_var.get().strip()
+            if not url:
+                return
+            import_btn.state(["disabled"])
+            status_var.set("Cargando…")
+
+            def _run():
+                try:
+                    result = fetch_deck(url)
+                    self.events.put(("mtg_url_loaded", url, result.cards, False, result.name))
+                except DeckImportError as exc:
+                    self.events.put(("mtg_url_error", str(exc)))
+                except Exception as exc:
+                    self.events.put(("mtg_url_error", f"Error inesperado: {exc}"))
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        import_btn = ttk.Button(btn_row, text="Importar", command=_do_import)
+        import_btn.pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT)
+        url_entry.bind("<Return>", lambda _e: _do_import())
+        self._mtg_import_btn = import_btn

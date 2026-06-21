@@ -8,6 +8,7 @@ from threading import Event
 from src.cancellation import Cancelled
 from src.constants import Stage, StageCallback
 from src.cropper import process_for_pdf
+from src.deck_importer import fetch_deck
 from src.downloader import (
     DownloadPartialError,
     DownloadPermissionError,
@@ -16,6 +17,8 @@ from src.downloader import (
 )
 from src.parser import CardOrder, parse
 from src.pdf_generator import generate
+from src.scraper_utils import resources_dir
+from src.scryfall import ScryfallError, download_deck_images
 
 CROP_THREADS = 5
 _log = logging.getLogger(__name__)
@@ -614,3 +617,73 @@ def run_plan(
         all_outputs.extend(outputs)
 
     return all_outputs
+
+
+def run_deck_url(
+    url: str,
+    output_dir: str | Path,
+    work_dir: str | Path,
+    base_name: str,
+    progress_callback: StageCallback = None,
+    cancel_event: Event | None = None,
+    include_sideboard: bool = False,
+    fronts_only: bool = False,
+) -> list[Path]:
+    """Fetch a deck from Moxfield/Archidekt, download images from Scryfall, generate PDF(s).
+
+    MDFCs use card_faces[0] as front and card_faces[1] as back.
+    Normal cards use resources/backs/mtg/back.jpg as their back.
+    No MPC bleed crop is applied (Scryfall images have no bleed).
+    """
+    output_dir = Path(output_dir)
+    work_dir = Path(work_dir)
+    scryfall_dir = work_dir / "scryfall"
+
+    fetched = fetch_deck(url)
+
+    cards = [
+        c for c in fetched.cards if c.zone == "main" or (include_sideboard and c.zone == "side")
+    ]
+    if not cards:
+        raise ValueError("El mazo importado no contiene cartas.")
+
+    def _dl_progress(done: int, total: int) -> None:
+        if progress_callback:
+            progress_callback(Stage.DOWNLOAD, done, total)
+
+    if progress_callback:
+        progress_callback(Stage.DOWNLOAD, 0, len(cards))
+
+    try:
+        dl_results = download_deck_images(cards, scryfall_dir, _dl_progress, cancel_event)
+    except ScryfallError as exc:
+        raise ValueError(f"Error al descargar imágenes de Scryfall: {exc}") from exc
+
+    _check_cancel(cancel_event)
+
+    mtg_back = resources_dir() / "backs" / "mtg" / "back.jpg"
+
+    extra_fronts: list[Path] = []
+    extra_backs: list[Path | None] = []
+    local_crop_map: dict[Path, bool] = {}
+
+    for card, front_path, back_path in dl_results:
+        local_crop_map[front_path] = False
+        if back_path:
+            local_crop_map[back_path] = False
+        for _ in range(card.quantity):
+            extra_fronts.append(front_path)
+            extra_backs.append(back_path)
+
+    return run_locals_only(
+        extra_fronts=extra_fronts,
+        local_cardback=mtg_back,
+        output_dir=output_dir,
+        base_name=base_name,
+        work_dir=work_dir,
+        progress_callback=progress_callback,
+        cancel_event=cancel_event,
+        extra_backs=extra_backs,
+        local_crop_map=local_crop_map,
+        fronts_only=fronts_only,
+    )

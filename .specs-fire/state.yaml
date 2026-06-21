@@ -1,0 +1,52 @@
+active_intent:
+  id: "INTENT-001"
+  title: "Importar deck desde URL de deckbuilder en la tab de Magic"
+  status: completed
+  last_updated: "2026-06-21"
+
+work_items:
+  - id: "WI-001"
+    title: "src/deck_importer.py — fetch deck list con set+número por carta"
+    status: completed
+    files:
+      - path: "src/deck_importer.py"
+        action: created
+
+  - id: "WI-002"
+    title: "src/scryfall.py — descarga imágenes por set+número con soporte MDFC"
+    status: completed
+    files:
+      - path: "src/scryfall.py"
+        action: created
+
+  - id: "WI-003"
+    title: "src/pipeline.py — run_deck_url()"
+    status: completed
+    files:
+      - path: "src/pipeline.py"
+        action: modified
+
+  - id: "WI-004"
+    title: "gui/xml_tab.py — sección 'Importar desde URL' con sideboard checkbox"
+    status: completed
+    files:
+      - path: "gui/xml_tab.py"
+        action: modified
+
+  - id: "WI-005"
+    title: "gui/main.py — AppState + worker para run_deck_url"
+    status: completed
+    files:
+      - path: "gui/main.py"
+        action: modified
+
+  - id: "WI-006"
+    title: "tests — test_deck_importer.py + test_scryfall.py"
+    status: completed
+    files:
+      - path: "tests/test_deck_importer.py"
+        action: created
+      - path: "tests/test_scryfall.py"
+        action: created
+
+last_updated: "2026-06-21"

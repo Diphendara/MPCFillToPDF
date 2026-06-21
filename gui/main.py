@@ -39,6 +39,7 @@ from gui.widgets import (
 from gui.xml_tab import XmlTabMixin
 from src.cancellation import Cancelled
 from src.constants import CARDS_PER_PAGE, Stage
+from src.deck_importer import DeckCard
 from src.downloader import (
     DownloadPartialError,
     DownloadPermissionError,
@@ -64,9 +65,34 @@ from src.precheck import (
 from src.rb_scraper import RBDeck, get_rb_backs
 from src.rb_scraper import download_images as rb_download
 from src.rb_scraper import expand_deck as rb_expand
+from src.scraper_utils import resources_dir
+from src.scryfall import download_deck_images as scryfall_download
 from src.validator import ValidationWarning
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class MtgUrlDeck:
+    url: str
+    cards: list[DeckCard]
+    include_side: bool = False
+    name: str = ""
+
+    @property
+    def display_name(self) -> str:
+        if self.name:
+            return self.name
+        try:
+            platform = self.url.split("/")[2].replace("www.", "")
+            slug = self.url.rstrip("/").split("/")[-1]
+            return f"{platform}/{slug}"
+        except IndexError:
+            return self.url[:40]
+
+    @property
+    def active_count(self) -> int:
+        return sum(c.quantity for c in self.cards if c.zone == "main" or self.include_side)
 
 
 @dataclass
@@ -77,6 +103,7 @@ class AppState:
     front_back_paths: list[Path | None] = field(default_factory=list)
     local_front_crop: list[bool] = field(default_factory=list)
     local_back_crop: list[bool] = field(default_factory=list)
+    mtg_url_decks: list[MtgUrlDeck] = field(default_factory=list)
 
 
 class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
@@ -91,6 +118,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
         self._xml_card_counts: dict[Path, int] = {}
         self._xml_orders: dict[Path, CardOrder] = {}
         self._xml_validations: dict[Path, list[ValidationWarning]] = {}
+        self._mtg_deck_rows: list[dict] = []
         self._front_rows: list[dict] = []
         self._back_rows: list[dict] = []
 
@@ -329,6 +357,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             and not self._op_decks
             and not self._rb_decks
             and not self._lorcana_decks
+            and not self.state.mtg_url_decks
         ):
             self._preflight_frame.pack_forget()
             return
@@ -396,6 +425,17 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                 ]
             )
 
+        for deck in self.state.mtg_url_decks:
+            n = deck.active_count
+            xml_total += n
+            _row(
+                [
+                    (f"• Magic – {ellipsize(deck.display_name, 28)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas", "normal"),
+                ]
+            )
+
         local_count = len(self.state.local_fronts)
         if local_count:
             _row(
@@ -443,6 +483,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             or self._op_decks
             or self._rb_decks
             or self._lorcana_decks
+            or bool(self.state.mtg_url_decks)
         )
         if ready and not self.running:
             self.soriano_btn.state(["!disabled"])
@@ -476,11 +517,12 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             and not self._op_decks
             and not self._rb_decks
             and not self._lorcana_decks
+            and not self.state.mtg_url_decks
         ):
             messagebox.showerror(
                 APP_TITLE,
                 "Selecciona al menos un XML, imágenes locales, o un mazo de "
-                "One Piece, Riftbound o Lorcana.",
+                "One Piece, Riftbound, Lorcana o desde una URL.",
             )
             return
 
@@ -528,6 +570,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     + sum(d.total_slots for d in self._op_decks)
                     + sum(d.total_slots for d in self._rb_decks)
                     + sum(d.total_slots for d in self._lorcana_decks)
+                    + sum(d.active_count for d in self.state.mtg_url_decks)
                 )
                 combined_rem = combined_total % CARDS_PER_PAGE
                 if combined_rem != 0:
@@ -550,6 +593,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                 + sum(d.total_slots for d in self._op_decks)
                 + sum(d.total_slots for d in self._rb_decks)
                 + sum(d.total_slots for d in self._lorcana_decks)
+                + sum(d.active_count for d in self.state.mtg_url_decks)
             )
             rem = total % CARDS_PER_PAGE
             if rem:
@@ -767,13 +811,60 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     )
                 lorcana_crop_extra = {p: False for p in set(lorcana_fronts) | {lorcana_back}}
 
+            mtg_fronts: list[Path] = []
+            mtg_backs_resolved: list[Path] = []
+            mtg_crop_extra: dict[Path, bool] = {}
+            mtg_default_back: Path | None = None
+
+            if self.state.mtg_url_decks:
+                mtg_default_back = resources_dir() / "backs" / "mtg" / "back.jpg"
+                scryfall_dir = wd / "scryfall"
+                mtg_cards_all: list = []
+                for _deck in self.state.mtg_url_decks:
+                    mtg_cards_all.extend(
+                        c for c in _deck.cards if c.zone == "main" or _deck.include_side
+                    )
+                mtg_label = f"Magic – {len(self.state.mtg_url_decks)} mazo(s)"
+                self.events.put(("progress", "download", 0, len(mtg_cards_all), mtg_label))
+
+                def _mtg_prog(done: int, total: int) -> None:
+                    _track("download", done, total)
+                    self.events.put(("progress", "download", done, total, mtg_label))
+
+                dl_results = scryfall_download(
+                    mtg_cards_all, scryfall_dir, _mtg_prog, cancel_event=self.cancel_event
+                )
+
+                if self.cancel_event.is_set():
+                    self.events.put(("cancelled", run_dir))
+                    return
+
+                all_mtg_back_paths: set[Path] = {mtg_default_back}
+                for card, front_path, back_path in dl_results:
+                    resolved_back = back_path if back_path is not None else mtg_default_back
+                    all_mtg_back_paths.add(resolved_back)
+                    for _ in range(card.quantity):
+                        mtg_fronts.append(front_path)
+                        mtg_backs_resolved.append(resolved_back)
+                mtg_crop_extra = {p: False for p in set(mtg_fronts) | all_mtg_back_paths}
+
             all_extra_fronts = (
-                list(self.state.local_fronts) + op_fronts + rb_fronts + lorcana_fronts
+                list(self.state.local_fronts) + op_fronts + rb_fronts + lorcana_fronts + mtg_fronts
             )
             all_extra_backs: list[Path | None] = (
-                list(extra_backs) + op_backs_resolved + rb_backs_resolved + lorcana_backs_resolved
+                list(extra_backs)
+                + op_backs_resolved
+                + rb_backs_resolved
+                + lorcana_backs_resolved
+                + mtg_backs_resolved
             )
-            all_crop_map = {**crop_map, **op_crop_extra, **rb_crop_extra, **lorcana_crop_extra}
+            all_crop_map = {
+                **crop_map,
+                **op_crop_extra,
+                **rb_crop_extra,
+                **lorcana_crop_extra,
+                **mtg_crop_extra,
+            }
 
             if plan_ is not None:
                 xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
@@ -856,6 +947,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     default_back = rb_default_back
                 elif lorcana_default_back is not None:
                     default_back = lorcana_default_back
+                elif mtg_default_back is not None:
+                    default_back = mtg_default_back
                 else:
                     raise ValueError("No se encontró reverso por defecto.")
                 parts = [
@@ -865,6 +958,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                         "One Piece" if op_fronts else None,
                         "Riftbound" if rb_fronts else None,
                         "Lorcana" if lorcana_fronts else None,
+                        "magic_url" if mtg_fronts else None,
                     ]
                     if p
                 ]
@@ -936,7 +1030,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
 
     @staticmethod
     def _cleanup_workdir(wd: Path) -> None:
-        for sub in ("raw", "bled", "op_raw", "rb_raw", "lorcana_raw"):
+        for sub in ("raw", "bled", "op_raw", "rb_raw", "lorcana_raw", "scryfall"):
             target = wd / sub
             if target.exists():
                 shutil.rmtree(target, ignore_errors=True)
@@ -1137,6 +1231,26 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             self._lorcana_status_var.set("Error al cargar el mazo.")
             self._lorcana_load_btn.state(["!disabled"])
             self._show_error_dialog(msg)
+        elif kind == "mtg_url_loaded":
+            _, url, cards, include_side, deck_name = ev
+            self.state.mtg_url_decks.append(MtgUrlDeck(url, cards, include_side, name=deck_name))
+            dlg = getattr(self, "_mtg_url_dialog", None)
+            if dlg and dlg.winfo_exists():
+                dlg.destroy()
+            self._mtg_url_dialog = None
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
+        elif kind == "mtg_url_error":
+            _, msg = ev
+            status_var = getattr(self, "_mtg_url_status_var", None)
+            import_btn = getattr(self, "_mtg_import_btn", None)
+            if status_var:
+                status_var.set(f"✗ {msg}")
+            if import_btn:
+                try:
+                    import_btn.state(["!disabled"])
+                except Exception:
+                    pass
         elif kind == "error":
             _, msg, run_dir = ev
             if run_dir is not None:
