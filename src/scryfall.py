@@ -20,6 +20,7 @@ from src.deck_importer import DeckCard
 _log = logging.getLogger(__name__)
 
 _SCRYFALL_API = "https://api.scryfall.com/cards/{set_code}/{number}"
+_SCRYFALL_NAMED_API = "https://api.scryfall.com/cards/named"
 _HEADERS = {
     "User-Agent": "MPCFillToPDF/2.0",
     "Accept": "application/json",
@@ -35,6 +36,9 @@ _last_request_time: float = 0.0
 _cache: dict[tuple[str, str], ScryfallCard] = {}
 _cache_lock = threading.Lock()
 
+_name_cache: dict[str, tuple[str, str]] = {}
+_name_cache_lock = threading.Lock()
+
 
 class ScryfallError(Exception):
     pass
@@ -46,15 +50,22 @@ class ScryfallCard:
     back_url: str | None
 
 
-def _throttled_get(url: str) -> requests.Response:
+def _throttled_get(url: str, params: dict | None = None) -> requests.Response:
     global _last_request_time
-    with _rate_lock:
-        now = time.monotonic()
-        wait = _RATE_DELAY - (now - _last_request_time)
-        if wait > 0:
-            time.sleep(wait)
-        _last_request_time = time.monotonic()
-    return requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+    for attempt in range(3):
+        with _rate_lock:
+            now = time.monotonic()
+            wait = _RATE_DELAY - (now - _last_request_time)
+            if wait > 0:
+                time.sleep(wait)
+            _last_request_time = time.monotonic()
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT, params=params)
+        if resp.status_code != 429:
+            return resp
+        retry_after = float(resp.headers.get("Retry-After", 2**attempt))
+        _log.warning("Scryfall 429, reintentando en %.1fs (intento %d/3)", retry_after, attempt + 1)
+        time.sleep(retry_after)
+    return resp
 
 
 def fetch_card(set_code: str, collector_number: str) -> ScryfallCard:
@@ -99,6 +110,28 @@ def fetch_card(set_code: str, collector_number: str) -> ScryfallCard:
     return result
 
 
+def fetch_card_by_name(name: str) -> tuple[str, str]:
+    """Return (set_code, collector_number) for the given card name using Scryfall exact search."""
+    key = name.lower()
+    with _name_cache_lock:
+        if key in _name_cache:
+            return _name_cache[key]
+
+    try:
+        resp = _throttled_get(_SCRYFALL_NAMED_API, params={"exact": name})
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.HTTPError as exc:
+        raise ScryfallError(f"Carta no encontrada en Scryfall: {name} ({exc})") from exc
+    except requests.RequestException as exc:
+        raise ScryfallError(f"Error de conexión con Scryfall ({name}): {exc}") from exc
+
+    result = (str(data.get("set", "")).lower(), str(data.get("collector_number", "")))
+    with _name_cache_lock:
+        _name_cache[key] = result
+    return result
+
+
 def _ext_from_url(url: str) -> str:
     m = re.search(r"\.(jpg|jpeg|png|webp)", url, re.IGNORECASE)
     return f".{m.group(1).lower()}" if m else ".jpg"
@@ -107,8 +140,12 @@ def _ext_from_url(url: str) -> str:
 def download_card_images(card: DeckCard, dest_dir: Path) -> tuple[Path, Path | None]:
     """Download front and (for MDFCs) back images. Returns (front_path, back_path|None)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    scryfall = fetch_card(card.set_code, card.collector_number)
-    slug = f"{card.set_code.lower()}_{card.collector_number}"
+    set_code = card.set_code
+    collector_number = card.collector_number
+    if not set_code or not collector_number:
+        set_code, collector_number = fetch_card_by_name(card.name)
+    scryfall = fetch_card(set_code, collector_number)
+    slug = f"{set_code.lower()}_{collector_number}"
 
     front_ext = _ext_from_url(scryfall.front_url)
     front_path = dest_dir / f"{slug}{front_ext}"

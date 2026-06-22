@@ -2,7 +2,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.deck_importer import DeckCard, DeckImportError, FetchedDeck, fetch_deck
+from src.deck_importer import (
+    DeckCard,
+    DeckImportError,
+    FetchedDeck,
+    _astro_find,
+    _astro_val,
+    _manabox_extract_props,
+    fetch_deck,
+)
 
 _MOXFIELD_FIXTURE = {
     "name": "Test Deck",
@@ -196,6 +204,216 @@ class TestUrlDetection:
         with patch("src.deck_importer._fetch_archidekt", return_value=FetchedDeck("", [])) as mock:
             fetch_deck("https://archidekt.com/decks/99999/name")
             mock.assert_called_once_with("99999")
+
+    def test_deckstats_url_detected(self):
+        with patch("src.deck_importer._fetch_deckstats", return_value=FetchedDeck("", [])) as mock:
+            fetch_deck("https://deckstats.net/decks/12345/67890-burn")
+            mock.assert_called_once_with("12345", "67890")
+
+    def test_tappedout_url_detected(self):
+        with patch("src.deck_importer._fetch_tappedout", return_value=FetchedDeck("", [])) as mock:
+            fetch_deck("https://tappedout.net/mtg-decks/my-deck/")
+            mock.assert_called_once_with("my-deck")
+
+    def test_manabox_url_detected(self):
+        with patch("src.deck_importer._fetch_manabox", return_value=FetchedDeck("", [])) as mock:
+            fetch_deck("https://manabox.app/decks/abc123")
+            mock.assert_called_once_with("abc123")
+
+
+_DECKSTATS_FIXTURE = {
+    "name": "Deckstats Test",
+    "sections": [
+        {
+            "name": "Creatures",
+            "cards": [
+                {"amount": 4, "name": "Goblin Guide"},
+                {"amount": 2, "name": "Monastery Swiftspear"},
+            ],
+        },
+        {
+            "name": "Spells",
+            "cards": [
+                {"amount": 4, "name": "Lightning Bolt"},
+            ],
+        },
+    ],
+    "sideboard": [
+        {"amount": 2, "name": "Eidolon of the Great Revel"},
+    ],
+}
+
+_TAPPEDOUT_TEXT = """\
+4 Lightning Bolt
+2 Goblin Guide
+// sideboard
+SB: 2 Pyroclasm
+SB: 1 Smash to Smithereens
+"""
+
+_MANABOX_PROPS_JSON = (
+    '{"deck":[0,{"name":[0,"Manabox Test"],'
+    '"cards":[1,[[0,{"name":[0,"Whirlpool Warrior"],"setId":[0,"apc"],'
+    '"collectorNumber":[0,"36"],"quantity":[0,2],"boardCategory":[0,3]}],'
+    '[0,{"name":[0,"Negate"],"setId":[0,"m21"],'
+    '"collectorNumber":[0,"60"],"quantity":[0,1],"boardCategory":[0,1]}]]]}]}'
+)
+_MANABOX_HTML = (
+    "<html><body>"
+    '<astro-island props="' + _MANABOX_PROPS_JSON.replace('"', "&quot;") + '"></astro-island>'
+    "</body></html>"
+)
+
+
+class TestDeckstatsFetch:
+    def _mock_resp(self, data):
+        resp = MagicMock()
+        resp.json.return_value = data
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def test_extracts_mainboard_from_sections(self):
+        with patch(
+            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
+        ):
+            result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
+        main = [c for c in result.cards if c.zone == "main"]
+        assert len(main) == 3
+        bolt = next(c for c in main if c.name == "Lightning Bolt")
+        assert bolt.quantity == 4
+        assert bolt.set_code == ""
+
+    def test_extracts_sideboard(self):
+        with patch(
+            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
+        ):
+            result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
+        side = [c for c in result.cards if c.zone == "side"]
+        assert len(side) == 1
+        assert side[0].name == "Eidolon of the Great Revel"
+
+    def test_extracts_deck_name(self):
+        with patch(
+            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
+        ):
+            result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
+        assert result.name == "Deckstats Test"
+
+    def test_raises_on_http_error(self):
+        import requests as req
+
+        with patch("src.deck_importer.requests.get", side_effect=req.RequestException("timeout")):
+            with pytest.raises(DeckImportError, match="Deckstats"):
+                fetch_deck("https://deckstats.net/decks/12345/67890-burn")
+
+
+class TestTappedoutFetch:
+    def _mock_resp(self, text):
+        resp = MagicMock()
+        resp.text = text
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def test_extracts_main_cards(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+            result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
+        main = [c for c in result.cards if c.zone == "main"]
+        assert len(main) == 2
+        bolt = next(c for c in main if c.name == "Lightning Bolt")
+        assert bolt.quantity == 4
+        assert bolt.set_code == ""
+
+    def test_extracts_sideboard_lines(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+            result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
+        side = [c for c in result.cards if c.zone == "side"]
+        assert len(side) == 2
+        assert any(c.name == "Pyroclasm" for c in side)
+        assert any(c.name == "Smash to Smithereens" for c in side)
+
+    def test_deck_name_from_slug(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+            result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
+        assert "Burn" in result.name
+
+    def test_skips_comment_lines(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+            result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
+        assert all(c.name != "sideboard" for c in result.cards)
+
+    def test_raises_on_empty_response(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp("")):
+            with pytest.raises(DeckImportError):
+                fetch_deck("https://tappedout.net/mtg-decks/empty-deck/")
+
+
+class TestManaboxFetch:
+    def _mock_resp(self, text):
+        resp = MagicMock()
+        resp.text = text
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def test_extracts_main_cards(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+            result = fetch_deck("https://manabox.app/decks/abc123")
+        main = [c for c in result.cards if c.zone == "main"]
+        assert len(main) == 1
+        assert main[0].name == "Whirlpool Warrior"
+        assert main[0].set_code == "apc"
+        assert main[0].collector_number == "36"
+        assert main[0].quantity == 2
+
+    def test_extracts_sideboard_cards(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+            result = fetch_deck("https://manabox.app/decks/abc123")
+        side = [c for c in result.cards if c.zone == "side"]
+        assert len(side) == 1
+        assert side[0].name == "Negate"
+        assert side[0].set_code == "m21"
+
+    def test_extracts_deck_name(self):
+        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+            result = fetch_deck("https://manabox.app/decks/abc123")
+        assert result.name == "Manabox Test"
+
+    def test_raises_on_missing_data(self):
+        with patch(
+            "src.deck_importer.requests.get", return_value=self._mock_resp("<html>no data</html>")
+        ):
+            with pytest.raises(DeckImportError):
+                fetch_deck("https://manabox.app/decks/abc123")
+
+
+class TestManaboxHelpers:
+    def test_astro_val_unwraps_type0(self):
+        assert _astro_val([0, "hello"]) == "hello"
+        assert _astro_val([0, 42]) == 42
+        assert _astro_val("plain") == "plain"
+
+    def test_astro_val_unwraps_type1_array(self):
+        result = _astro_val([1, [[0, "a"], [0, "b"]]])
+        assert result == ["a", "b"]
+
+    def test_astro_val_type1_nested_dicts(self):
+        result = _astro_val([1, [[0, {"x": [0, 1]}], [0, {"x": [0, 2]}]]])
+        assert result == [{"x": [0, 1]}, {"x": [0, 2]}]
+
+    def test_astro_find_nested(self):
+        data = {"a": [0, {"b": [0, {"cards": [0, [1, 2, 3]]}]}]}
+        result = _astro_find(data, "cards")
+        assert result == [1, 2, 3]
+
+    def test_astro_find_not_found(self):
+        assert _astro_find({"x": [0, 1]}, "missing") is None
+
+    def test_manabox_extract_props_returns_encoded_value(self):
+        html = '<astro-island props="{&quot;cards&quot;:[0,[]]}"></astro-island>'
+        result = _manabox_extract_props(html)
+        assert result == "{&quot;cards&quot;:[0,[]]}"
+
+    def test_manabox_extract_props_missing_returns_empty(self):
+        assert _manabox_extract_props("<html>no data</html>") == ""
 
 
 class TestSideboardFiltering:

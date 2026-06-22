@@ -1,13 +1,14 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
   - repo: local
     hooks:
+      - id: ruff-autofix
+        name: ruff (fix + format + re-stage)
+        language: python
+        additional_dependencies: [ruff]
+        entry: python ruff_hook.py
+        pass_filenames: false
+        always_run: true
+
       - id: pytest
         name: pytest
         entry: python -m pytest tests/ --ignore=tests/test_downloader.py -m "not network" -q

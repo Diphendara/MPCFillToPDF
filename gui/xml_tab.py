@@ -340,7 +340,7 @@ class XmlTabMixin:
 
         ttk.Label(
             dlg,
-            text="Webs aceptadas: moxfield.com, archidekt.com",
+            text="Webs aceptadas: moxfield.com, archidekt.com, deckstats.net, tappedout.net, manabox.app",
             foreground="#999",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=10, pady=(0, 2))
