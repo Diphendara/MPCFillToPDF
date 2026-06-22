@@ -1,0 +1,30 @@
+project: MPCFillToPDF
+description: >
+  App Python/Tkinter que convierte proyectos de mazos de cartas
+  (Magic, One Piece, Riftbound, Lorcana) en PDFs para impresión en copistería.
+tech_stack:
+  language: Python 3.10+
+  gui: Tkinter
+  pdf: reportlab
+  image: Pillow
+  download: requests + gdown
+games_supported:
+  - Magic (XML MPCFill)
+  - One Piece (scraping: onepiece.gg, egmanevents, cardkaizoku)
+  - Riftbound (scraping)
+  - Lorcana (scraping)
+existing_features:
+  - Descarga paralela de imágenes (Google Drive + scraping)
+  - Recorte de sangrado MPC
+  - Generación PDF duplex (3x3 grid, A4)
+  - Checkpoint / recuperación parcial tras error
+  - Validación XML
+  - ETA / velocidad de descarga
+  - Notificación del sistema al terminar
+  - Retry de descargas fallidas
+  - Preview de cartas locales
+  - Tiempos de fase (timing log)
+  - Split de PDF por tamaño (máx 480 MB)
+  - Modo solo-frontales
+  - Fusión de XMLs
+  - Importar deck desde URL (Moxfield, Archidekt) con imágenes Scryfall por set+número, soporte MDFC

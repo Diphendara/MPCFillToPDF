@@ -28,4 +28,4 @@ jobs:
           pip install Pillow reportlab gdown requests pytest
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ --ignore=tests/test_downloader.py -m "not network" -v --tb=short

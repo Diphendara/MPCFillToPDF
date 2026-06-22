@@ -20,7 +20,6 @@ from src.precheck import (
     analyze,
     check_drive_access,
     collect_drive_ids,
-    format_merge_info,
     format_warning,
     plan,
     write_manifest,
@@ -269,11 +268,6 @@ def main() -> None:
     plan_ = plan(reports, local_count=len(local_fronts)) if reports else None
 
     if plan_ is not None:
-        merge_info = format_merge_info(plan_)
-        if merge_info:
-            print()
-            print(merge_info)
-
         warning = format_warning(plan_)
         if warning and not args.yes:
             print()

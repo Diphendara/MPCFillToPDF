@@ -11,6 +11,52 @@ Convierte un archivo de proyecto de [MPCFill](https://mpcfill.com/) (XML) en un 
 
 El XML de MPCFill referencia imágenes alojadas en Google Drive. Esta herramienta las descarga, les quita el sangrado de MPC, las recoloca con un sangrado en espejo de 1 mm y monta el PDF con líneas de corte y marcas de impresora.
 
+También soporta mazos de otros juegos de cartas descargándolos directamente desde webs especializadas (ver [Webs soportadas](#webs-soportadas-para-diferentes-tcg)).
+
+---
+
+## Webs soportadas para diferentes TCG
+
+### One Piece Card Game
+
+| Web | URL de ejemplo |
+|-----|---------------|
+| [onepiece.gg](https://onepiece.gg) | `https://onepiece.gg/decks/nombre-del-mazo` |
+| [deckbuilder.egmanevents.com](https://deckbuilder.egmanevents.com) | `https://deckbuilder.egmanevents.com/?deck=CARTA:X,...` o `https://deckbuilder.egmanevents.com/d/CODIGO` |
+| [deckbuilder.cardkaizoku.com](https://deckbuilder.cardkaizoku.com) | `https://deckbuilder.cardkaizoku.com/?deck=2xOP01-001\|3xOP01-002\|...` |
+
+Pega la URL del mazo en la pestaña **One Piece** de la interfaz gráfica y pulsa **Añadir**.
+
+---
+
+### Riftbound TCG
+
+| Web | URL de ejemplo |
+|-----|---------------|
+| [riftbound.gg](https://riftbound.gg) | `https://riftbound.gg/decks/nombre-del-mazo/` |
+| [piltoverarchive.com](https://piltoverarchive.com) | `https://piltoverarchive.com/decks/view/<UUID>` |
+| [riftmana.com](https://riftmana.com) | `https://riftmana.com/decks/nombre-del-mazo` |
+| [riftbinder.com](https://riftbinder.com) | `https://riftbinder.com/decks/<ID>` |
+| [riftdex.com](https://riftdex.com) | `https://riftdex.com/deck/<UUID>` |
+
+Pega la URL del mazo en la pestaña **Riftbound** de la interfaz gráfica y pulsa **Añadir**.
+
+> **Nota:** Solo se pueden descargar mazos **públicos**. Si el mazo no está disponible (privado o eliminado), aparecerá un mensaje de error.
+
+---
+
+### Lorcana
+
+| Web | URL de ejemplo |
+|-----|---------------|
+| [lorcana.gg](https://lorcana.gg) | `https://lorcana.gg/decks/nombre-del-mazo/` |
+| [inkdecks.com](https://inkdecks.com) | `https://inkdecks.com/lorcana-metagame/deck-nombre-ID` |
+| [dreamborn.ink](https://dreamborn.ink) | `https://dreamborn.ink/es/decks/ID` |
+
+Pega la URL del mazo en la pestaña **Lorcana** de la interfaz gráfica y pulsa **Añadir**.
+
+> **Nota:** dreamborn.ink requiere que **Google Chrome** esté instalado, ya que la web usa protección anti-bots que solo un navegador real puede superar. El programa abre Chrome minimizado, carga la página y lo cierra automáticamente.
+
 ---
 
 ## Clave de API de Google Drive (recomendado)
@@ -82,59 +128,7 @@ Instala `Pillow`, `reportlab` y `gdown`.
 
 ## Uso
 
-Hay dos formas: por línea de comandos (CLI) o con la interfaz gráfica (GUI).
-
-### A) Línea de comandos (CLI)
-
-1. Coloca tus archivos `.xml` de MPCFill en la carpeta `xml/` (en la raíz del proyecto). Puedes poner uno o varios.
-2. Ejecuta:
-   ```
-   python -m cli.main
-   ```
-3. Los PDFs aparecen en una carpeta nueva por ejecución dentro de `out/`, con el nombre `DD_MM_YYYY_HH-MM-SS`. Cada PDF se nombra como el XML de origen:
-   - `xml/mazo.xml` → `out/22_05_2026_14-30-12/out_mazo.pdf`
-   - Si un PDF supera 500 MB se parte en `out_mazo_1.pdf`, `out_mazo_2.pdf`, … (el corte siempre cae tras una página de reversos para que cada parte siga siendo imprimible a doble cara).
-
-#### Opciones de la CLI
-
-| Opción         | Por defecto | Para qué sirve |
-|----------------|-------------|----------------|
-| `--xml-dir`    | `xml`       | Carpeta donde leer los `.xml`. |
-| `--out-dir`    | `out`       | Carpeta donde escribir los PDFs. |
-| `--workdir`    | `workdir`   | Carpeta para imágenes descargadas (`raw/`) e intermedias (`bled/`). |
-| `--test`       | desactivado | **No** borra `workdir/raw` ni `workdir/bled` al terminar; útil para iterar sin volver a descargar y recortar. |
-| `--yes` / `-y` | desactivado | Continuar sin pedir confirmación si alguna baraja no es múltiplo de 9. Útil para scripts. |
-
-Ejemplos:
-```
-python -m cli.main
-python -m cli.main --test
-python -m cli.main --xml-dir mis_xmls --out-dir resultado
-python -m cli.main -y                   # sin prompts
-```
-
-#### Ejemplo de ejecución
-
-```
-Encontrados 2 XML(s) en 'xml'.
-Carpeta de salida: out\22_05_2026_14-30-12
-  - mazo_a.xml: 95 cartas  (4 hueco(s) en blanco)
-  - mazo_b.xml: 4 cartas  (5 hueco(s) en blanco)
-
-Se fusionarán las siguientes barajas para evitar huecos en blanco:
-  • mazo_a_mazo_b_union.pdf ← mazo_a.xml, mazo_b.xml  (99 cartas)
-
-Procesando: mazo_a_mazo_b_union (fusión)
-Descargando: [##############################] 89/89  ( 12.4s)
-Recortando : [##############################] 89/89  (  6.1s)
-Generando  : [##############################] 11/11  ( 88.2s)
-  -> out\22_05_2026_14-30-12\out_mazo_a_mazo_b_union.pdf  (417.5 MB)
-
-Resumen de fusiones escrito en: out\22_05_2026_14-30-12\resumen.txt
-Tiempo total: 106.7s
-```
-
-### B) Interfaz gráfica (GUI)
+### Interfaz gráfica (GUI)
 
 Lanza la ventana:
 ```
@@ -146,7 +140,7 @@ Aparece una ventana con:
 - **Seleccionar XMLs…** abre el explorador para elegir uno o varios `.xml` (Ctrl+click para varios).
 - **Lista** con los archivos en cola y botones para *Quitar selección* / *Vaciar*.
 - **Conservar caché**: si está marcado, no borra `workdir/raw` y `workdir/bled` al terminar (acelera futuras regeneraciones del mismo XML). **Por defecto desactivado.**
-- **Generar PDF(s)**: arranca el proceso. Solo se activa cuando hay al menos un XML en la lista.
+- **Generar PDF(s)**: arranca el proceso. Solo se activa cuando hay al menos un XML en la lista o un mazo añadido desde una web.
 - **Estado + barra de progreso** se actualizan durante la generación.
 
 Antes de generar:
@@ -188,10 +182,8 @@ El sistema lo gestiona así:
 
 ```
 MPCFillToPDF/
-├── xml/                  ← .xml de MPCFill (modo CLI)
 ├── out/                  ← una subcarpeta por ejecución (DD_MM_YYYY_HH-MM-SS) con los PDFs y, si hay fusión, resumen.txt
 ├── workdir/              ← caché temporal: raw/ (descargas) y bled/ (recortes)
-├── cli/main.py           ← entrada CLI
 ├── gui/
 │   ├── main.py           ← entrada GUI (Tkinter)
 │   └── paths.py          ← resolver out/ y workdir/ junto al .exe
@@ -202,7 +194,10 @@ MPCFillToPDF/
 │   ├── pdf_generator.py  ← maquetación + crop marks + barra de calibración
 │   ├── pipeline.py       ← orquestador (run, run_merged)
 │   ├── precheck.py       ← conteo, planificación de fusiones, manifiesto
+│   ├── op_scraper.py     ← descarga mazos de One Piece desde webs especializadas
 │   └── assets/           ← imágenes embebidas (color_bar.png, corner_mark.png)
+├── resources/
+│   └── backs/op/         ← reversos para cartas de One Piece (default.png, lider.png)
 └── build_exe.py          ← script de empaquetado PyInstaller
 ```
 

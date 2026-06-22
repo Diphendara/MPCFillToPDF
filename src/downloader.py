@@ -12,6 +12,7 @@ import requests
 
 from src.cancellation import Cancelled
 from src.config import get_drive_api_key
+from src.constants import ImageDoneCallback, ProgressCallback, SpeedCallback
 
 _log = logging.getLogger(__name__)
 
@@ -194,6 +195,28 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
             raise DownloadTimeoutError(drive_id, filename)
         except Exception as exc:
             _safe_unlink(tmp_path)
+            if _is_permission_error(exc) and _DRIVE_API_KEY:
+                # Drive API v3 with an API key only works for "Public on the web" files.
+                # Files shared as "Anyone with the link" return 403 via the API but are
+                # downloadable via gdown (which follows Google's web redirect flow).
+                # Fall back to gdown before declaring a permission failure.
+                _log.info("API 403 for %s — retrying via gdown fallback", filename)
+                try:
+                    gdown.download(_gdown_url(drive_id), str(tmp_path), quiet=True)
+                    tmp_path.replace(output_path)
+                    _log.debug("Downloaded via gdown fallback: %s", output_path.name)
+                    return output_path
+                except Exception as gdown_exc:
+                    _safe_unlink(tmp_path)
+                    if _is_permission_error(gdown_exc):
+                        _log.error(
+                            "Permission denied (gdown also failed): %s (%s)", filename, drive_id
+                        )
+                        raise DownloadPermissionError(drive_id, filename) from gdown_exc
+                    if isinstance(gdown_exc, requests.exceptions.Timeout | TimeoutError):
+                        _log.error("Timeout via gdown fallback: %s (%s)", filename, drive_id)
+                        raise DownloadTimeoutError(drive_id, filename) from gdown_exc
+                    raise gdown_exc
             if _is_permission_error(exc):
                 _log.error("Permission denied: %s (%s)", filename, drive_id)
                 raise DownloadPermissionError(drive_id, filename) from exc
@@ -219,10 +242,10 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
 def download_all(
     id_name_pairs: list[tuple[str, str]],
     dest_dir: str | Path,
-    progress_callback=None,
+    progress_callback: ProgressCallback = None,
     cancel_event: Event | None = None,
-    on_image_done=None,
-    on_speed_update=None,
+    on_image_done: ImageDoneCallback = None,
+    on_speed_update: SpeedCallback = None,
 ) -> dict[str, Path]:
     """Download multiple images in parallel.
 

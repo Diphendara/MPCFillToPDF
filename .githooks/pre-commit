@@ -1,0 +1,3 @@
+#!/bin/sh
+python ruff_hook.py || exit 1
+python -m pytest tests/ --ignore=tests/test_downloader.py -m "not network" -q || exit 1

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from enum import Enum
 
 COLS = 3
@@ -12,3 +13,9 @@ class Stage(str, Enum):
     DOWNLOAD = "download"
     CROP = "crop"
     PDF = "pdf"
+
+
+ProgressCallback = Callable[[int, int], None] | None
+StageCallback = Callable[[str, int, int], None] | None
+SpeedCallback = Callable[[float, float], None] | None
+ImageDoneCallback = Callable[[str], None] | None
