@@ -47,13 +47,31 @@ def ellipsize(name: str, width: int) -> str:
 
 
 def notify(title: str, message: str) -> None:
-    """Show a system notification (best-effort; silently ignored if plyer is missing)."""
-    try:
-        from plyer import notification as _n
+    """Show a system notification (best-effort; silently ignored if plyer/osascript is missing)."""
+    if sys.platform == "darwin":
+        try:
+            import subprocess
 
-        _n.notify(title=title, message=message, app_name=APP_TITLE, timeout=8)
-    except Exception:
-        pass
+            script = (
+                "on run argv\n"
+                "  display notification (item 2 of argv) with title (item 1 of argv)\n"
+                "end run"
+            )
+            subprocess.run(
+                ["osascript", "-e", script, title, message],
+                capture_output=True,
+                check=False,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            from plyer import notification as _n
+
+            _n.notify(title=title, message=message, app_name=APP_TITLE, timeout=8)
+        except Exception:
+            pass
+
 
 
 def attach_context_menu(widget: tk.Widget) -> None:
