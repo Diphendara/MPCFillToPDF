@@ -324,7 +324,7 @@ class XmlTabMixin:
     def _open_url_dialog(self) -> None:
         dlg = tk.Toplevel(self.root)
         dlg.title("Añadir mazo desde URL")
-        dlg.geometry("460x148")
+        dlg.geometry("480x190")
         dlg.resizable(False, False)
         dlg.grab_set()
         dlg.columnconfigure(0, weight=1)
@@ -343,6 +343,8 @@ class XmlTabMixin:
             text="Webs aceptadas: moxfield.com, archidekt.com, deckstats.net, tappedout.net, manabox.app",
             foreground="#999",
             font=("Segoe UI", 8),
+            wraplength=440,
+            justify="left",
         ).pack(anchor="w", padx=10, pady=(0, 2))
 
         url_frame = ttk.Frame(dlg)

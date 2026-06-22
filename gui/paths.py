@@ -1,10 +1,13 @@
 """Resolve runtime directories that must live next to the executable.
 
 When frozen by PyInstaller (--onefile), `sys.executable` is the .exe path,
-and bundled data is unpacked under `sys._MEIPASS`. We want `out/` and
-`workdir/` to be persistent folders next to the .exe — never inside the
-temp extraction dir — so the user finds their PDFs and cache after the
-.exe exits.
+and bundled data is unpacked under `sys._MEIPASS`. We want the user-facing
+folders to be persistent siblings of the .exe — never inside the temp
+extraction dir — so the user finds their PDFs and cache after the .exe exits.
+
+All output lives under a single "MPCFillToPDF/" root folder next to the .exe:
+  MPCFillToPDF/archivos generados/   ← PDFs
+  MPCFillToPDF/procesamiento/        ← download cache, logs
 """
 
 import sys
@@ -18,13 +21,13 @@ def app_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _mpc_dir() -> Path:
+    return app_base_dir() / "MPCFillToPDF"
+
+
 def output_dir() -> Path:
-    p = app_base_dir() / "out"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return _mpc_dir() / "archivos generados"
 
 
 def work_dir() -> Path:
-    p = app_base_dir() / "workdir"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return _mpc_dir() / "procesamiento"

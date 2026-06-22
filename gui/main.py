@@ -1321,14 +1321,25 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             subprocess.Popen([opener, str(path)])
 
 
-def main() -> None:
-    _wd = work_dir()
-    _wd.mkdir(parents=True, exist_ok=True)
+def _setup_logging() -> None:
+    if getattr(sys, "frozen", False):
+        try:
+            from gui._build_flags import DEBUG_LOGGING
+        except ImportError:
+            DEBUG_LOGGING = False
+        if not DEBUG_LOGGING:
+            return
+    wd = work_dir()
+    wd.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        handlers=[logging.FileHandler(_wd / "gui.log", encoding="utf-8")],
+        handlers=[logging.FileHandler(wd / "gui.log", encoding="utf-8")],
     )
+
+
+def main() -> None:
+    _setup_logging()
     root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")

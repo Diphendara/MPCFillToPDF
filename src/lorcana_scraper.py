@@ -1,15 +1,9 @@
-"""Lorcana deck scraper — supports lorcana.gg, inkdecks.com, dreamborn.ink"""
+"""Lorcana deck scraper — supports lorcana.gg, inkdecks.com"""
 
 from __future__ import annotations
 
-import json
-import os
 import re
-import sqlite3
-import subprocess
-import sys
 import threading
-import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -37,10 +31,6 @@ _DOTGG_IMAGE_URL = "https://static.dotgg.gg/lorcana/cards/{card_id}.webp"
 
 # ── inkdecks.com ─────────────────────────────────────────────────────────────
 _INKDECKS_API = "https://inkdecks.com/api/lorcana/decks/{deck_id}"
-
-# ── dreamborn.ink (Chrome CDP + SQLite) ──────────────────────────────────────
-_DREAMBORN_CDP_PORT = 9223
-_DREAMBORN_CARDS_DB_URL = "https://dreamborn.ink/cache/es/cards.db"
 
 # dotgg card DB cache
 _dotgg_lock = threading.Lock()
@@ -76,36 +66,6 @@ class LocanaDeck:
 
 
 # ── Resources ─────────────────────────────────────────────────────────────────
-
-
-def _work_dir() -> Path:
-    """Return the pipeline working directory for cached files."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "workdir"
-    return Path(__file__).resolve().parent.parent / "workdir"
-
-
-def _find_chrome_exe() -> str | None:
-    """Return the path to an installed Google Chrome binary, or None."""
-    import platform
-
-    system = platform.system()
-    if system == "Windows":
-        candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
-        ]
-    elif system == "Darwin":
-        candidates = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-    else:
-        candidates = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
-        ]
-    return next((c for c in candidates if os.path.exists(c)), None)
 
 
 def get_lorcana_back() -> Path:
@@ -188,11 +148,7 @@ def scrape_deck(url: str) -> LocanaDeck:
         return _scrape_lorcana_gg(url)
     if "inkdecks.com" in host:
         return _scrape_inkdecks(url)
-    if "dreamborn.ink" in host:
-        return _scrape_dreamborn(url)
-    raise ValueError(
-        f"URL no reconocida: {url}\nWebs soportadas: lorcana.gg, inkdecks.com, dreamborn.ink"
-    )
+    raise ValueError(f"URL no reconocida: {url}\nWebs soportadas: lorcana.gg, inkdecks.com")
 
 
 # ── lorcana.gg (dotgg) scraper ───────────────────────────────────────────────
@@ -391,206 +347,6 @@ def _parse_inkdecks_html(html: str, deck_id: str) -> LocanaDeck:
         )
 
     return LocanaDeck(deck_id=deck_id, name=name, cards=cards, source="inkdecks")
-
-
-# ── dreamborn.ink scraper (Chrome CDP + cards.db) ────────────────────────────
-
-
-def _dreamborn_get_cards_db(db_path: Path) -> sqlite3.Connection:
-    """Download dreamborn cards.db if not cached and return an open connection."""
-    if not db_path.exists():
-        r = requests.get(_DREAMBORN_CARDS_DB_URL, headers=_HEADERS, timeout=30)
-        r.raise_for_status()
-        db_path.write_bytes(r.content)
-    return sqlite3.connect(str(db_path))
-
-
-def _dreamborn_resolve_card_id(dreamborn_id: str, db_conn: sqlite3.Connection) -> str:
-    """Convert a dreamborn card ID to dotgg format ('010-028'). Returns '' if unknown."""
-    if not dreamborn_id:
-        return ""
-    if re.fullmatch(r"\d{3}-\d{3}", dreamborn_id):
-        return dreamborn_id
-    cur = db_conn.cursor()
-    cur.execute("SELECT setId, number FROM cards WHERE id = ?", (dreamborn_id,))
-    row = cur.fetchone()
-    if row:
-        set_id, number = row
-        return f"{int(set_id):03d}-{int(number):03d}"
-    return ""
-
-
-def _dreamborn_parse_nuxt(nuxt_arr: list, deck_id: str) -> tuple[str, dict[str, int]]:
-    """Extract deck name and {dreamborn_card_id: quantity} from a Nuxt 3 __NUXT_DATA__ array."""
-    deck_obj_index = None
-    for v in nuxt_arr:
-        if isinstance(v, dict) and deck_id in v:
-            deck_obj_index = v[deck_id]
-            break
-    if deck_obj_index is None:
-        raise ValueError(
-            f"No se encontró el mazo '{deck_id}' en los datos de dreamborn.ink.\n"
-            "El mazo puede ser privado o haber sido eliminado."
-        )
-    deck_obj = nuxt_arr[deck_obj_index]
-    name = nuxt_arr[deck_obj["name"]] if isinstance(deck_obj.get("name"), int) else deck_id
-    cards_dict = nuxt_arr[deck_obj["cards"]] if isinstance(deck_obj.get("cards"), int) else {}
-    cards_with_qty: dict[str, int] = {}
-    for card_id, qty_idx in cards_dict.items():
-        if isinstance(qty_idx, int) and qty_idx < len(nuxt_arr):
-            cards_with_qty[card_id] = int(nuxt_arr[qty_idx])
-    return name, cards_with_qty
-
-
-def _dreamborn_get_nuxt_data(deck_id: str, deck_url: str) -> list:
-    """Open deck URL in real Chrome via CDP and extract __NUXT_DATA__ JSON array."""
-    try:
-        import websocket as _ws
-    except ImportError as exc:
-        raise ValueError(
-            "Se necesita el paquete 'websocket-client' para usar mazos de dreamborn.ink.\n"
-            "Instálalo con: pip install websocket-client"
-        ) from exc
-
-    chrome_exe = _find_chrome_exe()
-    if not chrome_exe:
-        raise ValueError(
-            "No se encontró Google Chrome instalado.\n"
-            "Instala Chrome para usar mazos de dreamborn.ink."
-        )
-
-    user_data_dir = str(_work_dir() / "dreamborn_chrome")
-    proc = subprocess.Popen(
-        [
-            chrome_exe,
-            f"--remote-debugging-port={_DREAMBORN_CDP_PORT}",
-            "--remote-allow-origins=*",
-            "--no-first-run",
-            "--no-default-browser-check",
-            f"--user-data-dir={user_data_dir}",
-            "--start-minimized",
-            deck_url,
-        ]
-    )
-
-    tabs = None
-    for _ in range(20):
-        time.sleep(0.5)
-        try:
-            r = requests.get(f"http://localhost:{_DREAMBORN_CDP_PORT}/json", timeout=1)
-            tabs = r.json()
-            if tabs:
-                break
-        except Exception:
-            pass
-
-    if not tabs:
-        proc.terminate()
-        raise ValueError(
-            "No se pudo conectar a Chrome para acceder a dreamborn.ink.\n"
-            f"Asegúrate de que el puerto {_DREAMBORN_CDP_PORT} esté libre."
-        )
-
-    dreamborn_tab = next((t for t in tabs if "dreamborn" in t.get("url", "")), tabs[0])
-    ws = _ws.WebSocket()
-    ws.connect(dreamborn_tab["webSocketDebuggerUrl"])
-    mid = [0]
-
-    def _cdp(method, params=None):
-        mid[0] += 1
-        ws.send(json.dumps({"id": mid[0], "method": method, "params": params or {}}))
-        while True:
-            data = json.loads(ws.recv())
-            if data.get("id") == mid[0]:
-                return data
-
-    for _ in range(40):
-        time.sleep(1)
-        r = _cdp("Runtime.evaluate", {"expression": "document.title", "returnByValue": True})
-        title = r.get("result", {}).get("result", {}).get("value", "")
-        if title and "momento" not in title.lower() and "moment" not in title.lower():
-            break
-
-    r = _cdp(
-        "Runtime.evaluate",
-        {
-            "expression": (
-                "document.getElementById('__NUXT_DATA__') "
-                "? document.getElementById('__NUXT_DATA__').textContent : null"
-            ),
-            "returnByValue": True,
-        },
-    )
-    nuxt_raw = r.get("result", {}).get("result", {}).get("value")
-    ws.close()
-    proc.terminate()
-
-    if not nuxt_raw:
-        raise ValueError(
-            f"No se encontraron datos del mazo '{deck_id}' en dreamborn.ink.\n"
-            "La página puede haber cambiado su estructura."
-        )
-    return json.loads(nuxt_raw)
-
-
-def _scrape_dreamborn(url: str) -> LocanaDeck:
-    m = re.search(r"/decks/([A-Za-z0-9_-]+)", url)
-    if not m:
-        raise ValueError(
-            f"No se pudo extraer el ID del mazo de la URL de dreamborn.ink: {url}\n"
-            "Formato esperado: https://dreamborn.ink/decks/<ID>"
-        )
-    deck_id = m.group(1)
-    deck_url = f"https://dreamborn.ink/es/decks/{deck_id}"
-
-    try:
-        nuxt_arr = _dreamborn_get_nuxt_data(deck_id, deck_url)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(
-            f"No se pudo obtener datos de dreamborn.ink: {exc}\n"
-            "Asegúrate de tener Google Chrome instalado."
-        ) from exc
-
-    deck_name, cards_with_qty = _dreamborn_parse_nuxt(nuxt_arr, deck_id)
-
-    if not cards_with_qty:
-        raise ValueError(
-            f"El mazo '{deck_id}' de dreamborn.ink no contiene cartas.\n"
-            "Puede estar vacío o haber cambiado la estructura de la página."
-        )
-
-    _work_dir().mkdir(parents=True, exist_ok=True)
-    db_path = _work_dir() / "dreamborn_cards.db"
-    try:
-        db_conn = _dreamborn_get_cards_db(db_path)
-    except Exception as exc:
-        raise ValueError(
-            f"No se pudo descargar la base de datos de cartas de dreamborn.ink: {exc}"
-        ) from exc
-
-    cards: list[LorcanaCard] = []
-    try:
-        for dreamborn_id, qty in cards_with_qty.items():
-            dotgg_id = _dreamborn_resolve_card_id(dreamborn_id, db_conn)
-            image_url = _DOTGG_IMAGE_URL.format(card_id=dotgg_id) if dotgg_id else ""
-            cur = db_conn.cursor()
-            cur.execute("SELECT name FROM cards WHERE id = ?", (dreamborn_id,))
-            row = cur.fetchone()
-            card_name = row[0] if row else (dotgg_id or dreamborn_id)
-            cards.append(
-                LorcanaCard(
-                    card_id=dotgg_id or dreamborn_id,
-                    name=card_name,
-                    quantity=qty,
-                    image_url=image_url,
-                )
-            )
-    finally:
-        db_conn.close()
-
-    return LocanaDeck(deck_id=deck_id, name=deck_name, cards=cards, source="dreamborn")
 
 
 # ── Image download ────────────────────────────────────────────────────────────

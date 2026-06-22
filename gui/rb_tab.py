@@ -43,6 +43,8 @@ class RBTabMixin:
             text="Webs aceptadas: piltoverarchive.com, riftbound.gg, riftmana.com, riftbinder.com, riftdex.com",
             foreground="#999",
             font=("Segoe UI", 8),
+            wraplength=450,
+            justify="left",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._rb_url_var = tk.StringVar()

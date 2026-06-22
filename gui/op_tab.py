@@ -34,6 +34,8 @@ class OPTabMixin:
             text="Webs aceptadas: onepiece.gg, egmanevents.com, cardkaizoku.com",
             foreground="#999",
             font=("Segoe UI", 8),
+            wraplength=450,
+            justify="left",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._op_url_var = tk.StringVar()

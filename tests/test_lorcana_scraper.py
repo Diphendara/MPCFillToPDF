@@ -23,16 +23,10 @@ from src.cancellation import Cancelled
 from src.lorcana_scraper import (
     LocanaDeck,
     LorcanaCard,
-    _dreamborn_get_cards_db,
-    _dreamborn_parse_nuxt,
-    _dreamborn_resolve_card_id,
-    _find_chrome_exe,
     _parse_inkdecks_api,
     _parse_inkdecks_cards,
     _parse_inkdecks_html,
-    _scrape_dreamborn,
     _scrape_inkdecks,
-    _work_dir,
     download_images,
     expand_deck,
     get_lorcana_back,
@@ -45,7 +39,6 @@ from src.lorcana_scraper import (
 
 URL_LORCANA_GG = "https://lorcana.gg/decks/robin-hood-copy-eissv/"
 URL_INKDECKS = "https://inkdecks.com/lorcana-metagame/deck-sapphire-amethyst-515323"
-URL_DREAMBORN = "http://dreamborn.ink/es/decks/GajV82jHLmlcb4Z0Uf2h"
 
 
 # ---------------------------------------------------------------------------
@@ -69,12 +62,6 @@ class TestScrapedeckRouting:
             mock.return_value = MagicMock(spec=LocanaDeck)
             scrape_deck(URL_INKDECKS)
             mock.assert_called_once_with(URL_INKDECKS)
-
-    def test_dreamborn_routes(self):
-        with patch("src.lorcana_scraper._scrape_dreamborn") as mock:
-            mock.return_value = MagicMock(spec=LocanaDeck)
-            scrape_deck(URL_DREAMBORN)
-            mock.assert_called_once_with(URL_DREAMBORN)
 
     def test_error_message_lists_supported_sites(self):
         with pytest.raises(ValueError, match="lorcana.gg"):
@@ -214,78 +201,6 @@ class TestParseInkdecksCards:
 
     def test_empty_dict(self):
         assert _parse_inkdecks_cards({}) == []
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — dreamborn Nuxt data parsing
-# ---------------------------------------------------------------------------
-
-
-class TestDreambornParseNuxt:
-    def _nuxt_arr(self) -> list:
-        return [
-            {"GajV82jHLmlcb4Z0Uf2h": 1},
-            {"name": 2, "cards": 3},
-            "Mi Mazo Lorcana",
-            {"010/abc123": 4, "010/def456": 5},
-            4,
-            2,
-        ]
-
-    def test_extracts_name_and_cards(self):
-        name, cards = _dreamborn_parse_nuxt(self._nuxt_arr(), "GajV82jHLmlcb4Z0Uf2h")
-        assert name == "Mi Mazo Lorcana"
-        assert cards == {"010/abc123": 4, "010/def456": 2}
-
-    def test_deck_not_found_raises(self):
-        with pytest.raises(ValueError, match="NOTFOUND"):
-            _dreamborn_parse_nuxt([{"other": 0}], "NOTFOUND")
-
-    def test_empty_cards_dict(self):
-        arr = [
-            {"DECK1": 1},
-            {"name": 2, "cards": 3},
-            "Empty Deck",
-            {},
-        ]
-        name, cards = _dreamborn_parse_nuxt(arr, "DECK1")
-        assert name == "Empty Deck"
-        assert cards == {}
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — dreamborn card ID resolution
-# ---------------------------------------------------------------------------
-
-
-class TestDreambornResolveCardId:
-    def test_dotgg_format_returned_as_is(self):
-        db_conn = MagicMock()
-        result = _dreamborn_resolve_card_id("010-028", db_conn)
-        assert result == "010-028"
-        db_conn.cursor.assert_not_called()
-
-    def test_non_dotgg_format_resolved_via_db(self):
-        mock_cur = MagicMock()
-        mock_cur.fetchone.return_value = (10, 28)
-        mock_db = MagicMock()
-        mock_db.cursor.return_value = mock_cur
-        result = _dreamborn_resolve_card_id("010/abc123sha1hash", mock_db)
-        assert result == "010-028"
-
-    def test_unknown_id_returns_empty(self):
-        mock_cur = MagicMock()
-        mock_cur.fetchone.return_value = None
-        mock_db = MagicMock()
-        mock_db.cursor.return_value = mock_cur
-        result = _dreamborn_resolve_card_id("unknown-id-format", mock_db)
-        assert result == ""
-
-    def test_empty_string_returns_empty(self):
-        mock_db = MagicMock()
-        result = _dreamborn_resolve_card_id("", mock_db)
-        assert result == ""
-        mock_db.cursor.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -601,62 +516,6 @@ class TestParseInkdecksApi:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — dreamborn.ink scraper (mocked Chrome CDP)
-# ---------------------------------------------------------------------------
-
-
-class TestScrapeDreamborn:
-    def _nuxt_arr(self, deck_id: str = "TESTDECK") -> list:
-        return [
-            {deck_id: 1},
-            {"name": 2, "cards": 3},
-            "Mi Mazo Lorcana",
-            {"001-001": 4},
-            4,
-        ]
-
-    def test_bad_url_raises(self):
-        with pytest.raises(ValueError, match="ID"):
-            _scrape_dreamborn("http://dreamborn.ink/")
-
-    def test_scrapes_deck_via_cdp(self):
-        mock_cur = MagicMock()
-        mock_cur.fetchone.return_value = ("Ariel",)
-        mock_db = MagicMock()
-        mock_db.cursor.return_value = mock_cur
-
-        with patch("src.lorcana_scraper._dreamborn_get_nuxt_data", return_value=self._nuxt_arr()):
-            with patch("src.lorcana_scraper._dreamborn_get_cards_db", return_value=mock_db):
-                deck = _scrape_dreamborn("http://dreamborn.ink/es/decks/TESTDECK")
-
-        assert deck.name == "Mi Mazo Lorcana"
-        assert deck.deck_id == "TESTDECK"
-        assert deck.source == "dreamborn"
-        assert deck.total_slots == 4
-        assert deck.cards[0].name == "Ariel"
-
-    def test_cdp_error_raises_friendly(self):
-        with patch(
-            "src.lorcana_scraper._dreamborn_get_nuxt_data",
-            side_effect=RuntimeError("Chrome refused"),
-        ):
-            with pytest.raises(ValueError, match="dreamborn.ink"):
-                _scrape_dreamborn("http://dreamborn.ink/es/decks/ABC123")
-
-    def test_empty_cards_raises(self):
-        arr = [{"EMPTY": 1}, {"name": 2, "cards": 3}, "Empty Deck", {}]
-        with patch("src.lorcana_scraper._dreamborn_get_nuxt_data", return_value=arr):
-            with pytest.raises(ValueError, match="cartas"):
-                _scrape_dreamborn("http://dreamborn.ink/es/decks/EMPTY")
-
-    def test_deck_not_found_in_nuxt_raises(self):
-        arr = [{"OTHER_DECK": 1}, {"name": 2, "cards": 3}, "Other Deck", {}]
-        with patch("src.lorcana_scraper._dreamborn_get_nuxt_data", return_value=arr):
-            with pytest.raises(ValueError, match="MISSING"):
-                _scrape_dreamborn("http://dreamborn.ink/es/decks/MISSING")
-
-
-# ---------------------------------------------------------------------------
 # Unit tests — get_lorcana_back fallback
 # ---------------------------------------------------------------------------
 
@@ -910,98 +769,6 @@ class TestLoadDotggCardDb:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _find_chrome_exe
-# ---------------------------------------------------------------------------
-
-
-class TestFindChromeExe:
-    def test_returns_path_when_exe_exists(self, monkeypatch):
-        monkeypatch.setattr("platform.system", lambda: "Linux")
-        monkeypatch.setattr("os.path.exists", lambda p: p == "/usr/bin/google-chrome")
-        result = _find_chrome_exe()
-        assert result == "/usr/bin/google-chrome"
-
-    def test_returns_none_when_no_exe_found(self, monkeypatch):
-        monkeypatch.setattr("platform.system", lambda: "Linux")
-        monkeypatch.setattr("os.path.exists", lambda p: False)
-        result = _find_chrome_exe()
-        assert result is None
-
-    def test_returns_none_on_unknown_platform(self, monkeypatch):
-        monkeypatch.setattr("platform.system", lambda: "FreeBSD")
-        monkeypatch.setattr("os.path.exists", lambda p: False)
-        result = _find_chrome_exe()
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — _work_dir
-# ---------------------------------------------------------------------------
-
-
-class TestWorkDir:
-    def test_dev_mode_returns_path_with_workdir(self, monkeypatch):
-        monkeypatch.delattr("sys.frozen", raising=False)
-        result = _work_dir()
-        assert result.name == "workdir"
-
-    def test_frozen_mode_returns_path_next_to_exe(self, monkeypatch, tmp_path):
-        fake_exe = tmp_path / "MPCFillToPDF.exe"
-        fake_exe.write_bytes(b"")
-        import sys as _sys
-
-        monkeypatch.setattr(_sys, "frozen", True, raising=False)
-        monkeypatch.setattr(_sys, "executable", str(fake_exe), raising=False)
-        result = _work_dir()
-        assert result == tmp_path / "workdir"
-
-
-# ---------------------------------------------------------------------------
-# Unit tests — _dreamborn_get_cards_db
-# ---------------------------------------------------------------------------
-
-
-class TestDreambornGetCardsDb:
-    def test_downloads_db_when_not_cached(self, tmp_path):
-        import sqlite3 as _sqlite3
-
-        db_bytes = self._minimal_sqlite_bytes()
-        mock_r = MagicMock()
-        mock_r.content = db_bytes
-        db_path = tmp_path / "cards.db"
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_r):
-            conn = _dreamborn_get_cards_db(db_path)
-        assert db_path.exists()
-        assert isinstance(conn, _sqlite3.Connection)
-        conn.close()
-
-    def test_reuses_cached_db_without_downloading(self, tmp_path):
-        db_bytes = self._minimal_sqlite_bytes()
-        db_path = tmp_path / "cards.db"
-        db_path.write_bytes(db_bytes)
-        with patch("src.lorcana_scraper.requests.get") as mock_get:
-            conn = _dreamborn_get_cards_db(db_path)
-        mock_get.assert_not_called()
-        conn.close()
-
-    def _minimal_sqlite_bytes(self) -> bytes:
-        import sqlite3 as _sqlite3
-        import tempfile
-
-        tmp = tempfile.mktemp(suffix=".db")
-        conn = _sqlite3.connect(tmp)
-        conn.execute("CREATE TABLE cards (id TEXT, setId INTEGER, number INTEGER)")
-        conn.commit()
-        conn.close()
-        with open(tmp, "rb") as f:
-            data = f.read()
-        import os
-
-        os.unlink(tmp)
-        return data
-
-
-# ---------------------------------------------------------------------------
 # Integration tests — live network calls
 # ---------------------------------------------------------------------------
 
@@ -1029,12 +796,3 @@ class TestLiveScrapers:
         deck = scrape_deck(URL_INKDECKS)
         self._assert_valid_deck(deck, min_cards=10)
         assert deck.source == "inkdecks"
-
-    @pytest.mark.xfail(
-        strict=False,
-        reason="Requiere Chrome instalado y sesión de red estable para cargar dreamborn.ink",
-    )
-    def test_dreamborn(self):
-        deck = scrape_deck(URL_DREAMBORN)
-        self._assert_valid_deck(deck, min_cards=10)
-        assert deck.source == "dreamborn"

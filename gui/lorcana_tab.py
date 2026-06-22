@@ -22,9 +22,11 @@ class LorcanaTabMixin:
         url_row.columnconfigure(1, weight=1)
         ttk.Label(
             url_row,
-            text="Webs aceptadas: lorcana.gg, inkdecks.com, dreamborn.ink",
+            text="Webs aceptadas: lorcana.gg, inkdecks.com",
             foreground="#999",
             font=("Segoe UI", 8),
+            wraplength=450,
+            justify="left",
         ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         ttk.Label(url_row, text="URL del mazo:").grid(row=1, column=0, sticky="w", padx=(0, 6))
         self._lorcana_url_var = tk.StringVar()
@@ -59,7 +61,7 @@ class LorcanaTabMixin:
 
         self._lorcana_empty_label = ttk.Label(
             self._lorcana_inner,
-            text="(introduce una URL de lorcana.gg, inkdecks.com o dreamborn.ink)",
+            text="(introduce una URL de lorcana.gg o inkdecks.com)",
             foreground="#777",
             padding=(8, 10),
         )
@@ -102,7 +104,6 @@ class LorcanaTabMixin:
         source_labels = {
             "lorcana_gg": "lorcana.gg",
             "inkdecks": "inkdecks.com",
-            "dreamborn": "dreamborn.ink",
         }
 
         for idx, deck in enumerate(self._lorcana_decks):
