@@ -241,3 +241,52 @@ class TestCropChange:
     def test_crop_change_out_of_range_is_noop(self, app):
         var = tk.BooleanVar(value=True)
         app._on_front_crop_change(99, var)  # no IndexError
+
+
+# ---------------------------------------------------------------------------
+# _on_mtg_back_change
+# ---------------------------------------------------------------------------
+
+
+class TestMtgBackChange:
+    def _add_deck(self, app, url="https://moxfield.com/decks/abc"):
+        from gui.main import MtgUrlDeck
+        from src.deck_importer import DeckCard
+
+        deck = MtgUrlDeck(url=url, cards=[DeckCard("Forest", "m21", "1", 1, "main")])
+        app.state.mtg_url_decks.append(deck)
+        return deck
+
+    def test_selecting_numbered_back_sets_path(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "b.jpg")
+        app.state.local_backs.append(back)
+        app.state.local_back_crop.append(False)
+        deck = self._add_deck(app)
+        var = tk.StringVar(value="1")
+        app._on_mtg_back_change(0, var)
+        assert deck.back_path == back
+
+    def test_selecting_default_clears_path(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "b.jpg")
+        app.state.local_backs.append(back)
+        app.state.local_back_crop.append(False)
+        deck = self._add_deck(app)
+        deck.back_path = back
+        var = tk.StringVar(value="default")
+        app._on_mtg_back_change(0, var)
+        assert deck.back_path is None
+
+    def test_out_of_range_deck_idx_is_noop(self, app):
+        var = tk.StringVar(value="1")
+        app._on_mtg_back_change(99, var)  # no IndexError
+
+    def test_removed_back_cleared_on_refresh(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "b.jpg")
+        app.state.local_backs.append(back)
+        app.state.local_back_crop.append(False)
+        deck = self._add_deck(app)
+        deck.back_path = back
+        app.state.local_backs.clear()
+        app.state.local_back_crop.clear()
+        app._refresh_xml_rows()
+        assert deck.back_path is None

@@ -222,6 +222,7 @@ class LocalsTabMixin:
 
         self.backs_inner.update_idletasks()
         self.backs_canvas.configure(scrollregion=self.backs_canvas.bbox("all"))
+        self._refresh_xml_rows()
 
     def _pick_local_fronts(self) -> None:
         paths = filedialog.askopenfilenames(

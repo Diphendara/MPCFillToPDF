@@ -160,8 +160,8 @@ class XmlTabMixin:
         for i, xml_path in enumerate(self.state.xml_paths):
             frame = ttk.Frame(self.xml_inner)
             frame.pack(fill=tk.X, pady=1, padx=2)
-            frame.columnconfigure(0, weight=1, uniform="half")
-            frame.columnconfigure(2, weight=1, uniform="half")
+            frame.columnconfigure(0, weight=3)
+            frame.columnconfigure(2, weight=7)
 
             ttk.Label(
                 frame,
@@ -222,11 +222,14 @@ class XmlTabMixin:
                 }
             )
 
+        numbered = [str(j + 1) for j in range(len(self.state.local_backs))]
+        back_combo_values = ["default", *numbered]
+
         for i, deck in enumerate(self.state.mtg_url_decks):
             frame = ttk.Frame(self.xml_inner)
             frame.pack(fill=tk.X, pady=1, padx=2)
-            frame.columnconfigure(0, weight=1, uniform="half")
-            frame.columnconfigure(2, weight=1, uniform="half")
+            frame.columnconfigure(0, weight=3)
+            frame.columnconfigure(2, weight=7)
 
             ttk.Label(
                 frame,
@@ -258,6 +261,31 @@ class XmlTabMixin:
                     right, text="Incluir sideboard", variable=side_var, command=_toggle_side
                 ).grid(row=0, column=col, padx=(0, 4))
                 col += 1
+
+            if deck.back_path is not None and deck.back_path not in self.state.local_backs:
+                deck.back_path = None
+
+            back_var = tk.StringVar()
+            if deck.back_path is None:
+                back_var.set("default")
+            else:
+                back_var.set(str(self.state.local_backs.index(deck.back_path) + 1))
+
+            ttk.Label(right, text="Traseras:").grid(row=0, column=col, padx=(0, 2))
+            col += 1
+            back_combo = ttk.Combobox(
+                right,
+                values=back_combo_values,
+                textvariable=back_var,
+                state="readonly" if numbered else "disabled",
+                width=4,
+            )
+            back_combo.bind(
+                "<<ComboboxSelected>>",
+                lambda _e, idx=i, v=back_var: self._on_mtg_back_change(idx, v),
+            )
+            back_combo.grid(row=0, column=col, padx=(0, 4))
+            col += 1
 
             ttk.Button(
                 right,
@@ -320,6 +348,18 @@ class XmlTabMixin:
             del self.state.mtg_url_decks[idx]
             self._refresh_xml_rows()
             self._refresh_generate_state()
+
+    def _on_mtg_back_change(self, deck_idx: int, var: tk.StringVar) -> None:
+        if deck_idx >= len(self.state.mtg_url_decks):
+            return
+        choice = var.get()
+        try:
+            n = int(choice)
+        except (TypeError, ValueError):  # "default" or any non-numeric value
+            self.state.mtg_url_decks[deck_idx].back_path = None
+            return
+        if 1 <= n <= len(self.state.local_backs):
+            self.state.mtg_url_decks[deck_idx].back_path = self.state.local_backs[n - 1]
 
     def _open_url_dialog(self) -> None:
         dlg = tk.Toplevel(self.root)

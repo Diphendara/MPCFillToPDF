@@ -78,6 +78,7 @@ class MtgUrlDeck:
     cards: list[DeckCard]
     include_side: bool = False
     name: str = ""
+    back_path: Path | None = None
 
     @property
     def display_name(self) -> str:
@@ -819,11 +820,12 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             if self.state.mtg_url_decks:
                 mtg_default_back = resources_dir() / "backs" / "mtg" / "back.jpg"
                 scryfall_dir = wd / "scryfall"
-                mtg_cards_all: list = []
+                mtg_cards_with_deck: list[tuple[DeckCard, MtgUrlDeck]] = []
                 for _deck in self.state.mtg_url_decks:
-                    mtg_cards_all.extend(
-                        c for c in _deck.cards if c.zone == "main" or _deck.include_side
-                    )
+                    for c in _deck.cards:
+                        if c.zone == "main" or _deck.include_side:
+                            mtg_cards_with_deck.append((c, _deck))
+                mtg_cards_all = [c for c, _ in mtg_cards_with_deck]
                 mtg_label = f"Magic – {len(self.state.mtg_url_decks)} mazo(s)"
                 self.events.put(("progress", "download", 0, len(mtg_cards_all), mtg_label))
 
@@ -839,14 +841,26 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     self.events.put(("cancelled", run_dir))
                     return
 
+                local_back_set = set(self.state.local_backs)
                 all_mtg_back_paths: set[Path] = {mtg_default_back}
-                for card, front_path, back_path in dl_results:
-                    resolved_back = back_path if back_path is not None else mtg_default_back
+                for (card, front_path, back_path), (_, deck) in zip(
+                    dl_results, mtg_cards_with_deck
+                ):
+                    if back_path is not None:
+                        resolved_back = back_path
+                    elif deck.back_path in local_back_set:
+                        resolved_back = deck.back_path
+                    else:
+                        resolved_back = mtg_default_back
                     all_mtg_back_paths.add(resolved_back)
                     for _ in range(card.quantity):
                         mtg_fronts.append(front_path)
                         mtg_backs_resolved.append(resolved_back)
-                mtg_crop_extra = {p: False for p in set(mtg_fronts) | all_mtg_back_paths}
+                mtg_crop_extra = {
+                    p: False
+                    for p in set(mtg_fronts) | all_mtg_back_paths
+                    if p not in local_back_set
+                }
 
             all_extra_fronts = (
                 list(self.state.local_fronts) + op_fronts + rb_fronts + lorcana_fronts + mtg_fronts
