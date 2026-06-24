@@ -267,6 +267,18 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text=" ⚙ Configuración")
         self._build_settings_tab(settings_frame)
+        self._settings_tab_idx = notebook.index("end") - 1
+
+        notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
+
+    def _on_notebook_tab_changed(self, _event=None) -> None:
+        on_settings = self._game_notebook.index("current") == self._settings_tab_idx
+        if on_settings:
+            self._locals_pane.grid_remove()
+            self._game_notebook.grid_configure(columnspan=2, padx=0)
+        else:
+            self._game_notebook.grid_configure(columnspan=1, padx=(0, 4))
+            self._locals_pane.grid()
 
     def _build_scrollable_rows(self, parent: ttk.Frame):
         """Create a Canvas + inner Frame for a vertically scrolling list of rows."""
@@ -520,7 +532,15 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             if s.cut_line_style == "ticks"
             else "Líneas completas  (para autocorte)"
         )
-        over_label = "Sí" if s.cut_line_over_cards else "No"
+        if s.cut_line_style == "full":
+            over_parts = []
+            if s.cut_line_over_fronts:
+                over_parts.append("Frontal")
+            if s.cut_line_over_backs:
+                over_parts.append("Trasero")
+            over_label = ", ".join(over_parts) if over_parts else "Ninguna"
+        else:
+            over_label = None
 
         accepted = [False]
         skip_var = tk.BooleanVar(value=False)
@@ -561,7 +581,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         _row("Color:", s.cut_line_color, color=s.cut_line_color)
         _row("Grosor:", f"{s.cut_line_width:.1f} pt")
         _row("Estilo:", style_label)
-        _row("Sobre las cartas:", over_label)
+        if over_label is not None:
+            _row("Páginas con líneas:", over_label)
 
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=(8, 6))
 
@@ -722,6 +743,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 self._settings.cut_line_style,
                 self._settings.cut_line_width,
                 self._settings.cut_line_over_cards,
+                self._settings.cut_line_over_fronts,
+                self._settings.cut_line_over_backs,
             ),
             daemon=True,
         )
@@ -749,6 +772,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         cut_line_style: str = "ticks",
         cut_line_width: float = 1.0,
         cut_line_over_cards: bool = False,
+        cut_line_over_fronts: bool = True,
+        cut_line_over_backs: bool = True,
     ) -> None:
         run_dir = None
         wd = None
@@ -1062,6 +1087,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     cut_line_style=cut_line_style,
                     cut_line_width=cut_line_width,
                     cut_line_over_cards=cut_line_over_cards,
+                    cut_line_over_fronts=cut_line_over_fronts,
+                    cut_line_over_backs=cut_line_over_backs,
                 )
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
@@ -1113,6 +1140,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     cut_line_style=cut_line_style,
                     cut_line_width=cut_line_width,
                     cut_line_over_cards=cut_line_over_cards,
+                    cut_line_over_fronts=cut_line_over_fronts,
+                    cut_line_over_backs=cut_line_over_backs,
                 )
                 generated.extend(pdfs)
                 manifest = None

@@ -4,7 +4,9 @@ import pytest
 
 from src.app_settings import (
     DEFAULT_CUT_LINE_COLOR,
+    DEFAULT_CUT_LINE_OVER_BACKS,
     DEFAULT_CUT_LINE_OVER_CARDS,
+    DEFAULT_CUT_LINE_OVER_FRONTS,
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
     AppSettings,
@@ -96,6 +98,22 @@ class TestLoadSettings:
 
     def test_cut_line_over_cards_default_is_false(self, tmp_path):
         assert load_settings(tmp_path).cut_line_over_cards == DEFAULT_CUT_LINE_OVER_CARDS
+
+    def test_cut_line_over_fronts_roundtrip(self, tmp_path):
+        s = AppSettings(cut_line_over_fronts=False)
+        save_settings(s, tmp_path)
+        assert load_settings(tmp_path).cut_line_over_fronts is False
+
+    def test_cut_line_over_fronts_default_is_true(self, tmp_path):
+        assert load_settings(tmp_path).cut_line_over_fronts == DEFAULT_CUT_LINE_OVER_FRONTS
+
+    def test_cut_line_over_backs_roundtrip(self, tmp_path):
+        s = AppSettings(cut_line_over_backs=False)
+        save_settings(s, tmp_path)
+        assert load_settings(tmp_path).cut_line_over_backs is False
+
+    def test_cut_line_over_backs_default_is_true(self, tmp_path):
+        assert load_settings(tmp_path).cut_line_over_backs == DEFAULT_CUT_LINE_OVER_BACKS
 
 
 class TestSaveSettings:

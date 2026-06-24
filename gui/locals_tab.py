@@ -16,6 +16,7 @@ class LocalsTabMixin:
     def _build_locals_pane(self, parent: ttk.Frame) -> None:
         local_frame = ttk.LabelFrame(parent, text="Imágenes locales (opcional)")
         local_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self._locals_pane = local_frame
         self._locals_drop_frame = local_frame
         local_frame.columnconfigure(0, weight=1)
         local_frame.rowconfigure(1, weight=1, uniform="locals")

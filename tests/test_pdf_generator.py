@@ -362,3 +362,54 @@ class TestGenerateCutLineParams:
             cut_line_over_cards=True,
         )
         assert len(results) == 1 and results[0].exists()
+
+    def test_generate_over_fronts_only(self, tmp_path):
+        img = _img(tmp_path / "card.jpg")
+        slots, front, back = _slot_maps(1)
+        id_map = _id_to_path(front, back, img)
+        results = generate(
+            tmp_path / "out",
+            "deck",
+            slots,
+            front,
+            back,
+            id_map,
+            cut_line_over_cards=True,
+            cut_line_over_fronts=True,
+            cut_line_over_backs=False,
+        )
+        assert len(results) == 1 and results[0].exists()
+
+    def test_generate_over_backs_only(self, tmp_path):
+        img = _img(tmp_path / "card.jpg")
+        slots, front, back = _slot_maps(1)
+        id_map = _id_to_path(front, back, img)
+        results = generate(
+            tmp_path / "out",
+            "deck",
+            slots,
+            front,
+            back,
+            id_map,
+            cut_line_over_cards=True,
+            cut_line_over_fronts=False,
+            cut_line_over_backs=True,
+        )
+        assert len(results) == 1 and results[0].exists()
+
+    def test_generate_over_cards_neither_sub_checked(self, tmp_path):
+        img = _img(tmp_path / "card.jpg")
+        slots, front, back = _slot_maps(1)
+        id_map = _id_to_path(front, back, img)
+        results = generate(
+            tmp_path / "out",
+            "deck",
+            slots,
+            front,
+            back,
+            id_map,
+            cut_line_over_cards=True,
+            cut_line_over_fronts=False,
+            cut_line_over_backs=False,
+        )
+        assert len(results) == 1 and results[0].exists()

@@ -7,7 +7,9 @@ from threading import Event
 
 from src.app_settings import (
     DEFAULT_CUT_LINE_COLOR,
+    DEFAULT_CUT_LINE_OVER_BACKS,
     DEFAULT_CUT_LINE_OVER_CARDS,
+    DEFAULT_CUT_LINE_OVER_FRONTS,
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
 )
@@ -172,6 +174,8 @@ def run_locals_only(
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
+    cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
+    cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
 ) -> list[Path]:
     """Generate PDF(s) only from local images (no XML).
 
@@ -196,6 +200,8 @@ def run_locals_only(
         cut_line_style=cut_line_style,
         cut_line_width=cut_line_width,
         cut_line_over_cards=cut_line_over_cards,
+        cut_line_over_fronts=cut_line_over_fronts,
+        cut_line_over_backs=cut_line_over_backs,
     )
 
 
@@ -288,6 +294,8 @@ def _run_xmls(
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
+    cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
+    cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
 ) -> list[Path]:
     extra_fronts = [Path(p) for p in (extra_fronts or [])]
     # extra_backs is parallel to extra_fronts; entries may be None to mean
@@ -407,6 +415,8 @@ def _run_xmls(
         cut_line_style=cut_line_style,
         cut_line_width=cut_line_width,
         cut_line_over_cards=cut_line_over_cards,
+        cut_line_over_fronts=cut_line_over_fronts,
+        cut_line_over_backs=cut_line_over_backs,
     )
 
 
@@ -488,6 +498,8 @@ def run_plan(
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
+    cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
+    cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
 ) -> list[Path]:
     """Download ALL images first, then crop all, then generate each job's PDFs.
 
@@ -649,6 +661,8 @@ def run_plan(
             cut_line_style=cut_line_style,
             cut_line_width=cut_line_width,
             cut_line_over_cards=cut_line_over_cards,
+            cut_line_over_fronts=cut_line_over_fronts,
+            cut_line_over_backs=cut_line_over_backs,
         )
         all_outputs.extend(outputs)
 

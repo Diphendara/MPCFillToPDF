@@ -9,6 +9,8 @@ DEFAULT_CUT_LINE_COLOR = "#000000"
 DEFAULT_CUT_LINE_STYLE = "ticks"
 DEFAULT_CUT_LINE_WIDTH = 1.0
 DEFAULT_CUT_LINE_OVER_CARDS = False
+DEFAULT_CUT_LINE_OVER_FRONTS = True
+DEFAULT_CUT_LINE_OVER_BACKS = True
 
 
 @dataclass
@@ -18,6 +20,8 @@ class AppSettings:
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS
+    cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS
+    cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS
 
 
 def _settings_path(base_dir: Path) -> Path:
@@ -49,12 +53,16 @@ def load_settings(base_dir: Path) -> AppSettings:
         except (TypeError, ValueError):
             width = DEFAULT_CUT_LINE_WIDTH
         over_cards = bool(data.get("cut_line_over_cards", DEFAULT_CUT_LINE_OVER_CARDS))
+        over_fronts = bool(data.get("cut_line_over_fronts", DEFAULT_CUT_LINE_OVER_FRONTS))
+        over_backs = bool(data.get("cut_line_over_backs", DEFAULT_CUT_LINE_OVER_BACKS))
         return AppSettings(
             output_dir=output_dir,
             cut_line_color=color,
             cut_line_style=style,
             cut_line_width=width,
             cut_line_over_cards=over_cards,
+            cut_line_over_fronts=over_fronts,
+            cut_line_over_backs=over_backs,
         )
     except Exception as exc:
         _log.warning("Could not load settings.json: %s", exc)
@@ -72,6 +80,8 @@ def save_settings(settings: AppSettings, base_dir: Path) -> None:
             "cut_line_style": settings.cut_line_style,
             "cut_line_width": settings.cut_line_width,
             "cut_line_over_cards": settings.cut_line_over_cards,
+            "cut_line_over_fronts": settings.cut_line_over_fronts,
+            "cut_line_over_backs": settings.cut_line_over_backs,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:

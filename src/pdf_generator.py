@@ -7,7 +7,9 @@ from reportlab.pdfgen import canvas
 
 from src.app_settings import (
     DEFAULT_CUT_LINE_COLOR,
+    DEFAULT_CUT_LINE_OVER_BACKS,
     DEFAULT_CUT_LINE_OVER_CARDS,
+    DEFAULT_CUT_LINE_OVER_FRONTS,
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
 )
@@ -212,6 +214,8 @@ def generate(
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
+    cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
+    cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
@@ -272,6 +276,13 @@ def generate(
             pair_no += 1
             padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
 
+            # When over_cards is active but unchecked for this page type,
+            # fall back to ticks-only (margin lines, drawn before images).
+            front_over = cut_line_over_cards and cut_line_over_fronts
+            front_style = (
+                cut_line_style if (not cut_line_over_cards or cut_line_over_fronts) else "ticks"
+            )
+
             _draw_page(
                 c,
                 padded,
@@ -279,9 +290,9 @@ def generate(
                 front_slot_to_id,
                 page_label=str(pair_no),
                 cut_line_color=cut_line_color,
-                cut_line_style=cut_line_style,
+                cut_line_style=front_style,
                 cut_line_width=cut_line_width,
-                cut_line_over_cards=cut_line_over_cards,
+                cut_line_over_cards=front_over,
             )
             c.showPage()
 
@@ -290,6 +301,11 @@ def generate(
                 for row in range(ROWS):
                     mirrored.extend(reversed(padded[row * COLS : (row + 1) * COLS]))
 
+                back_over = cut_line_over_cards and cut_line_over_backs
+                back_style = (
+                    cut_line_style if (not cut_line_over_cards or cut_line_over_backs) else "ticks"
+                )
+
                 _draw_page(
                     c,
                     mirrored,
@@ -297,9 +313,9 @@ def generate(
                     back_slot_to_id,
                     page_label=f"{pair_no}B",
                     cut_line_color=cut_line_color,
-                    cut_line_style=cut_line_style,
+                    cut_line_style=back_style,
                     cut_line_width=cut_line_width,
-                    cut_line_over_cards=cut_line_over_cards,
+                    cut_line_over_cards=back_over,
                 )
                 c.showPage()
 

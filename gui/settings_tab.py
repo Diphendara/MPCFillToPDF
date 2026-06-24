@@ -9,7 +9,9 @@ from tkinter import colorchooser, filedialog, ttk
 from gui.paths import app_base_dir, output_dir
 from src.app_settings import (
     DEFAULT_CUT_LINE_COLOR,
+    DEFAULT_CUT_LINE_OVER_BACKS,
     DEFAULT_CUT_LINE_OVER_CARDS,
+    DEFAULT_CUT_LINE_OVER_FRONTS,
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
     save_settings,
@@ -89,8 +91,9 @@ class SettingsTabMixin:
         # Estilo
         ttk.Label(outer, text="Estilo:").pack(anchor=tk.W, pady=(6, 2))
         self._settings_style_var = tk.StringVar(value=self._settings.cut_line_style)
-        style_frame = ttk.Frame(outer)
-        style_frame.pack(anchor=tk.W, pady=(0, 2))
+        self._style_frame = ttk.Frame(outer)
+        style_frame = self._style_frame
+        style_frame.pack(anchor=tk.W, pady=(0, 0))
         ttk.Radiobutton(
             style_frame,
             text="Marcas de margen  (para copistería)",
@@ -106,22 +109,25 @@ class SettingsTabMixin:
             command=self._on_settings_style_changed,
         ).pack(anchor=tk.W)
 
-        # Dibujar sobre las cartas
-        self._settings_over_cards_var = tk.BooleanVar(value=self._settings.cut_line_over_cards)
+        self._over_cards_sub_frame = ttk.Frame(outer)
+        self._settings_over_fronts_var = tk.BooleanVar(value=self._settings.cut_line_over_fronts)
+        self._settings_over_backs_var = tk.BooleanVar(value=self._settings.cut_line_over_backs)
         ttk.Checkbutton(
-            outer,
-            text="Dibujar sobre las cartas  (Para autocorte)",
-            variable=self._settings_over_cards_var,
-            command=self._on_settings_over_cards_changed,
-        ).pack(anchor=tk.W, pady=(6, 0))
-        ttk.Label(
-            outer,
-            text="Las líneas se dibujan encima de las imágenes para que sean visibles al cortar.",
-            foreground="#888",
-            font=("Segoe UI", 8),
-        ).pack(anchor=tk.W, pady=(1, 12))
+            self._over_cards_sub_frame,
+            text="Frontal",
+            variable=self._settings_over_fronts_var,
+            command=self._on_settings_over_fronts_changed,
+        ).pack(anchor=tk.W)
+        ttk.Checkbutton(
+            self._over_cards_sub_frame,
+            text="Trasero",
+            variable=self._settings_over_backs_var,
+            command=self._on_settings_over_backs_changed,
+        ).pack(anchor=tk.W)
+        if self._settings.cut_line_style == "full":
+            self._over_cards_sub_frame.pack(anchor=tk.W, padx=(20, 0), pady=(4, 0))
 
-        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 12))
+        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(8, 12))
 
         # ── Botón de restablecer ─────────────────────────────────────────────
         ttk.Button(
@@ -175,10 +181,26 @@ class SettingsTabMixin:
 
     def _on_settings_style_changed(self) -> None:
         self._settings.cut_line_style = self._settings_style_var.get()
+        is_full = self._settings.cut_line_style == "full"
+        self._settings.cut_line_over_cards = is_full
+        if is_full:
+            self._settings_over_fronts_var.set(True)
+            self._settings_over_backs_var.set(True)
+            self._settings.cut_line_over_fronts = True
+            self._settings.cut_line_over_backs = True
+            self._over_cards_sub_frame.pack(
+                anchor=tk.W, padx=(20, 0), pady=(4, 0), after=self._style_frame
+            )
+        else:
+            self._over_cards_sub_frame.pack_forget()
         self._persist_settings()
 
-    def _on_settings_over_cards_changed(self) -> None:
-        self._settings.cut_line_over_cards = self._settings_over_cards_var.get()
+    def _on_settings_over_fronts_changed(self) -> None:
+        self._settings.cut_line_over_fronts = self._settings_over_fronts_var.get()
+        self._persist_settings()
+
+    def _on_settings_over_backs_changed(self) -> None:
+        self._settings.cut_line_over_backs = self._settings_over_backs_var.get()
         self._persist_settings()
 
     def _settings_reset(self) -> None:
@@ -187,6 +209,8 @@ class SettingsTabMixin:
         self._settings.cut_line_style = DEFAULT_CUT_LINE_STYLE
         self._settings.cut_line_width = DEFAULT_CUT_LINE_WIDTH
         self._settings.cut_line_over_cards = DEFAULT_CUT_LINE_OVER_CARDS
+        self._settings.cut_line_over_fronts = DEFAULT_CUT_LINE_OVER_FRONTS
+        self._settings.cut_line_over_backs = DEFAULT_CUT_LINE_OVER_BACKS
 
         self._custom_output_dir = None
         self.out_dir_var.set(str(output_dir()))
@@ -195,7 +219,9 @@ class SettingsTabMixin:
         self._color_swatch.configure(bg=DEFAULT_CUT_LINE_COLOR)
         self._settings_style_var.set(DEFAULT_CUT_LINE_STYLE)
         self._settings_width_var.set(f"{DEFAULT_CUT_LINE_WIDTH:.1f}")
-        self._settings_over_cards_var.set(DEFAULT_CUT_LINE_OVER_CARDS)
+        self._settings_over_fronts_var.set(DEFAULT_CUT_LINE_OVER_FRONTS)
+        self._settings_over_backs_var.set(DEFAULT_CUT_LINE_OVER_BACKS)
+        self._over_cards_sub_frame.pack_forget()
         self._persist_settings()
 
     def _persist_settings(self) -> None:
