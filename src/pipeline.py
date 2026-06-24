@@ -91,6 +91,11 @@ def run(
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     """Single-XML pipeline: XML → one or more PDFs named after the XML stem.
 
@@ -114,6 +119,11 @@ def run(
         extra_backs=extra_backs,
         local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+        crop_color=crop_color,
+        crop_width=crop_width,
+        crop_placement=crop_placement,
+        crop_on_top=crop_on_top,
+        crop_pnp=crop_pnp,
     )
 
 
@@ -128,6 +138,11 @@ def run_merged(
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     """Multi-XML pipeline: concatenate the XMLs' fronts in order and emit one
     or more PDFs named `<base_name>.pdf` (or `<base_name>_1.pdf`, … when split).
@@ -148,6 +163,11 @@ def run_merged(
         extra_backs=extra_backs,
         local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+        crop_color=crop_color,
+        crop_width=crop_width,
+        crop_placement=crop_placement,
+        crop_on_top=crop_on_top,
+        crop_pnp=crop_pnp,
     )
 
 
@@ -162,6 +182,11 @@ def run_locals_only(
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     """Generate PDF(s) only from local images (no XML).
 
@@ -182,6 +207,11 @@ def run_locals_only(
         local_cardback=local_cardback,
         local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+        crop_color=crop_color,
+        crop_width=crop_width,
+        crop_placement=crop_placement,
+        crop_on_top=crop_on_top,
+        crop_pnp=crop_pnp,
     )
 
 
@@ -264,6 +294,11 @@ def _run_xmls(
     local_cardback: str | Path | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     extra_fronts = [Path(p) for p in (extra_fronts or [])]
     # extra_backs is parallel to extra_fronts; entries may be None to mean
@@ -379,6 +414,11 @@ def _run_xmls(
         progress_callback=_cb(Stage.PDF),
         cancel_event=cancel_event,
         fronts_only=fronts_only,
+        crop_color=crop_color,
+        crop_width=crop_width,
+        crop_placement=crop_placement,
+        crop_on_top=crop_on_top,
+        crop_pnp=crop_pnp,
     )
 
 
@@ -456,6 +496,11 @@ def run_plan(
     on_xml_crop_progress: StageCallback = None,
     fronts_only: bool = False,
     on_speed_update=None,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     """Download ALL images first, then crop all, then generate each job's PDFs.
 
@@ -613,6 +658,11 @@ def run_plan(
             progress_callback=_cb(Stage.PDF),
             cancel_event=cancel_event,
             fronts_only=fronts_only,
+            crop_color=crop_color,
+            crop_width=crop_width,
+            crop_placement=crop_placement,
+            crop_on_top=crop_on_top,
+            crop_pnp=crop_pnp,
         )
         all_outputs.extend(outputs)
 

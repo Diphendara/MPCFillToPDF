@@ -25,10 +25,6 @@ IMAGE_H = CARD_H + 2 * BLEED
 MARGIN_X = 5.75 * mm
 MARGIN_Y = 11.15 * mm
 
-# Crop mark style — ticks in the page margins
-MARK_W = 1.0
-MARK_GAP = 3.0  # pt between trim line and tick endpoint
-
 # Printer-mark assets
 ASSETS_DIR = Path(__file__).parent / "assets"
 CORNER_MARK_PATH = ASSETS_DIR / "corner_mark.png"
@@ -52,8 +48,32 @@ def _trim_origin(col: int, row: int) -> tuple[float, float]:
     return x, y
 
 
-def _draw_crop_marks(c: canvas.Canvas) -> None:
-    """Trim-edge ticks in the page margins only (no lines crossing inner gaps)."""
+def hex_to_rgb(hex_str: str) -> tuple[float, float, float]:
+    """Convert `#RRGGBB` hex string to ReportLab RGB tuple of floats (0.0 - 1.0)."""
+    hex_str = hex_str.lstrip("#")
+    if len(hex_str) == 3:
+        hex_str = "".join(c * 2 for c in hex_str)
+    if len(hex_str) == 6:
+        try:
+            r = int(hex_str[0:2], 16) / 255.0
+            g = int(hex_str[2:4], 16) / 255.0
+            b = int(hex_str[4:6], 16) / 255.0
+            return r, g, b
+        except ValueError:
+            pass
+    return 0.0, 0.0, 0.0  # fallback to black
+
+
+def _draw_crop_marks(
+    c: canvas.Canvas,
+    color: str = "#000000",
+    width: float = 1.0,
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
+) -> None:
+    """Draw crop marks. If crop_pnp is True, draw continuous trim-edge crop lines
+    from edge to edge of the page. If crop_pnp is False, draw ticks in the page
+    margins only."""
     xs = [MARGIN_X + col * (CARD_W + GAP_X) + dx for col in range(COLS) for dx in (0.0, CARD_W)]
     ys = [
         PAGE_H - MARGIN_Y - (row + 1) * CARD_H - row * GAP_Y + dy
@@ -62,20 +82,34 @@ def _draw_crop_marks(c: canvas.Canvas) -> None:
     ]
 
     c.saveState()
-    c.setLineWidth(MARK_W)
-    c.setStrokeColorRGB(0, 0, 0)
-    # Vertical ticks at each column trim X, in the top and bottom margins only
-    top_y_end = PAGE_H - MARGIN_Y + MARK_GAP
-    bot_y_end = MARGIN_Y - MARK_GAP
-    for x in xs:
-        c.line(x, 0, x, bot_y_end)
-        c.line(x, top_y_end, x, PAGE_H)
-    # Horizontal ticks at each row trim Y, in the left and right margins only
-    left_x_end = MARGIN_X - MARK_GAP
-    right_x_end = PAGE_W - MARGIN_X + MARK_GAP
-    for y in ys:
-        c.line(0, y, left_x_end, y)
-        c.line(right_x_end, y, PAGE_W, y)
+    c.setLineWidth(width)
+    r, g, b = hex_to_rgb(color)
+    c.setStrokeColorRGB(r, g, b)
+    
+    if crop_pnp:
+        # Draw continuous lines across the page (PNP layout)
+        for x in xs:
+            c.line(x, 0, x, PAGE_H)
+        for y in ys:
+            c.line(0, y, PAGE_W, y)
+    else:
+        # Original: ticks in the page margins only (with gap)
+        mark_gap = 3.0
+        gap = 0.0 if crop_on_top else mark_gap
+        
+        # Vertical ticks at each column trim X, in the top and bottom margins only
+        top_y_end = PAGE_H - MARGIN_Y + gap
+        bot_y_end = MARGIN_Y - gap
+        for x in xs:
+            c.line(x, 0, x, bot_y_end)
+            c.line(x, top_y_end, x, PAGE_H)
+        # Horizontal ticks at each row trim Y, in the left and right margins only
+        left_x_end = MARGIN_X - gap
+        right_x_end = PAGE_W - MARGIN_X + gap
+        for y in ys:
+            c.line(0, y, left_x_end, y)
+            c.line(right_x_end, y, PAGE_W, y)
+
     c.restoreState()
 
 
@@ -109,8 +143,20 @@ def _draw_page(
     id_to_path: dict[str, Path],
     slot_to_id: dict[int, str],
     page_label: str | None = None,
+    draw_crop_marks: bool = True,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> None:
-    _draw_crop_marks(c)
+    if draw_crop_marks and not crop_on_top:
+        _draw_crop_marks(
+            c,
+            color=crop_color,
+            width=crop_width,
+            crop_on_top=crop_on_top,
+            crop_pnp=crop_pnp,
+        )
     _draw_printer_marks(c, page_label)
 
     for idx, slot in enumerate(slots):
@@ -120,6 +166,15 @@ def _draw_page(
             img_path = id_to_path.get(slot_to_id[slot])
             if img_path and img_path.exists():
                 c.drawImage(str(img_path), x - BLEED, y - BLEED, width=IMAGE_W, height=IMAGE_H)
+
+    if draw_crop_marks and crop_on_top:
+        _draw_crop_marks(
+            c,
+            color=crop_color,
+            width=crop_width,
+            crop_on_top=crop_on_top,
+            crop_pnp=crop_pnp,
+        )
 
 
 # Cap each generated PDF at 500 MB on disk (decimal MB, as reported by file
@@ -168,6 +223,11 @@ def generate(
     progress_callback=None,
     cancel_event: Event | None = None,
     fronts_only: bool = False,
+    crop_color: str = "#000000",
+    crop_width: float = 1.0,
+    crop_placement: str = "all",
+    crop_on_top: bool = False,
+    crop_pnp: bool = False,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
@@ -228,7 +288,20 @@ def generate(
             pair_no += 1
             padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
 
-            _draw_page(c, padded, id_to_path, front_slot_to_id, page_label=str(pair_no))
+            # Draw crop marks on fronts if placement is 'all' or 'fronts'
+            draw_front_crops = crop_placement in ("all", "fronts")
+            _draw_page(
+                c,
+                padded,
+                id_to_path,
+                front_slot_to_id,
+                page_label=str(pair_no),
+                draw_crop_marks=draw_front_crops,
+                crop_color=crop_color,
+                crop_width=crop_width,
+                crop_on_top=crop_on_top,
+                crop_pnp=crop_pnp,
+            )
             c.showPage()
 
             if not fronts_only:
@@ -236,7 +309,20 @@ def generate(
                 for row in range(ROWS):
                     mirrored.extend(reversed(padded[row * COLS : (row + 1) * COLS]))
 
-                _draw_page(c, mirrored, id_to_path, back_slot_to_id, page_label=f"{pair_no}B")
+                # Draw crop marks on backs if placement is 'all' or 'backs'
+                draw_back_crops = crop_placement in ("all", "backs")
+                _draw_page(
+                    c,
+                    mirrored,
+                    id_to_path,
+                    back_slot_to_id,
+                    page_label=f"{pair_no}B",
+                    draw_crop_marks=draw_back_crops,
+                    crop_color=crop_color,
+                    crop_width=crop_width,
+                    crop_on_top=crop_on_top,
+                    crop_pnp=crop_pnp,
+                )
                 c.showPage()
 
             done_pairs += 1

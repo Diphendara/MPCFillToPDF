@@ -26,7 +26,7 @@ except ImportError:
 from gui.locals_tab import LocalsTabMixin
 from gui.lorcana_tab import LorcanaTabMixin
 from gui.op_tab import OPTabMixin
-from gui.paths import output_dir, work_dir
+from gui.paths import app_base_dir, output_dir, work_dir
 from gui.rb_tab import RBTabMixin
 from gui.widgets import (
     APP_TITLE,
@@ -127,7 +127,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
         self.worker: threading.Thread | None = None
         self.cancel_event = threading.Event()
         self.running = False
-        self.keep_cache = tk.BooleanVar(value=False)
+        self._load_settings()
         self._dl_speed_str: str = ""
         self._custom_output_dir: Path | None = None
 
@@ -144,6 +144,195 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
         self.root.after(80, self._drain_events)
         self.root.after(200, self._setup_dnd)
 
+    def _load_settings(self) -> None:
+        self.settings_path = app_base_dir() / "settings.json"
+        
+        # Initialize configuration variables
+        self.crop_color = tk.StringVar(value="#000000")
+        self.crop_width = tk.DoubleVar(value=1.0)
+        self.crop_placement = tk.StringVar(value="all")
+        self.crop_on_top = tk.BooleanVar(value=False)
+        self.crop_pnp = tk.BooleanVar(value=False)
+        self.keep_cache = tk.BooleanVar(value=False)
+        
+        if self.settings_path.exists():
+            try:
+                with open(self.settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.crop_color.set(data.get("crop_color", "#000000"))
+                self.crop_width.set(float(data.get("crop_width", 1.0)))
+                self.crop_placement.set(data.get("crop_placement", "all"))
+                self.crop_on_top.set(bool(data.get("crop_on_top", False)))
+                self.crop_pnp.set(bool(data.get("crop_pnp", False)))
+                self.keep_cache.set(bool(data.get("keep_cache", False)))
+            except Exception as e:
+                _log.warning("Could not load settings.json: %s", e)
+
+    def _save_settings(self) -> None:
+        try:
+            data = {
+                "crop_color": self.crop_color.get(),
+                "crop_width": self.crop_width.get(),
+                "crop_placement": self.crop_placement.get(),
+                "crop_on_top": self.crop_on_top.get(),
+                "crop_pnp": self.crop_pnp.get(),
+                "keep_cache": self.keep_cache.get(),
+            }
+            with open(self.settings_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            _log.warning("Could not save settings.json: %s", e)
+
+    def _open_settings(self, on_confirm=None) -> None:
+        from tkinter import colorchooser
+        
+        win = tk.Toplevel(self.root)
+        win.title("Configuración")
+        win.transient(self.root)
+        win.grab_set()
+        
+        # Center settings window relative to root window
+        win.update_idletasks()
+        w_width, w_height = 420, 310
+        r_x = self.root.winfo_x()
+        r_y = self.root.winfo_y()
+        r_w = self.root.winfo_width()
+        r_h = self.root.winfo_height()
+        pos_x = r_x + (r_w - w_width) // 2
+        pos_y = r_y + (r_h - w_height) // 2
+        win.geometry(f"{w_width}x{w_height}+{pos_x}+{pos_y}")
+        win.resizable(False, False)
+        
+        content_frame = ttk.Frame(win)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        # PNP Crops (Outside the frame)
+        pnp_var = tk.BooleanVar(value=self.crop_pnp.get())
+        
+        def toggle_state():
+            is_pnp = pnp_var.get()
+            state = "normal" if is_pnp else "disabled"
+            cb_placement.config(state="readonly" if is_pnp else "disabled")
+            sb_width.config(state=state)
+            cb_on_top.config(state=state)
+            btn_pick.config(state=state)
+            ent_color.config(state=state)
+            
+        cb_pnp = ttk.Checkbutton(content_frame, text="Corte PNP", variable=pnp_var, command=toggle_state)
+        cb_pnp.pack(anchor="w", pady=(0, 6))
+        
+        # Box (LabelFrame) "Marcas de Corte"
+        lf_crops = ttk.LabelFrame(content_frame, text="Marcas de Corte")
+        lf_crops.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        lf_crops.columnconfigure(0, weight=1)
+        lf_crops.columnconfigure(1, weight=2)
+        
+        # Placement
+        lbl_placement = ttk.Label(lf_crops, text="Colocación de marcas:")
+        lbl_placement.grid(row=0, column=0, sticky="w", pady=6, padx=12)
+        
+        placement_map = {
+            "Todas las páginas": "all",
+            "Páginas impares (Frontales)": "fronts",
+            "Páginas pares (Traseras)": "backs"
+        }
+        reverse_placement_map = {v: k for k, v in placement_map.items()}
+        
+        placement_var = tk.StringVar(value=reverse_placement_map.get(self.crop_placement.get(), "Todas las páginas"))
+        cb_placement = ttk.Combobox(lf_crops, textvariable=placement_var, values=list(placement_map.keys()), state="readonly", width=22)
+        cb_placement.grid(row=0, column=1, sticky="w", pady=6, padx=12)
+        
+        # Thickness (Spinbox)
+        lbl_width = ttk.Label(lf_crops, text="Grosor de línea (puntos):")
+        lbl_width.grid(row=1, column=0, sticky="w", pady=6, padx=12)
+        
+        width_var = tk.DoubleVar(value=self.crop_width.get())
+        sb_width = ttk.Spinbox(lf_crops, from_=0.1, to=3.0, increment=0.1, textvariable=width_var, format="%.1f", width=8)
+        sb_width.grid(row=1, column=1, sticky="w", pady=6, padx=12)
+        
+        # Layering/Overlay
+        lbl_on_top = ttk.Label(lf_crops, text="Capa de marcas:")
+        lbl_on_top.grid(row=2, column=0, sticky="w", pady=6, padx=12)
+        
+        on_top_var = tk.BooleanVar(value=self.crop_on_top.get())
+        cb_on_top = ttk.Checkbutton(lf_crops, text="Dibujar marcas encima de las cartas", variable=on_top_var)
+        cb_on_top.grid(row=2, column=1, sticky="w", pady=6, padx=12)
+        
+        # Color (Hex + Preview + Pick button)
+        lbl_color = ttk.Label(lf_crops, text="Color de marcas:")
+        lbl_color.grid(row=3, column=0, sticky="w", pady=6, padx=12)
+        
+        color_frame = ttk.Frame(lf_crops)
+        color_frame.grid(row=3, column=1, sticky="w", pady=6, padx=12)
+        
+        color_var = tk.StringVar(value=self.crop_color.get())
+        color_preview = tk.Frame(color_frame, width=20, height=20, relief=tk.SOLID, borderwidth=1)
+        color_preview.pack(side=tk.LEFT, padx=(0, 6))
+        color_preview.pack_propagate(False)
+        
+        ent_color = ttk.Entry(color_frame, textvariable=color_var, width=10)
+        ent_color.pack(side=tk.LEFT, padx=(0, 6))
+        
+        def pick_color():
+            chosen = colorchooser.askcolor(initialcolor=color_var.get(), parent=win)
+            if chosen[1]:
+                color_var.set(chosen[1])
+                
+        btn_pick = ttk.Button(color_frame, text="Elegir...", command=pick_color, width=9)
+        btn_pick.pack(side=tk.LEFT)
+        
+        def update_preview(*args):
+            try:
+                color_preview.config(bg=color_var.get())
+            except tk.TclError:
+                pass
+                
+        color_var.trace_add("write", update_preview)
+        update_preview()
+        
+        # Set initial states based on pnp_var
+        toggle_state()
+        
+        # Bottom controls for Dialog
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=(0, 10))
+        
+        def save():
+            c_hex = color_var.get().strip()
+            if not c_hex.startswith("#") or len(c_hex) not in (4, 7):
+                messagebox.showerror("Error", "Introduce un color hexadecimal válido (ej. #000000 o #FF0000).", parent=win)
+                return
+            try:
+                win.winfo_rgb(c_hex)
+            except tk.TclError:
+                messagebox.showerror("Error", "El color hexadecimal introducido no es válido.", parent=win)
+                return
+                
+            try:
+                w_val = float(width_var.get())
+                if w_val <= 0:
+                    raise ValueError()
+            except ValueError:
+                messagebox.showerror("Error", "El grosor de línea debe ser un número positivo.", parent=win)
+                return
+                
+            self.crop_placement.set(placement_map.get(placement_var.get(), "all"))
+            self.crop_width.set(w_val)
+            self.crop_color.set(c_hex)
+            self.crop_on_top.set(on_top_var.get())
+            self.crop_pnp.set(pnp_var.get())
+            self._save_settings()
+            win.destroy()
+            if on_confirm:
+                on_confirm()
+            
+        btn_cancel = ttk.Button(btn_frame, text="Cancelar", command=win.destroy)
+        btn_cancel.pack(side=tk.RIGHT, padx=(6, 0))
+        
+        btn_save = ttk.Button(btn_frame, text="Generar", command=save)
+        btn_save.pack(side=tk.RIGHT)
+
     def _build_ui(self) -> None:
         pad = {"padx": 10, "pady": 6}
         frm = ttk.Frame(self.root)
@@ -156,6 +345,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
             bottom_controls,
             text="Guardar en el PC las imágenes entre ejecuciones",
             variable=self.keep_cache,
+            command=self._save_settings,
         )
         self.keep_cache_cb.pack(anchor=tk.W)
 
@@ -219,6 +409,8 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
 
         self._build_xml_pane(top)
         self._build_locals_pane(top)
+
+        # Settings button removed as per requirements.
 
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         notebook = ttk.Notebook(parent)
@@ -609,6 +801,18 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                 if not messagebox.askyesno(APP_TITLE, warning, icon=messagebox.WARNING):
                     return
 
+        # Determine if it's an internet/downloaded deck
+        is_internet_deck = bool(
+            (self._op_decks or self._rb_decks or self._lorcana_decks or self.state.mtg_url_decks)
+            and not self.state.xml_paths
+        )
+
+        if is_internet_deck:
+            self._open_settings(on_confirm=lambda: self._continue_start(plan_, reports, fronts_only))
+        else:
+            self._continue_start(plan_, reports, fronts_only)
+
+    def _continue_start(self, plan_, reports, fronts_only: bool) -> None:
         self.running = True
         self.cancel_event.clear()
         self._dl_speed_str = ""
@@ -620,9 +824,16 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
         self.progress["value"] = 0
         self.status_var.set("Preparando…")
         self._reset_xml_download_progress()
+        
+        c_color = self.crop_color.get()
+        c_width = self.crop_width.get()
+        c_placement = self.crop_placement.get()
+        c_on_top = self.crop_on_top.get()
+        c_pnp = self.crop_pnp.get()
+        
         self.worker = threading.Thread(
             target=self._work,
-            args=(plan_, reports, fronts_only),
+            args=(plan_, reports, fronts_only, c_color, c_width, c_placement, c_on_top, c_pnp),
             daemon=True,
         )
         self.worker.start()
@@ -640,7 +851,17 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
         self.stop_btn.state(["disabled"])
         self.status_var.set("Cancelando…")
 
-    def _work(self, plan_, reports, fronts_only: bool = False) -> None:
+    def _work(
+        self,
+        plan_,
+        reports,
+        fronts_only: bool = False,
+        crop_color: str = "#000000",
+        crop_width: float = 1.0,
+        crop_placement: str = "all",
+        crop_on_top: bool = False,
+        crop_pnp: bool = True,
+    ) -> None:
         run_dir = None
         wd = None
         try:
@@ -947,6 +1168,11 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     on_xml_crop_progress=on_xml_crop_progress,
                     fronts_only=fronts_only,
                     on_speed_update=on_speed_update,
+                    crop_color=crop_color,
+                    crop_width=crop_width,
+                    crop_placement=crop_placement,
+                    crop_on_top=crop_on_top,
+                    crop_pnp=crop_pnp,
                 )
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
@@ -994,6 +1220,11 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin):
                     extra_backs=all_extra_backs,
                     local_crop_map=all_crop_map,
                     fronts_only=fronts_only,
+                    crop_color=crop_color,
+                    crop_width=crop_width,
+                    crop_placement=crop_placement,
+                    crop_on_top=crop_on_top,
+                    crop_pnp=crop_pnp,
                 )
                 generated.extend(pdfs)
                 manifest = None

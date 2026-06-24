@@ -256,3 +256,60 @@ def test_generate_split_all_files_exist(tmp_path):
     for r in results:
         assert r.exists()
         assert r.stat().st_size > 0
+
+
+def test_generate_supports_custom_crop_marks(tmp_path):
+    img = _img(tmp_path / "card.jpg")
+    slots, front, back = _slot_maps(1)
+    id_to_path = _id_to_path(front, back, img)
+
+    # Test running generator with custom crop mark settings
+    results = generate(
+        tmp_path / "out",
+        "deck_custom_crops",
+        slots,
+        front,
+        back,
+        id_to_path,
+        crop_color="#FF0000",
+        crop_width=1.5,
+        crop_placement="fronts",
+        crop_on_top=True
+    )
+    assert len(results) == 1
+    assert results[0].exists()
+    assert results[0].stat().st_size > 0
+
+
+def test_generate_supports_crop_pnp(tmp_path):
+    img = _img(tmp_path / "card.jpg")
+    slots, front, back = _slot_maps(1)
+    id_to_path = _id_to_path(front, back, img)
+
+    # Test with crop_pnp=True (PNP continuous lines)
+    results_pnp = generate(
+        tmp_path / "out",
+        "deck_pnp",
+        slots,
+        front,
+        back,
+        id_to_path,
+        crop_pnp=True
+    )
+    assert len(results_pnp) == 1
+    assert results_pnp[0].exists()
+    assert results_pnp[0].stat().st_size > 0
+
+    # Test with crop_pnp=False (original ticks)
+    results_ticks = generate(
+        tmp_path / "out",
+        "deck_ticks",
+        slots,
+        front,
+        back,
+        id_to_path,
+        crop_pnp=False
+    )
+    assert len(results_ticks) == 1
+    assert results_ticks[0].exists()
+    assert results_ticks[0].stat().st_size > 0

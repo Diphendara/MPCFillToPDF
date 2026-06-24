@@ -702,3 +702,43 @@ class TestRunDeckUrl:
         dl_events = [(s, d, t) for s, d, t in events if s == "download"]
         assert dl_events, "No download events fired"
         assert dl_events[0][1] == 0
+
+
+def test_run_locals_only_with_custom_crop_settings(tmp_path):
+    front = _img(tmp_path / "front.jpg")
+    back = _img(tmp_path / "back.jpg")
+    out = tmp_path / "out"
+    work = tmp_path / "work"
+
+    results = run_locals_only(
+        [front],
+        back,
+        out,
+        "deck_custom",
+        work_dir=work,
+        crop_color="#00FF00",
+        crop_width=2.5,
+        crop_placement="backs",
+        crop_on_top=True
+    )
+    assert len(results) == 1
+    assert results[0].exists()
+
+
+def test_run_locals_only_with_crop_pnp(tmp_path):
+    front = _img(tmp_path / "front.jpg")
+    back = _img(tmp_path / "back.jpg")
+    out = tmp_path / "out"
+    work = tmp_path / "work"
+
+    results = run_locals_only(
+        [front],
+        back,
+        out,
+        "deck_custom_pnp",
+        work_dir=work,
+        crop_pnp=False
+    )
+    assert len(results) == 1
+    assert results[0].exists()
+
