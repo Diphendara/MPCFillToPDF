@@ -26,12 +26,20 @@ Without the flag the file is written with `False` and no `gui.log` is created.
 
 SmartScreen / antivirus false positives
 ---------------------------------------
-This build embeds Windows version metadata via `version_file.txt`, which
-reduces (but does not eliminate) the "unknown publisher" SmartScreen prompt
-on first launch.
+This build uses three measures to minimise false-positive AV detections:
 
-To reduce false positives further, you can rebuild PyInstaller's bootloader
-from source so it has a unique hash that AV vendors don't yet flag:
+1. UPX disabled (--noupx): UPX compression is a major heuristic trigger used
+   by many AV engines.  Disabling it increases binary size ~10 % but
+   significantly reduces detections.
+
+2. Stdlib bloat excluded: modules never used at runtime are stripped via
+   --exclude-module so the archive surface is smaller.
+
+3. Windows version metadata (version_file.txt) reduces (but does not
+   eliminate) the "unknown publisher" SmartScreen prompt on first launch.
+
+If detections persist, the next most effective step is rebuilding PyInstaller's
+bootloader from source so it gets a unique hash AV vendors don't yet flag:
 
     # One-time setup (requires a C compiler; on Windows install
     # "Visual Studio Build Tools" with the C++ workload).
@@ -42,6 +50,13 @@ from source so it has a unique hash that AV vendors don't yet flag:
     pip install --upgrade .
 
 After that, run `python build_exe.py` as usual.
+
+For any remaining detections after the above steps, submit the binary as a
+false positive directly to the vendors:
+  - Microsoft Defender / SmartScreen: https://www.microsoft.com/wdsi/filesubmission
+  - Bkav: https://www.bkav.com.vn/
+  - Gridinsoft: support@gridinsoft.com
+  - SecureAge: their analysis portal
 """
 
 import argparse
@@ -167,6 +182,7 @@ def main() -> None:
         "--clean",
         "--onefile",
         "--windowed",
+        "--noupx",
         "--log-level=WARN",
         "--name",
         APP_NAME,
@@ -176,6 +192,20 @@ def main() -> None:
         "--hidden-import=PIL.Image",
         "--hidden-import=reportlab.pdfgen",
         "--hidden-import=gdown",
+        # Strip stdlib modules that are never imported at runtime.
+        # Reduces archive surface scanned by AV heuristics.
+        "--exclude-module=unittest",
+        "--exclude-module=doctest",
+        "--exclude-module=pdb",
+        "--exclude-module=difflib",
+        "--exclude-module=ftplib",
+        "--exclude-module=imaplib",
+        "--exclude-module=smtplib",
+        "--exclude-module=poplib",
+        "--exclude-module=telnetlib",
+        "--exclude-module=xmlrpc",
+        "--exclude-module=http.server",
+        "--exclude-module=tkinter.test",
         str(ENTRY),
     ]
     if sys.platform == "win32":

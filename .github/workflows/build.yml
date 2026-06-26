@@ -38,6 +38,20 @@ jobs:
         if: runner.os != 'Windows'
         run: pip install Pillow reportlab gdown requests plyer pyinstaller
 
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile PyInstaller bootloader from source
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone --depth=1 https://github.com/pyinstaller/pyinstaller.git $env:TEMP\pyinstaller-src
+          Set-Location "$env:TEMP\pyinstaller-src\bootloader"
+          python .\waf all
+          Set-Location ..
+          pip install --upgrade .
+
       - name: Build executable
         run: python build_exe.py
 
