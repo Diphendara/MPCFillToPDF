@@ -133,7 +133,10 @@ def _remove_build_flags() -> None:
 
 
 def _check_paths() -> None:
-    missing = [p for p in (ENTRY, VERSION_FILE, ASSETS, ICONS, RESOURCES) if not p.exists()]
+    required = [ENTRY, ASSETS, ICONS, RESOURCES]
+    if sys.platform == "win32":
+        required.append(VERSION_FILE)
+    missing = [p for p in required if not p.exists()]
     if missing:
         for p in missing:
             print(f"ERROR: ruta requerida no encontrada: {p}", file=sys.stderr)
@@ -167,16 +170,17 @@ def main() -> None:
         "--log-level=WARN",
         "--name",
         APP_NAME,
-        f"--version-file={VERSION_FILE}",
         f"--add-data={ASSETS}{sep}src/assets",
         f"--add-data={ICONS}{sep}icons",
         f"--add-data={RESOURCES}{sep}resources",
         "--hidden-import=PIL.Image",
         "--hidden-import=reportlab.pdfgen",
         "--hidden-import=gdown",
-        "--hidden-import=windnd",
         str(ENTRY),
     ]
+    if sys.platform == "win32":
+        args.append(f"--version-file={VERSION_FILE}")
+        args.append("--hidden-import=windnd")
     print("Running:", " ".join(args))
     try:
         subprocess.run(args, check=True, cwd=ROOT)
@@ -184,7 +188,8 @@ def main() -> None:
         _remove_bundled_key()
         _remove_build_flags()
 
-    print(f"\nBuilt: {ROOT / 'dist' / (APP_NAME + '.exe')}")
+    suffix = ".exe" if sys.platform == "win32" else ""
+    print(f"\nBuilt: {ROOT / 'dist' / (APP_NAME + suffix)}")
 
 
 if __name__ == "__main__":

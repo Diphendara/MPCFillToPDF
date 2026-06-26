@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: MPCFillToPDF-windows
+            artifact-path: dist/MPCFillToPDF.exe
+          - os: macos-latest
+            artifact-name: MPCFillToPDF-mac
+            artifact-path: dist/MPCFillToPDF*
+          - os: ubuntu-latest
+            artifact-name: MPCFillToPDF-linux
+            artifact-path: dist/MPCFillToPDF
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Install dependencies (non-Windows)
+        if: runner.os != 'Windows'
+        run: pip install Pillow reportlab gdown requests plyer pyinstaller
+
+      - name: Build executable
+        run: python build_exe.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          retention-days: 30
