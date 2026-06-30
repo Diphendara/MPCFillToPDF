@@ -54,6 +54,8 @@ jobs:
 
       - name: Build executable
         run: python build_exe.py
+        env:
+          DRIVE_API_KEY: ${{ secrets.DRIVE_API_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

@@ -79,29 +79,29 @@ BUILD_FLAGS_PATH = ROOT / "gui" / "_build_flags.py"
 
 
 def _embed_api_key() -> bool:
-    """Read config.json, XOR-encode the API key, write src/_bundled_key.py.
+    """Read API key from config.json or DRIVE_API_KEY env var, XOR-encode it, write src/_bundled_key.py.
 
     Returns True if a key was successfully embedded, False otherwise.
     The file must be deleted after the build regardless.
     """
+    key = ""
+
     config_path = ROOT / "config.json"
-    if not config_path.exists():
-        print(
-            "WARNING: config.json not found — API key will NOT be embedded.\n"
-            "         Copy config.example.json to config.json and fill in your key."
-        )
-        return False
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            key = str(data.get("google_drive_api_key", "")).strip()
+            if key.startswith("YOUR_"):
+                key = ""
+        except Exception as exc:
+            print(f"WARNING: Could not parse config.json ({exc}).")
 
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"WARNING: Could not parse config.json ({exc}) — API key not embedded.")
-        return False
+    if not key:
+        key = os.environ.get("DRIVE_API_KEY", "").strip()
 
-    key = str(data.get("google_drive_api_key", "")).strip()
-    if not key or key.startswith("YOUR_"):
+    if not key:
         print(
-            "WARNING: google_drive_api_key is not set in config.json — "
+            "WARNING: No API key found (config.json or DRIVE_API_KEY env var) — "
             "API key will NOT be embedded."
         )
         return False
