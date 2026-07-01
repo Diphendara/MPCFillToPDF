@@ -14,7 +14,7 @@ from src.app_settings import (
     DEFAULT_CUT_LINE_WIDTH,
 )
 from src.cancellation import Cancelled
-from src.constants import Stage, StageCallback
+from src.constants import JobPdfStartCallback, Stage, StageCallback
 from src.cropper import process_for_pdf
 from src.deck_importer import fetch_deck
 from src.downloader import (
@@ -390,7 +390,7 @@ def _run_xmls(
 
     def _on_crop(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
-            progress_callback("crop", done, total)
+            progress_callback(Stage.CROP, done, total)
 
     if progress_callback and crop_tasks:
         progress_callback(Stage.CROP, 0, len(crop_tasks))
@@ -443,11 +443,11 @@ def _build_job_data(
     next_slot: int,
     extra_fronts: list[Path],
     extra_backs: list[Path | None],
-    fallback_cardback_id: str,
 ) -> tuple[_JobData, int]:
     """Parse XMLs and build all slot maps for one job.
     Returns (job_data, updated next_slot). Does not download or crop anything."""
     orders = [parse(p) for p in xml_paths]
+    fallback_cardback_id = orders[0].cardback_id if orders else ""
 
     local_id_to_path: dict[str, Path] = {}
     front_slot_to_id, back_slot_to_id, id_name_map, drive_id_context, xml_needed_ids, next_slot = (
@@ -489,7 +489,7 @@ def run_plan(
     extra_fronts: list[str | Path] | None = None,
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
-    on_job_pdf_start: StageCallback = None,
+    on_job_pdf_start: JobPdfStartCallback = None,
     on_xml_download_progress: StageCallback = None,
     on_xml_crop_progress: StageCallback = None,
     fronts_only: bool = False,
@@ -539,7 +539,6 @@ def run_plan(
         is_last = i == last_idx
         ef = extra_fronts_p if is_last else []
         eb = extra_backs_p if is_last else []
-        fallback = parse(Path(job.xml_paths[0])).cardback_id if job.xml_paths else ""
 
         jd, next_slot = _build_job_data(
             xml_paths=[Path(p) for p in job.xml_paths],
@@ -547,7 +546,6 @@ def run_plan(
             next_slot=next_slot,
             extra_fronts=ef,
             extra_backs=eb,
-            fallback_cardback_id=fallback,
         )
         job_data_list.append(jd)
         combined_id_name.update(jd.id_name_map)
@@ -628,7 +626,7 @@ def run_plan(
 
     def _on_crop_plan(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
-            progress_callback("crop", done, total)
+            progress_callback(Stage.CROP, done, total)
         if on_xml_crop_progress:
             for xml_name in _crop_id_to_xml.get(drive_id, []):
                 _xml_crop_done[xml_name] += 1

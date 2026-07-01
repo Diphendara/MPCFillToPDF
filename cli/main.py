@@ -66,7 +66,7 @@ def _progress(stage: str, done: int, total: int) -> None:
 
 
 def _cleanup(workdir: Path) -> None:
-    for sub in ("raw", "bled"):
+    for sub in ("raw", "bled", "scryfall"):
         target = workdir / sub
         if target.exists():
             shutil.rmtree(target)
@@ -80,9 +80,11 @@ def _print_permission_error(e: DownloadPermissionError) -> None:
     if e.position:
         print(f"  Posición en el PDF: {e.position}", file=sys.stderr)
     print(file=sys.stderr)
-    print("Esto no es un fallo del programa.", file=sys.stderr)
-    print("La imagen ha perdido los permisos de acceso público en Google Drive.", file=sys.stderr)
-    print("Pide al creador del proxy que restaure los permisos.", file=sys.stderr)
+    print("Esto no es un fallo del programa. Posibles causas:", file=sys.stderr)
+    print("  • El archivo solo permite descarga con cuenta de Google", file=sys.stderr)
+    print("    («Cualquiera con el enlace» no basta para descarga anónima).", file=sys.stderr)
+    print("  • Le han quitado los permisos de acceso público.", file=sys.stderr)
+    print("Pide al creador que comparta las imágenes como «Público en Internet».", file=sys.stderr)
 
 
 def _setup_logging(log_path: Path, verbose: bool) -> None:

@@ -14,8 +14,8 @@ import requests
 from src.constants import CARDS_PER_PAGE
 from src.parser import parse
 
-_THUMB_CHECK_URL = "https://drive.google.com/thumbnail?id={}&sz=w1"
-_CHECK_THREADS = 20
+_THUMB_CHECK_URL = "https://lh4.googleusercontent.com/d/{}=d"
+_CHECK_THREADS = 5
 _CHECK_TIMEOUT = (5, 10)
 
 

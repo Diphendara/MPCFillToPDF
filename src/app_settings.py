@@ -83,6 +83,8 @@ def save_settings(settings: AppSettings, base_dir: Path) -> None:
             "cut_line_over_fronts": settings.cut_line_over_fronts,
             "cut_line_over_backs": settings.cut_line_over_backs,
         }
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
     except Exception as exc:
         _log.warning("Could not save settings.json: %s", exc)
