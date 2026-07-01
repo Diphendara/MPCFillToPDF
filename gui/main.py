@@ -1247,8 +1247,13 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 names = ", ".join(f"«{name}»" for _, name in perm_errors[:3])
                 more = f" y {len(perm_errors) - 3} más" if len(perm_errors) > 3 else ""
                 parts.append(
-                    f"{len(perm_errors)} imagen(es) sin permiso de descarga: {names}{more}.\n"
-                    "Pide al creador del proxy que restaure los permisos de Google Drive."
+                    f"{len(perm_errors)} imagen(es) no se pudieron descargar: {names}{more}.\n"
+                    "Posibles causas:\n"
+                    "  • El archivo en Google Drive solo permite descarga con cuenta de Google "
+                    "(«Cualquiera con el enlace» no basta para descarga anónima).\n"
+                    "  • Le han quitado los permisos de acceso público.\n"
+                    "Pide al creador del proxy que comparta las imágenes como "
+                    "«Público en Internet» en Google Drive."
                 )
             if timeout_errors:
                 names = ", ".join(f"«{name}»" for _, name in timeout_errors[:3])
@@ -1325,9 +1330,12 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             else:
                 parts[0] += "."
             parts.append(
-                "Esto no es un fallo del programa: le han quitado los permisos "
-                "de acceso público a la imagen en Google Drive.\n"
-                "Pide al creador del proxy que restaure los permisos."
+                "Esto no es un fallo del programa. Posibles causas:\n"
+                "  • El archivo en Google Drive solo permite descarga con cuenta de Google "
+                "(«Cualquiera con el enlace» no basta para descarga anónima).\n"
+                "  • Le han quitado los permisos de acceso público.\n"
+                "Pide al creador del proxy que comparta las imágenes como "
+                "«Público en Internet» en Google Drive."
             )
             self.status_var.set("Error de descarga.")
             self._finish_running()

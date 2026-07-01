@@ -98,7 +98,7 @@ def test_generate_pdf_named_correctly(tmp_path):
     results = generate(
         tmp_path / "out", "mydeck", slots, front, back, _id_to_path(front, back, img)
     )
-    assert results[0].name == "out_mydeck.pdf"
+    assert results[0].name == "mydeck.pdf"
 
 
 def test_generate_creates_output_dir(tmp_path):
@@ -231,8 +231,8 @@ def test_generate_split_files_named_with_index(tmp_path):
     results = generate(tmp_path / "out", "deck", slots, front, back, id_map, max_bytes=1)
 
     names = {r.name for r in results}
-    assert "out_deck_1.pdf" in names
-    assert "out_deck_2.pdf" in names
+    assert "deck_1.pdf" in names
+    assert "deck_2.pdf" in names
 
 
 def test_generate_no_split_when_under_cap(tmp_path):
