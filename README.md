@@ -40,7 +40,7 @@ Puedes combinar las siguientes entradas en una ejecución:
 
 - **Magic:** selecciona uno o varios XML de MPCFill o pulsa **Añadir desde URL** para importar un mazo. Los XML tienen vista previa y avisos de validación. Los mazos por URL permiten incluir el sideboard y elegir un reverso local; las cartas de doble cara conservan su propia trasera.
 - **One Piece**, **Riftbound** y **Lorcana:** pega la URL y pulsa **Añadir**. En Riftbound puedes elegir si imprimir las runas.
-- **Imágenes locales:** añade frontales y reversos, asigna un reverso a cada frontal y cambia su orden. Puedes activar el recorte del borde MPC por imagen. Se aceptan `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tif` y `.tiff`.
+- **Imágenes locales:** añade frontales y reversos, asigna un reverso a cada frontal y activa el recorte del borde MPC por imagen. El modo **Multiselección** permite arrastrar sobre varios frontales y aplicarles a la vez una trasera o el recorte. Se aceptan `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tif` y `.tiff`.
 - **Configuración:** elige la carpeta de exportación y el color, grosor (0,1–10 pt) y estilo de las líneas de corte. Las líneas completas permiten elegir si se dibujan sobre frontales, traseras o ambos. Los cambios se guardan automáticamente.
 
 Si añades frontales locales sin ningún XML, debes añadir al menos un reverso local, incluso para generar solo frontales. El primero sirve de reverso predeterminado.

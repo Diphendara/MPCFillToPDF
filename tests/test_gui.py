@@ -242,6 +242,52 @@ class TestCropChange:
         var = tk.BooleanVar(value=True)
         app._on_front_crop_change(99, var)  # no IndexError
 
+    def test_crop_change_applies_to_selected_fronts(self, app, tmp_path):
+        for i in range(3):
+            app.state.local_fronts.append(make_rgb_image(tmp_path / f"f{i}.jpg"))
+            app.state.front_back_paths.append(None)
+            app.state.local_front_crop.append(False)
+        app._front_selected_indices = {0, 2}
+        app._on_front_crop_change(0, tk.BooleanVar(value=True))
+        assert app.state.local_front_crop == [True, False, True]
+
+
+class TestFrontMultiselection:
+    def test_clicking_any_row_label_selects_the_front(self, app, tmp_path):
+        app.state.local_fronts.append(make_rgb_image(tmp_path / "front.jpg"))
+        app.state.front_back_paths.append(None)
+        app.state.local_front_crop.append(False)
+        app._front_multiselect_var.set(True)
+        app._refresh_front_rows()
+
+        app._front_rows[0]["frame"].winfo_children()[2].event_generate("<ButtonPress-1>")
+
+        assert app._front_selected_indices == {0}
+
+    def test_back_change_applies_to_selected_fronts(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        app.state.local_backs.append(back)
+        app.state.local_back_crop.append(False)
+        for i in range(3):
+            app.state.local_fronts.append(make_rgb_image(tmp_path / f"f{i}.jpg"))
+            app.state.front_back_paths.append(None)
+            app.state.local_front_crop.append(False)
+        app._front_selected_indices = {0, 2}
+        app._on_front_back_change(0, tk.StringVar(value="1"))
+        assert app.state.front_back_paths == [back, None, back]
+
+    def test_selection_start_adds_to_previous_selection(self, app):
+        app._front_multiselect_var.set(True)
+        app._front_selected_indices = {0, 1}
+        assert app._on_front_selection_start(2) == "break"
+        assert app._front_selected_indices == {0, 1, 2}
+
+    def test_selection_drag_adds_front(self, app):
+        app._front_multiselect_var.set(True)
+        app._front_selected_indices = {0}
+        assert app._on_front_selection_drag(2) == "break"
+        assert app._front_selected_indices == {0, 2}
+
 
 # ---------------------------------------------------------------------------
 # _on_mtg_back_change
