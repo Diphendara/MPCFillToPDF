@@ -86,6 +86,9 @@ Estos son los importadores implementados en el código. Los mazos deben ser acce
 
 Las listas se importan desde esas webs y las imágenes se obtienen de **Scryfall**, por edición y número de colección o por nombre cuando faltan esos datos. El sideboard está desactivado por defecto. Las imágenes de Scryfall se procesan sin recortar el borde MPC y pueden tener distinta calidad que las de un XML de MPCFill.
 
+Los mazos de Moxfield, Archidekt y TappedOut también pueden mostrar un selector para incluir
+una copia de cada token detectado. El selector no aparece si la web no expone tokens imprimibles.
+
 ### One Piece Card Game
 
 | Web | Formato de URL |

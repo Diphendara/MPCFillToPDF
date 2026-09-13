@@ -79,6 +79,7 @@ class MtgUrlDeck:
     url: str
     cards: list[DeckCard]
     include_side: bool = False
+    include_tokens: bool = False
     name: str = ""
     back_path: Path | None = None
 
@@ -95,7 +96,14 @@ class MtgUrlDeck:
 
     @property
     def active_count(self) -> int:
-        return sum(c.quantity for c in self.cards if c.zone == "main" or self.include_side)
+        return sum(c.quantity for c in self.cards if self.includes(c))
+
+    def includes(self, card: DeckCard) -> bool:
+        return (
+            card.zone == "main"
+            or (card.zone == "side" and self.include_side)
+            or (card.zone == "token" and self.include_tokens)
+        )
 
 
 @dataclass
@@ -963,7 +971,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 mtg_cards_with_deck: list[tuple[DeckCard, MtgUrlDeck]] = []
                 for _deck in self.state.mtg_url_decks:
                     deck_cards = sorted(
-                        ((c, _deck) for c in _deck.cards if c.zone == "main" or _deck.include_side),
+                        ((c, _deck) for c in _deck.cards if _deck.includes(c)),
                         key=lambda x: x[0].name.casefold(),
                     )
                     mtg_cards_with_deck.extend(deck_cards)

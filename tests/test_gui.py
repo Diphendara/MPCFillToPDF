@@ -47,6 +47,57 @@ def app(tk_root):
 # ---------------------------------------------------------------------------
 
 
+class TestMtgUrlDeckZones:
+    def test_tokens_require_their_own_selection(self):
+        from gui.main import MtgUrlDeck
+        from src.deck_importer import DeckCard
+
+        deck = MtgUrlDeck(
+            url="https://moxfield.com/decks/example",
+            cards=[
+                DeckCard("Main", "m21", "1", 1, "main"),
+                DeckCard("Side", "m21", "2", 1, "side"),
+                DeckCard("Token", "tm21", "3", 1, "token"),
+            ],
+            include_side=True,
+        )
+
+        assert deck.active_count == 2
+        deck.include_tokens = True
+        assert deck.active_count == 3
+
+
+class TestMtgExtras:
+    def test_only_decks_with_tokens_show_the_extras_control(self, app):
+        from gui.main import MtgUrlDeck
+        from src.deck_importer import DeckCard
+
+        app.state.mtg_url_decks.extend(
+            [
+                MtgUrlDeck(
+                    "https://moxfield.com/decks/no-tokens",
+                    [DeckCard("Main", "m21", "1", 1, "main")],
+                ),
+                MtgUrlDeck(
+                    "https://moxfield.com/decks/tokens",
+                    [
+                        DeckCard("Main", "m21", "1", 1, "main"),
+                        DeckCard("Side", "m21", "2", 1, "side"),
+                        DeckCard("Token", "tm21", "3", 1, "token"),
+                    ],
+                ),
+            ]
+        )
+        app._refresh_xml_rows()
+
+        assert app._mtg_deck_rows[0]["extras_btn"] is None
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▼"
+
+        app._toggle_mtg_extras(1)
+
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▲"
+
+
 class TestBuildCropMap:
     def test_empty_returns_empty(self, app):
         assert app._build_crop_map() == {}
