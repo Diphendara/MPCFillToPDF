@@ -47,6 +47,57 @@ def app(tk_root):
 # ---------------------------------------------------------------------------
 
 
+class TestMtgUrlDeckZones:
+    def test_tokens_require_their_own_selection(self):
+        from gui.main import MtgUrlDeck
+        from src.deck_importer import DeckCard
+
+        deck = MtgUrlDeck(
+            url="https://moxfield.com/decks/example",
+            cards=[
+                DeckCard("Main", "m21", "1", 1, "main"),
+                DeckCard("Side", "m21", "2", 1, "side"),
+                DeckCard("Token", "tm21", "3", 1, "token"),
+            ],
+            include_side=True,
+        )
+
+        assert deck.active_count == 2
+        deck.include_tokens = True
+        assert deck.active_count == 3
+
+
+class TestMtgExtras:
+    def test_only_decks_with_tokens_show_the_extras_control(self, app):
+        from gui.main import MtgUrlDeck
+        from src.deck_importer import DeckCard
+
+        app.state.mtg_url_decks.extend(
+            [
+                MtgUrlDeck(
+                    "https://moxfield.com/decks/no-tokens",
+                    [DeckCard("Main", "m21", "1", 1, "main")],
+                ),
+                MtgUrlDeck(
+                    "https://moxfield.com/decks/tokens",
+                    [
+                        DeckCard("Main", "m21", "1", 1, "main"),
+                        DeckCard("Side", "m21", "2", 1, "side"),
+                        DeckCard("Token", "tm21", "3", 1, "token"),
+                    ],
+                ),
+            ]
+        )
+        app._refresh_xml_rows()
+
+        assert app._mtg_deck_rows[0]["extras_btn"] is None
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▼"
+
+        app._toggle_mtg_extras(1)
+
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▲"
+
+
 class TestBuildCropMap:
     def test_empty_returns_empty(self, app):
         assert app._build_crop_map() == {}
@@ -241,6 +292,92 @@ class TestCropChange:
     def test_crop_change_out_of_range_is_noop(self, app):
         var = tk.BooleanVar(value=True)
         app._on_front_crop_change(99, var)  # no IndexError
+
+    def test_crop_change_applies_to_selected_fronts(self, app, tmp_path):
+        for i in range(3):
+            app.state.local_fronts.append(make_rgb_image(tmp_path / f"f{i}.jpg"))
+            app.state.front_back_paths.append(None)
+            app.state.local_front_crop.append(False)
+        app._front_selected_indices = {0, 2}
+        app._on_front_crop_change(0, tk.BooleanVar(value=True))
+        assert app.state.local_front_crop == [True, False, True]
+
+
+class TestFrontMultiselection:
+    def test_clicking_any_row_label_selects_the_front(self, app, tmp_path):
+        app.state.local_fronts.append(make_rgb_image(tmp_path / "front.jpg"))
+        app.state.front_back_paths.append(None)
+        app.state.local_front_crop.append(False)
+        app._front_multiselect_var.set(True)
+        app._refresh_front_rows()
+
+        app._front_rows[0]["frame"].winfo_children()[2].event_generate("<ButtonPress-1>")
+
+        assert app._front_selected_indices == {0}
+
+    def test_back_change_applies_to_selected_fronts(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        app.state.local_backs.append(back)
+        app.state.local_back_crop.append(False)
+        for i in range(3):
+            app.state.local_fronts.append(make_rgb_image(tmp_path / f"f{i}.jpg"))
+            app.state.front_back_paths.append(None)
+            app.state.local_front_crop.append(False)
+        app._front_selected_indices = {0, 2}
+        app._on_front_back_change(0, tk.StringVar(value="1"))
+        assert app.state.front_back_paths == [back, None, back]
+
+    def test_selection_start_adds_to_previous_selection(self, app):
+        app._front_multiselect_var.set(True)
+        app._front_selected_indices = {0, 1}
+        assert app._on_front_selection_start(2) == "break"
+        assert app._front_selected_indices == {0, 1, 2}
+
+    def test_selection_drag_adds_front(self, app):
+        app._front_multiselect_var.set(True)
+        app._front_selected_indices = {0}
+        assert app._on_front_selection_drag(2) == "break"
+        assert app._front_selected_indices == {0, 2}
+
+
+# ---------------------------------------------------------------------------
+# Duplicate local images
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateLocalImages:
+    def test_drop_duplicate_fronts_creates_parallel_entries(self, app, tmp_path):
+        front = make_rgb_image(tmp_path / "front.jpg")
+        app._decode_drop = lambda _files: [front, front]
+
+        app._on_drop_fronts("ignored")
+
+        assert app.state.local_fronts == [front, front]
+        assert app.state.front_back_paths == [None, None]
+        assert app.state.local_front_crop == [False, False]
+
+    def test_drop_duplicate_backs_creates_parallel_entries(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        app._decode_drop = lambda _files: [back, back]
+
+        app._on_drop_backs("ignored")
+
+        assert app.state.local_backs == [back, back]
+        assert app.state.local_back_crop == [False, False]
+
+    def test_removing_one_duplicate_back_keeps_front_assignments(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        front = make_rgb_image(tmp_path / "front.jpg")
+        app.state.local_backs = [back, back]
+        app.state.local_back_crop = [False, False]
+        app.state.local_fronts = [front]
+        app.state.front_back_paths = [back]
+        app.state.local_front_crop = [False]
+
+        app._remove_back(0)
+
+        assert app.state.local_backs == [back]
+        assert app.state.front_back_paths == [back]
 
 
 # ---------------------------------------------------------------------------

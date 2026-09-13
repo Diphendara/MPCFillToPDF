@@ -9,6 +9,7 @@ from src.scryfall import (
     download_deck_images,
     fetch_card,
     fetch_card_by_name,
+    fetch_related_tokens,
 )
 
 _NORMAL_CARD_JSON = {
@@ -101,6 +102,33 @@ class TestFetchCardCaching:
             fetch_card("ltr", "10")
             fetch_card("m21", "10")
         assert mock_get.call_count == 2
+
+
+class TestFetchRelatedTokens:
+    def test_includes_token_extras_from_the_same_scryfall_relation(self):
+        source = {
+            "all_parts": [
+                {
+                    "component": "token",
+                    "id": "token-id",
+                    "name": "Soldier",
+                    "type_line": "Token Creature — Soldier",
+                },
+                {
+                    "component": "token",
+                    "id": "emblem-id",
+                    "name": "Elspeth Emblem",
+                    "type_line": "Emblem — Elspeth",
+                },
+                {"component": "combo_piece", "id": "other-id", "name": "Not included"},
+            ]
+        }
+        with patch("src.scryfall._throttled_get", return_value=_mock_resp(source)):
+            tokens = fetch_related_tokens(["source-id"])
+        assert [(card.name, card.scryfall_id) for card in tokens] == [
+            ("Soldier", "token-id"),
+            ("Elspeth Emblem", "emblem-id"),
+        ]
 
 
 class TestDownloadCardImages:
@@ -254,6 +282,27 @@ class TestDownloadCardImagesNameResolution:
 
             front, back = download_card_images(card, tmp_path)
         mock_name.assert_called_once_with("Lightning Bolt")
+        assert front.exists()
+        assert back is None
+
+    def test_retries_by_name_when_the_source_printing_is_missing(self, tmp_path):
+        card = DeckCard("Rahilda, Wanted Cutthroat", "vow", "A-63", 1, "main")
+        with (
+            patch(
+                "src.scryfall.fetch_card",
+                side_effect=[
+                    ScryfallError("missing printing"),
+                    ScryfallCard("https://example.com/img.jpg", None),
+                ],
+            ) as mock_card,
+            patch("src.scryfall.fetch_card_by_name", return_value=("vow", "63")) as mock_name,
+            patch("src.scryfall._throttled_get", return_value=_mock_resp(_NORMAL_CARD_JSON)),
+        ):
+            from src.scryfall import download_card_images
+
+            front, back = download_card_images(card, tmp_path)
+        assert mock_card.call_args_list[1].args == ("vow", "63")
+        mock_name.assert_called_once_with("Rahilda, Wanted Cutthroat")
         assert front.exists()
         assert back is None
 

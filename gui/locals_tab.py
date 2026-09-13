@@ -71,7 +71,7 @@ class LocalsTabMixin:
         fronts_block = ttk.Frame(local_frame)
         fronts_block.grid(row=3, column=0, sticky="nsew", padx=6, pady=(0, 6))
         fronts_block.columnconfigure(0, weight=1)
-        fronts_block.rowconfigure(1, weight=1)
+        fronts_block.rowconfigure(2, weight=1)
 
         fronts_hdr = ttk.Frame(fronts_block)
         fronts_hdr.grid(row=0, column=0, sticky="ew", pady=(2, 4))
@@ -84,9 +84,20 @@ class LocalsTabMixin:
             variable=self._front_crop_all,
             command=self._on_front_crop_all,
         ).pack(side=tk.RIGHT, padx=(8, 0))
+        self._front_multiselect_var = tk.BooleanVar(value=False)
+        self._front_selected_indices: set[int] = set()
+
+        front_selection_row = ttk.Frame(fronts_block)
+        front_selection_row.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        ttk.Checkbutton(
+            front_selection_row,
+            text="Multiselección",
+            variable=self._front_multiselect_var,
+            command=self._on_front_multiselect_changed,
+        ).pack(side=tk.LEFT)
 
         fronts_holder = ttk.Frame(fronts_block)
-        fronts_holder.grid(row=1, column=0, sticky="nsew")
+        fronts_holder.grid(row=2, column=0, sticky="nsew")
         fronts_holder.columnconfigure(0, weight=1)
         fronts_holder.rowconfigure(0, weight=1)
 
@@ -110,7 +121,7 @@ class LocalsTabMixin:
         self._fronts_empty_label.pack(anchor="w")
 
         fronts_btn_row = ttk.Frame(fronts_block)
-        fronts_btn_row.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        fronts_btn_row.grid(row=3, column=0, sticky="ew", pady=(4, 0))
         ttk.Button(
             fronts_btn_row, text="Seleccionar imágenes…", command=self._pick_local_fronts
         ).pack(side=tk.LEFT)
@@ -127,10 +138,9 @@ class LocalsTabMixin:
         added = False
         for p in paths:
             pp = Path(p)
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
+            self.state.local_backs.append(pp)
+            self.state.local_back_crop.append(False)
+            added = True
         if added:
             if was_empty and self.state.local_backs:
                 first = self.state.local_backs[0]
@@ -147,9 +157,10 @@ class LocalsTabMixin:
         removed_path = self.state.local_backs[idx]
         del self.state.local_backs[idx]
         del self.state.local_back_crop[idx]
-        for i, assigned in enumerate(self.state.front_back_paths):
-            if assigned == removed_path:
-                self.state.front_back_paths[i] = None
+        if removed_path not in self.state.local_backs:
+            for i, assigned in enumerate(self.state.front_back_paths):
+                if assigned == removed_path:
+                    self.state.front_back_paths[i] = None
         self._refresh_back_rows()
         self._refresh_front_rows()
         self._refresh_generate_state()
@@ -206,18 +217,6 @@ class LocalsTabMixin:
                 width=2,
                 command=lambda idx=i: self._remove_back(idx),
             ).pack(side=tk.RIGHT)
-            ttk.Button(
-                row,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_back_down(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-            ttk.Button(
-                row,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_back_up(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
 
             self._back_rows.append({"frame": row, "crop_var": crop_var})
 
@@ -234,11 +233,10 @@ class LocalsTabMixin:
         added = False
         for p in paths:
             pp = Path(p)
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
+            self.state.local_fronts.append(pp)
+            self.state.front_back_paths.append(default_back)
+            self.state.local_front_crop.append(False)
+            added = True
         if added:
             self._refresh_front_rows()
             self._refresh_generate_state()
@@ -249,6 +247,7 @@ class LocalsTabMixin:
         self.state.local_fronts.clear()
         self.state.front_back_paths.clear()
         self.state.local_front_crop.clear()
+        self._front_selected_indices.clear()
         self._refresh_front_rows()
         self._refresh_generate_state()
 
@@ -257,6 +256,7 @@ class LocalsTabMixin:
             del self.state.local_fronts[idx]
             del self.state.front_back_paths[idx]
             del self.state.local_front_crop[idx]
+            self._front_selected_indices.clear()
             self._refresh_front_rows()
             self._refresh_generate_state()
 
@@ -266,14 +266,59 @@ class LocalsTabMixin:
         try:
             n = int(choice)
         except (TypeError, ValueError):
-            self.state.front_back_paths[idx] = None
-            return
-        if 1 <= n <= len(self.state.local_backs):
-            self.state.front_back_paths[idx] = self.state.local_backs[n - 1]
+            back_path = None
+        else:
+            back_path = (
+                self.state.local_backs[n - 1] if 1 <= n <= len(self.state.local_backs) else None
+            )
+        for selected_idx in self._front_change_indices(idx):
+            self.state.front_back_paths[selected_idx] = back_path
+        self._refresh_front_rows()
 
     def _on_front_crop_change(self, idx: int, var: tk.BooleanVar) -> None:
-        if 0 <= idx < len(self.state.local_front_crop):
-            self.state.local_front_crop[idx] = bool(var.get())
+        for selected_idx in self._front_change_indices(idx):
+            self.state.local_front_crop[selected_idx] = bool(var.get())
+        self._refresh_front_rows()
+
+    def _on_front_multiselect_changed(self) -> None:
+        if not self._front_multiselect_var.get():
+            self._front_selected_indices.clear()
+            self._refresh_front_rows()
+
+    def _front_change_indices(self, idx: int) -> list[int]:
+        if not 0 <= idx < len(self.state.local_fronts):
+            return []
+        if idx in self._front_selected_indices:
+            return sorted(
+                selected_idx
+                for selected_idx in self._front_selected_indices
+                if selected_idx < len(self.state.local_fronts)
+            )
+        return [idx]
+
+    def _on_front_selection_start(self, idx: int, _event=None) -> str | None:
+        if not self._front_multiselect_var.get():
+            return None
+        self._front_selected_indices.add(idx)
+        self._update_front_selection_colors()
+        return "break"
+
+    def _on_front_selection_drag(self, idx: int, _event=None) -> str | None:
+        if not self._front_multiselect_var.get():
+            return None
+        self._front_selected_indices.add(idx)
+        self._update_front_selection_colors()
+        return "break"
+
+    def _update_front_selection_colors(self) -> None:
+        for idx, row in enumerate(self._front_rows):
+            color = "#cfe8ff" if idx in self._front_selected_indices else "#f0f0f0"
+            row["frame"].configure(
+                bg=color,
+                highlightbackground="#5a9bd4" if idx in self._front_selected_indices else "#f0f0f0",
+            )
+            for widget in row["selection_widgets"]:
+                widget.configure(bg=color)
 
     def _on_front_crop_all(self) -> None:
         val = bool(self._front_crop_all.get())
@@ -297,26 +342,53 @@ class LocalsTabMixin:
             self._fronts_header_var.set("Frontales (asignar trasera por carta):")
             return
         self._fronts_empty_label.pack_forget()
+        self._front_selected_indices.intersection_update(range(len(self.state.local_fronts)))
 
         numbered = [str(i) for i in range(1, len(self.state.local_backs) + 1)]
         combo_values = ["—", *numbered]
         backs_present = bool(numbered)
 
         for i, front_path in enumerate(self.state.local_fronts):
-            row = ttk.Frame(self.fronts_inner)
+            row_color = "#cfe8ff" if i in self._front_selected_indices else "#f0f0f0"
+            row = tk.Frame(
+                self.fronts_inner,
+                bg=row_color,
+                highlightbackground="#5a9bd4" if i in self._front_selected_indices else "#f0f0f0",
+                highlightthickness=1,
+            )
             row.pack(fill=tk.X, pady=1, padx=2)
 
-            ttk.Label(row, text=f"{i + 1:>3}.", width=4, anchor="e").pack(side=tk.LEFT)
-            front_name_lbl = ttk.Label(
+            number_lbl = tk.Label(row, text=f"{i + 1:>3}.", width=4, anchor="e", bg=row_color)
+            number_lbl.pack(side=tk.LEFT)
+            front_name_lbl = tk.Label(
                 row,
                 text=ellipsize(front_path.name, FRONT_NAME_WIDTH),
                 width=FRONT_NAME_WIDTH + 1,
                 anchor="w",
+                bg=row_color,
             )
             front_name_lbl.pack(side=tk.LEFT, padx=(4, 8))
             ImageTooltip(front_name_lbl, front_path)
+            for widget in (row, number_lbl, front_name_lbl):
+                widget.bind(
+                    "<ButtonPress-1>",
+                    lambda event, idx=i: self._on_front_selection_start(idx, event),
+                )
+                widget.bind(
+                    "<B1-Motion>",
+                    lambda event, idx=i: self._on_front_selection_drag(idx, event),
+                )
 
-            ttk.Label(row, text="Trasera:").pack(side=tk.LEFT)
+            back_label = tk.Label(row, text="Trasera:", bg=row_color)
+            back_label.pack(side=tk.LEFT)
+            for sequence, callback in (
+                ("<ButtonPress-1>", self._on_front_selection_start),
+                ("<B1-Motion>", self._on_front_selection_drag),
+            ):
+                back_label.bind(
+                    sequence,
+                    lambda event, idx=i, handler=callback: handler(idx, event),
+                )
 
             assigned = self.state.front_back_paths[i]
             if assigned is not None and assigned not in self.state.local_backs:
@@ -354,21 +426,15 @@ class LocalsTabMixin:
                 width=2,
                 command=lambda idx=i: self._remove_front(idx),
             ).pack(side=tk.RIGHT)
-            ttk.Button(
-                row,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_front_down(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-            ttk.Button(
-                row,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_front_up(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
 
             self._front_rows.append(
-                {"frame": row, "var": var, "combo": combo, "crop_var": crop_var},
+                {
+                    "frame": row,
+                    "var": var,
+                    "combo": combo,
+                    "crop_var": crop_var,
+                    "selection_widgets": (number_lbl, front_name_lbl, back_label),
+                },
             )
 
         self.fronts_inner.update_idletasks()
@@ -379,64 +445,6 @@ class LocalsTabMixin:
             f"Frontales (asignar trasera por carta):   Actualmente: {total} cartas"
         )
 
-    def _move_back_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.local_backs[idx], self.state.local_backs[idx - 1] = (
-                self.state.local_backs[idx - 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx - 1] = (
-                self.state.local_back_crop[idx - 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
-    def _move_back_down(self, idx: int) -> None:
-        if idx < len(self.state.local_backs) - 1:
-            self.state.local_backs[idx], self.state.local_backs[idx + 1] = (
-                self.state.local_backs[idx + 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx + 1] = (
-                self.state.local_back_crop[idx + 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
-    def _move_front_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.local_fronts[idx], self.state.local_fronts[idx - 1] = (
-                self.state.local_fronts[idx - 1],
-                self.state.local_fronts[idx],
-            )
-            self.state.front_back_paths[idx], self.state.front_back_paths[idx - 1] = (
-                self.state.front_back_paths[idx - 1],
-                self.state.front_back_paths[idx],
-            )
-            self.state.local_front_crop[idx], self.state.local_front_crop[idx - 1] = (
-                self.state.local_front_crop[idx - 1],
-                self.state.local_front_crop[idx],
-            )
-            self._refresh_front_rows()
-
-    def _move_front_down(self, idx: int) -> None:
-        if idx < len(self.state.local_fronts) - 1:
-            self.state.local_fronts[idx], self.state.local_fronts[idx + 1] = (
-                self.state.local_fronts[idx + 1],
-                self.state.local_fronts[idx],
-            )
-            self.state.front_back_paths[idx], self.state.front_back_paths[idx + 1] = (
-                self.state.front_back_paths[idx + 1],
-                self.state.front_back_paths[idx],
-            )
-            self.state.local_front_crop[idx], self.state.local_front_crop[idx + 1] = (
-                self.state.local_front_crop[idx + 1],
-                self.state.local_front_crop[idx],
-            )
-            self._refresh_front_rows()
-
     def _on_drop_backs(self, files) -> None:
         paths = self._decode_drop(files)
         was_empty = not self.state.local_backs
@@ -444,10 +452,9 @@ class LocalsTabMixin:
         for pp in paths:
             if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
                 continue
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
+            self.state.local_backs.append(pp)
+            self.state.local_back_crop.append(False)
+            added = True
         if added:
             if was_empty and self.state.local_backs:
                 first = self.state.local_backs[0]
@@ -465,11 +472,10 @@ class LocalsTabMixin:
         for pp in paths:
             if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
                 continue
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
+            self.state.local_fronts.append(pp)
+            self.state.front_back_paths.append(default_back)
+            self.state.local_front_crop.append(False)
+            added = True
         if added:
             self._refresh_front_rows()
             self._refresh_generate_state()

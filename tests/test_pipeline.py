@@ -262,6 +262,23 @@ def test_run_locals_only_produces_pdf(tmp_path):
     assert results[0].stat().st_size > 0
 
 
+def test_run_locals_only_passes_custom_pdf_size_to_generator(tmp_path):
+    front = _img(tmp_path / "front.jpg")
+    cardback = _img(tmp_path / "back.jpg", color=(40, 80, 180))
+
+    with patch("src.pipeline.generate", return_value=[]) as generate_mock:
+        run_locals_only(
+            extra_fronts=[front],
+            local_cardback=cardback,
+            output_dir=tmp_path / "out",
+            base_name="locals",
+            work_dir=tmp_path / "work",
+            max_pdf_bytes=250_000_000,
+        )
+
+    assert generate_mock.call_args.kwargs["max_bytes"] == 250_000_000
+
+
 def test_run_locals_only_fronts_only(tmp_path):
     front = _img(tmp_path / "front.jpg")
     cardback = _img(tmp_path / "back.jpg", color=(40, 80, 180))

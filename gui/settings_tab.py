@@ -14,6 +14,9 @@ from src.app_settings import (
     DEFAULT_CUT_LINE_OVER_FRONTS,
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
+    DEFAULT_MAX_PDF_SIZE_MB,
+    MAX_MAX_PDF_SIZE_MB,
+    MIN_MAX_PDF_SIZE_MB,
     save_settings,
 )
 
@@ -43,6 +46,30 @@ class SettingsTabMixin:
             side=tk.RIGHT, padx=(8, 0)
         )
 
+        ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 12))
+
+        # ── Tamaño máximo de PDF ─────────────────────────────────────────────
+        ttk.Label(outer, text="Tamaño máximo de PDF", font=("Segoe UI", 10, "bold")).pack(
+            anchor=tk.W, pady=(0, 6)
+        )
+        ttk.Label(
+            outer,
+            text="(Seteado en 200Mb para que se puedan subir a la web, puedes editarlo para utilizar WeTransfer)",
+            foreground="#555",
+            wraplength=600,
+        ).pack(anchor=tk.W, pady=(0, 6))
+        pdf_size_row = ttk.Frame(outer)
+        pdf_size_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(pdf_size_row, text="Máximo por archivo (MB):").pack(side=tk.LEFT)
+        self._settings_max_pdf_size_var = tk.StringVar(value=str(self._settings.max_pdf_size_mb))
+        ttk.Entry(
+            pdf_size_row,
+            textvariable=self._settings_max_pdf_size_var,
+            width=6,
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(
+            outer, text="Se crea un PDF nuevo al alcanzar este tamaño estimado.", foreground="#555"
+        ).pack(anchor=tk.W, pady=(0, 12))
         ttk.Separator(outer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 12))
 
         # ── Líneas de corte ──────────────────────────────────────────────────
@@ -166,6 +193,17 @@ class SettingsTabMixin:
         """Called by Spinbox arrow buttons."""
         self._apply_width_from_var()
 
+    def _save_max_pdf_size_input(self) -> None:
+        try:
+            value = int(self._settings_max_pdf_size_var.get())
+        except ValueError:
+            self._settings_max_pdf_size_var.set(str(self._settings.max_pdf_size_mb))
+            return
+        value = max(MIN_MAX_PDF_SIZE_MB, min(MAX_MAX_PDF_SIZE_MB, value))
+        self._settings.max_pdf_size_mb = value
+        self._settings_max_pdf_size_var.set(str(value))
+        self._persist_settings()
+
     def _on_settings_width_trace(self, *_) -> None:
         """Called on every keystroke in the Spinbox entry."""
         self._apply_width_from_var()
@@ -211,6 +249,7 @@ class SettingsTabMixin:
         self._settings.cut_line_over_cards = DEFAULT_CUT_LINE_OVER_CARDS
         self._settings.cut_line_over_fronts = DEFAULT_CUT_LINE_OVER_FRONTS
         self._settings.cut_line_over_backs = DEFAULT_CUT_LINE_OVER_BACKS
+        self._settings.max_pdf_size_mb = DEFAULT_MAX_PDF_SIZE_MB
 
         self._custom_output_dir = None
         self.out_dir_var.set(str(output_dir()))
@@ -221,6 +260,7 @@ class SettingsTabMixin:
         self._settings_width_var.set(f"{DEFAULT_CUT_LINE_WIDTH:.1f}")
         self._settings_over_fronts_var.set(DEFAULT_CUT_LINE_OVER_FRONTS)
         self._settings_over_backs_var.set(DEFAULT_CUT_LINE_OVER_BACKS)
+        self._settings_max_pdf_size_var.set(str(DEFAULT_MAX_PDF_SIZE_MB))
         self._over_cards_sub_frame.pack_forget()
         self._persist_settings()
 

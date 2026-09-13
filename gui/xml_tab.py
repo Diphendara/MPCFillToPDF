@@ -226,8 +226,10 @@ class XmlTabMixin:
         back_combo_values = ["default", *numbered]
 
         for i, deck in enumerate(self.state.mtg_url_decks):
-            frame = ttk.Frame(self.xml_inner)
-            frame.pack(fill=tk.X, pady=1, padx=2)
+            outer = ttk.Frame(self.xml_inner)
+            outer.pack(fill=tk.X, pady=1, padx=2)
+            frame = ttk.Frame(outer)
+            frame.pack(fill=tk.X)
             frame.columnconfigure(0, weight=3)
             frame.columnconfigure(2, weight=7)
 
@@ -244,24 +246,14 @@ class XmlTabMixin:
 
             main_count = sum(c.quantity for c in deck.cards if c.zone == "main")
             side_count = sum(c.quantity for c in deck.cards if c.zone == "side")
+            token_count = sum(c.quantity for c in deck.cards if c.zone == "token")
             count_text = f"{main_count} cartas" + (f" +{side_count} side" if side_count else "")
+            count_text += f" +{token_count} tokens/extras" if token_count else ""
             ttk.Label(right, text=count_text, foreground="#555", anchor="w").grid(
                 row=0, column=0, sticky="w", padx=(0, 6)
             )
 
             col = 1
-            if side_count:
-                side_var = tk.BooleanVar(value=deck.include_side)
-
-                def _toggle_side(idx=i, var=side_var):
-                    self.state.mtg_url_decks[idx].include_side = var.get()
-                    self._refresh_generate_state()
-
-                ttk.Checkbutton(
-                    right, text="Incluir sideboard", variable=side_var, command=_toggle_side
-                ).grid(row=0, column=col, padx=(0, 4))
-                col += 1
-
             if deck.back_path is not None and deck.back_path not in self.state.local_backs:
                 deck.back_path = None
 
@@ -293,9 +285,76 @@ class XmlTabMixin:
                 width=2,
                 command=lambda idx=i: self._remove_mtg_deck(idx),
             ).grid(row=0, column=col, padx=(0, 2))
+            col += 1
 
-            self._mtg_deck_rows.append({"frame": frame})
+            detail: ttk.Frame | None = None
+            expanded: tk.BooleanVar | None = None
+            extras_btn: ttk.Button | None = None
+            if token_count:
+                detail = ttk.Frame(outer)
+                expanded = tk.BooleanVar(value=False)
 
+                if side_count:
+                    side_var = tk.BooleanVar(value=deck.include_side)
+
+                    def _toggle_side(idx=i, var=side_var):
+                        self.state.mtg_url_decks[idx].include_side = var.get()
+                        self._refresh_generate_state()
+
+                    ttk.Checkbutton(
+                        detail, text="Incluir sideboard", variable=side_var, command=_toggle_side
+                    ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
+
+                token_var = tk.BooleanVar(value=deck.include_tokens)
+
+                def _toggle_tokens(idx=i, var=token_var):
+                    self.state.mtg_url_decks[idx].include_tokens = var.get()
+                    self._refresh_generate_state()
+
+                ttk.Checkbutton(
+                    detail,
+                    text="Incluir tokens y extras",
+                    variable=token_var,
+                    command=_toggle_tokens,
+                ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
+
+                extras_btn = ttk.Button(
+                    right,
+                    text="Extras ▼",
+                    width=9,
+                    command=lambda idx=i: self._toggle_mtg_extras(idx),
+                )
+                extras_btn.grid(row=0, column=col)
+
+            self._mtg_deck_rows.append(
+                {
+                    "frame": outer,
+                    "detail": detail,
+                    "extras_btn": extras_btn,
+                    "expanded": expanded,
+                }
+            )
+
+        self.xml_inner.update_idletasks()
+        self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))
+
+    def _toggle_mtg_extras(self, idx: int) -> None:
+        if idx >= len(self._mtg_deck_rows):
+            return
+        row = self._mtg_deck_rows[idx]
+        detail = row["detail"]
+        extras_btn = row["extras_btn"]
+        expanded = row["expanded"]
+        if detail is None or extras_btn is None or expanded is None:
+            return
+        if expanded.get():
+            detail.pack_forget()
+            extras_btn.configure(text="Extras ▼")
+            expanded.set(False)
+        else:
+            detail.pack(fill=tk.X, padx=0, pady=(0, 4))
+            extras_btn.configure(text="Extras ▲")
+            expanded.set(True)
         self.xml_inner.update_idletasks()
         self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))
 

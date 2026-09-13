@@ -79,6 +79,7 @@ class MtgUrlDeck:
     url: str
     cards: list[DeckCard]
     include_side: bool = False
+    include_tokens: bool = False
     name: str = ""
     back_path: Path | None = None
 
@@ -95,7 +96,14 @@ class MtgUrlDeck:
 
     @property
     def active_count(self) -> int:
-        return sum(c.quantity for c in self.cards if c.zone == "main" or self.include_side)
+        return sum(c.quantity for c in self.cards if self.includes(c))
+
+    def includes(self, card: DeckCard) -> bool:
+        return (
+            card.zone == "main"
+            or (card.zone == "side" and self.include_side)
+            or (card.zone == "token" and self.include_tokens)
+        )
 
 
 @dataclass
@@ -268,11 +276,15 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         notebook.add(settings_frame, text=" ⚙ Configuración")
         self._build_settings_tab(settings_frame)
         self._settings_tab_idx = notebook.index("end") - 1
+        self._was_on_settings_tab = False
 
         notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
     def _on_notebook_tab_changed(self, _event=None) -> None:
         on_settings = self._game_notebook.index("current") == self._settings_tab_idx
+        if self._was_on_settings_tab and not on_settings:
+            self._save_max_pdf_size_input()
+        self._was_on_settings_tab = on_settings
         if on_settings:
             self._locals_pane.grid_remove()
             self._game_notebook.grid_configure(columnspan=2, padx=0)
@@ -745,6 +757,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 self._settings.cut_line_over_cards,
                 self._settings.cut_line_over_fronts,
                 self._settings.cut_line_over_backs,
+                self._settings.max_pdf_size_mb * 1_000_000,
             ),
             daemon=True,
         )
@@ -774,6 +787,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         cut_line_over_cards: bool = False,
         cut_line_over_fronts: bool = True,
         cut_line_over_backs: bool = True,
+        max_pdf_bytes: int = 500_000_000,
     ) -> None:
         run_dir = None
         wd = None
@@ -957,7 +971,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 mtg_cards_with_deck: list[tuple[DeckCard, MtgUrlDeck]] = []
                 for _deck in self.state.mtg_url_decks:
                     deck_cards = sorted(
-                        ((c, _deck) for c in _deck.cards if c.zone == "main" or _deck.include_side),
+                        ((c, _deck) for c in _deck.cards if _deck.includes(c)),
                         key=lambda x: x[0].name.casefold(),
                     )
                     mtg_cards_with_deck.extend(deck_cards)
@@ -1089,6 +1103,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     cut_line_over_cards=cut_line_over_cards,
                     cut_line_over_fronts=cut_line_over_fronts,
                     cut_line_over_backs=cut_line_over_backs,
+                    max_pdf_bytes=max_pdf_bytes,
                 )
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
@@ -1142,6 +1157,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     cut_line_over_cards=cut_line_over_cards,
                     cut_line_over_fronts=cut_line_over_fronts,
                     cut_line_over_backs=cut_line_over_backs,
+                    max_pdf_bytes=max_pdf_bytes,
                 )
                 generated.extend(pdfs)
                 manifest = None

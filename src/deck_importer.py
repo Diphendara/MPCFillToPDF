@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import html as _html
 import json as _json
+import logging
 import re
 from dataclasses import dataclass
 
 import requests
+
+_log = logging.getLogger(__name__)
 
 _HEADERS = {
     "User-Agent": (
@@ -37,6 +40,7 @@ _MANABOX_SIDE_CATS = frozenset({1})  # boardCategory 1 = sideboard
 
 _TAPPEDOUT_MAIN_RE = re.compile(r"^(\d+)\s+(.+)$")
 _TAPPEDOUT_SIDE_RE = re.compile(r"^SB:\s*(\d+)\s+(.+)$")
+_TAPPEDOUT_TOKENS_RE = re.compile(r"\bTokens\s*\|\s*([^\n<]+)", re.IGNORECASE)
 
 
 class DeckImportError(Exception):
@@ -51,7 +55,8 @@ class DeckCard:
     set_code: str
     collector_number: str
     quantity: int
-    zone: str  # "main" | "side"
+    zone: str  # "main" | "side" | "token"
+    scryfall_id: str = ""
 
 
 @dataclass
@@ -111,6 +116,7 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
             if not set_code or not collector_number:
                 continue
             cards.append(DeckCard(name, set_code, collector_number, qty, zone))
+    cards.extend(_extract_token_cards(data.get("tokens", [])))
     return FetchedDeck(name=deck_name, cards=cards)
 
 
@@ -125,6 +131,7 @@ def _fetch_archidekt(deck_id: str) -> FetchedDeck:
 
     deck_name: str = data.get("name", "")
     cards: list[DeckCard] = []
+    token_source_ids: list[str] = []
     for entry in data.get("cards", []):
         categories = entry.get("categories", [])
         if any(c in _ARCHIDEKT_SKIP_CATEGORIES for c in categories):
@@ -136,9 +143,16 @@ def _fetch_archidekt(deck_id: str) -> FetchedDeck:
         name = card_data.get("oracleCard", {}).get("name", "")
         qty = int(entry.get("quantity", 1))
         zone = "side" if any(c in _ARCHIDEKT_SIDE_CATEGORIES for c in categories) else "main"
-        if not set_code or not collector_number:
+        if not name:
             continue
         cards.append(DeckCard(name, set_code, collector_number, qty, zone))
+        if card_data.get("oracleCard", {}).get("tokens"):
+            token_source_ids.append(str(card_data.get("uid", "")))
+    cards.extend(_extract_token_cards(data.get("tokens", [])))
+    if token_source_ids:
+        from src.scryfall import fetch_related_tokens
+
+        cards.extend(fetch_related_tokens(token_source_ids))
     return FetchedDeck(name=deck_name, cards=cards)
 
 
@@ -193,7 +207,63 @@ def _fetch_tappedout(slug: str) -> FetchedDeck:
 
     if not cards:
         raise DeckImportError("No se encontraron cartas en el mazo de TappedOut", "tappedout")
+    cards.extend(_fetch_tappedout_tokens(slug))
     return FetchedDeck(name=deck_name, cards=cards)
+
+
+def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
+    """Return one printable card for each distinct token supplied by a deck API."""
+    if isinstance(raw_tokens, dict):
+        entries = raw_tokens.values()
+    elif isinstance(raw_tokens, list):
+        entries = raw_tokens
+    else:
+        return []
+
+    cards: list[DeckCard] = []
+    seen: set[tuple[str, str, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        card = entry.get("card", entry)
+        if not isinstance(card, dict):
+            continue
+        oracle_card = card.get("oracleCard", {})
+        name = str(card.get("name", oracle_card.get("name", "")))
+        edition = card.get("edition", {})
+        set_code = str(card.get("set", card.get("setCode", edition.get("editioncode", "")))).lower()
+        collector_number = str(
+            card.get("cn", card.get("collectorNumber", card.get("collector_number", "")))
+        )
+        key = (name.casefold(), set_code, collector_number)
+        if name and key not in seen:
+            seen.add(key)
+            cards.append(DeckCard(name, set_code, collector_number, 1, "token"))
+    return cards
+
+
+def _fetch_tappedout_tokens(slug: str) -> list[DeckCard]:
+    """Read TappedOut's generated-token summary without failing the deck import."""
+    try:
+        resp = requests.get(
+            f"https://tappedout.net/mtg-decks/{slug}/", headers=_HEADERS, timeout=_TIMEOUT
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        _log.warning("No se pudieron leer los tokens de TappedOut: %s", exc)
+        return []
+
+    text = _html.unescape(resp.text)
+    match = _TAPPEDOUT_TOKENS_RE.search(text)
+    if not match:
+        return []
+    names = (name.strip() for name in match.group(1).split(","))
+    return [DeckCard(_tappedout_token_name(name), "", "", 1, "token") for name in names if name]
+
+
+def _tappedout_token_name(label: str) -> str:
+    """Remove TappedOut's power/toughness/color suffix before Scryfall name lookup."""
+    return re.sub(r"\s+\d+/\d+\s+[WUBRGC]+$", "", label).strip()
 
 
 def _astro_val(wrapped: object) -> object:

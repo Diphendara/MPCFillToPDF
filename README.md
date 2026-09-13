@@ -1,213 +1,260 @@
-# Tutorial
-Si buscas un tutorial mira aquí -> [https://github.com/Diphendara/MPCFillToPDF/wiki/Tutorial](https://github.com/Diphendara/MPCFillToPDF/wiki/1-%E2%80%90-Tutorial)
-
-# Sugerencias, bugs etc
-Puedes buscarme en twitter/bsky como @diphendara o abrirme una issue por github
-
-
 # MPCFillToPDF
 
-Convierte un archivo de proyecto de [MPCFill](https://mpcfill.com/) (XML) en un PDF listo para imprimir en una imprenta local (A4, 3×3 cartas por página, doble cara).
+Convierte XML de MPCFill, imágenes locales y mazos importados desde webs en PDFs para imprimir: A4, 3×3 cartas por página y traseras colocadas para impresión a doble cara. También permite generar solo los frontales.
 
-El XML de MPCFill referencia imágenes alojadas en Google Drive. Esta herramienta las descarga, les quita el sangrado de MPC, las recoloca con un sangrado en espejo de 1 mm y monta el PDF con líneas de corte y marcas de impresora.
+[Tutorial en la wiki](https://github.com/Diphendara/MPCFillToPDF/wiki/1-%E2%80%90-Tutorial). Para sugerencias o errores, abre una issue en el repositorio o contacta con **@diphendara** en Twitter/Bluesky.
 
-También soporta mazos de otros juegos de cartas descargándolos directamente desde webs especializadas (ver [Webs soportadas](#webs-soportadas-para-diferentes-tcg)).
+## Instalación desde el código
 
----
+Necesitas **Python 3.10 o superior** con Tkinter. Ejecuta los comandos desde la raíz del proyecto:
 
-## Webs soportadas para diferentes TCG
-
-### One Piece Card Game
-
-| Web | URL de ejemplo |
-|-----|---------------|
-| [onepiece.gg](https://onepiece.gg) | `https://onepiece.gg/decks/nombre-del-mazo` |
-| [deckbuilder.egmanevents.com](https://deckbuilder.egmanevents.com) | `https://deckbuilder.egmanevents.com/?deck=CARTA:X,...` o `https://deckbuilder.egmanevents.com/d/CODIGO` |
-| [deckbuilder.cardkaizoku.com](https://deckbuilder.cardkaizoku.com) | `https://deckbuilder.cardkaizoku.com/?deck=2xOP01-001\|3xOP01-002\|...` |
-
-Pega la URL del mazo en la pestaña **One Piece** de la interfaz gráfica y pulsa **Añadir**.
-
----
-
-### Riftbound TCG
-
-| Web | URL de ejemplo |
-|-----|---------------|
-| [riftbound.gg](https://riftbound.gg) | `https://riftbound.gg/decks/nombre-del-mazo/` |
-| [piltoverarchive.com](https://piltoverarchive.com) | `https://piltoverarchive.com/decks/view/<UUID>` |
-| [riftmana.com](https://riftmana.com) | `https://riftmana.com/decks/nombre-del-mazo` |
-| [riftbinder.com](https://riftbinder.com) | `https://riftbinder.com/decks/<ID>` |
-| [riftdex.com](https://riftdex.com) | `https://riftdex.com/deck/<UUID>` |
-
-Pega la URL del mazo en la pestaña **Riftbound** de la interfaz gráfica y pulsa **Añadir**.
-
-> **Nota:** Solo se pueden descargar mazos **públicos**. Si el mazo no está disponible (privado o eliminado), aparecerá un mensaje de error.
-
----
-
-### Lorcana
-
-| Web | URL de ejemplo |
-|-----|---------------|
-| [lorcana.gg](https://lorcana.gg) | `https://lorcana.gg/decks/nombre-del-mazo/` |
-| [inkdecks.com](https://inkdecks.com) | `https://inkdecks.com/lorcana-metagame/deck-nombre-ID` |
-| [dreamborn.ink](https://dreamborn.ink) | `https://dreamborn.ink/es/decks/ID` |
-
-Pega la URL del mazo en la pestaña **Lorcana** de la interfaz gráfica y pulsa **Añadir**.
-
-> **Nota:** dreamborn.ink requiere que **Google Chrome** esté instalado, ya que la web usa protección anti-bots que solo un navegador real puede superar. El programa abre Chrome minimizado, carga la página y lo cierra automáticamente.
-
----
-
-## Clave de API de Google Drive (recomendado)
-
-Las imágenes de los XMLs de MPCFill están alojadas en Google Drive. Sin configuración adicional, el programa las descarga usando `gdown` (peticiones anónimas), que puede recibir errores **429 — rate limit** al descargar muchas imágenes seguidas.
-
-Para evitarlo, configura una **API Key de Google Drive** (gratuita, no requiere OAuth ni cuenta de servicio):
-
-1. Ve a [Google Cloud Console](https://console.cloud.google.com/).
-2. Crea un proyecto (o usa uno existente).
-3. Activa la **Google Drive API** (Biblioteca → busca "Google Drive API" → Habilitar).
-4. Ve a **Credenciales** → **Crear credenciales** → **Clave de API**.
-5. (Opcional pero recomendado) Restringe la clave a la Google Drive API.
-6. Copia el archivo `config.example.json` y renómbralo a `config.json`:
-   ```
-   cp config.example.json config.json
-   ```
-7. Abre `config.json` y pega tu clave:
-   ```json
-   {
-     "google_drive_api_key": "AIza..."
-   }
-   ```
-
-> **`config.json` está en `.gitignore` y nunca se sube al repositorio.**
-> Si no configuras la clave, el programa sigue funcionando con `gdown` como antes.
-
----
-
-## Instalación
-
-### 1. Requisitos previos
-
-- **Python 3.10 o superior** ([descarga oficial](https://www.python.org/downloads/)). Durante la instalación marca *"Add Python to PATH"*.
-- **Git** (opcional, solo si clonas el repositorio).
-
-Verifica:
-```
-python --version
-```
-
-### 2. Obtener el código
-
-Clónalo:
-```
-git clone <url-del-repo> MPCFillToPDF
+```sh
+git clone https://github.com/Diphendara/MPCFillToPDF.git
 cd MPCFillToPDF
-```
-
-O descarga el ZIP del repositorio y descomprímelo.
-
-### 3. Crear un entorno virtual (recomendado)
-
-```
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-source .venv/bin/activate       # Linux/macOS
 ```
 
-### 4. Instalar dependencias
+Activa el entorno en PowerShell (Windows):
 
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
-pip install -r requirements.txt
+
+En macOS/Linux:
+
+```sh
+source .venv/bin/activate
+python -m pip install 'Pillow>=10.0,<12' 'reportlab>=4.0,<5' 'gdown>=5.0,<6' 'requests>=2.28,<3' 'plyer>=2.0,<3'
 ```
 
-Instala `Pillow`, `reportlab` y `gdown`.
+`requirements.txt` incluye `windnd`, usado para arrastrar archivos en Windows. En macOS/Linux se omite, como hace el workflow de empaquetado. Si tu instalación de Python no incluye Tkinter, instálalo antes de abrir la GUI. `plyer` proporciona notificaciones de escritorio cuando están disponibles.
 
----
+## Interfaz gráfica
 
-## Uso
-
-### Interfaz gráfica (GUI)
-
-Lanza la ventana:
-```
+```sh
 python -m gui.main
 ```
 
-Aparece una ventana con:
+Puedes combinar las siguientes entradas en una ejecución:
 
-- **Seleccionar XMLs…** abre el explorador para elegir uno o varios `.xml` (Ctrl+click para varios).
-- **Lista** con los archivos en cola y botones para *Quitar selección* / *Vaciar*.
-- **Conservar caché**: si está marcado, no borra `workdir/raw` y `workdir/bled` al terminar (acelera futuras regeneraciones del mismo XML). **Por defecto desactivado.**
-- **Generar PDF(s)**: arranca el proceso. Solo se activa cuando hay al menos un XML en la lista o un mazo añadido desde una web.
-- **Estado + barra de progreso** se actualizan durante la generación.
+- **Magic:** selecciona uno o varios XML de MPCFill o pulsa **Añadir desde URL** para importar un mazo. Los XML tienen vista previa y avisos de validación. Los mazos por URL permiten incluir el sideboard y elegir un reverso local; las cartas de doble cara conservan su propia trasera.
+- **One Piece**, **Riftbound** y **Lorcana:** pega la URL y pulsa **Añadir**. En Riftbound puedes elegir si imprimir las runas.
+- **Imágenes locales:** añade frontales y reversos, incluso varias veces la misma imagen, asigna un reverso a cada frontal y activa el recorte del borde MPC por imagen. El modo **Multiselección** permite arrastrar sobre varios frontales y aplicarles a la vez una trasera o el recorte. Se aceptan `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tif` y `.tiff`.
+- **Configuración:** elige la carpeta de exportación y el color, grosor (0,1–10 pt) y estilo de las líneas de corte. Las líneas completas permiten elegir si se dibujan sobre frontales, traseras o ambos. Los cambios se guardan automáticamente.
 
-Antes de generar:
-- Si las barajas pueden **fusionarse** sin dejar huecos (suma múltiplo de 9), aparece un diálogo informativo con el plan.
-- Si alguna baraja **dejará huecos** en su PDF, aparece un diálogo de advertencia *"¿Continuar de todos modos?"*.
+Si añades frontales locales sin ningún XML, debes añadir al menos un reverso local, incluso para generar solo frontales. El primero sirve de reverso predeterminado.
 
-Cuando termina, **se abre automáticamente la carpeta `out/`** en el Explorador.
+Usa **Generar PDF con traseras (Para copisteria, con espejo horizontal)** o **Generar PDF solo frontales**. El resumen muestra las cartas y los huecos previstos; pueden aparecer confirmaciones sobre líneas de corte, advertencias de XML y acceso a Drive. **Detener** solicita la cancelación; las descargas en curso pueden tardar en terminar.
 
-### Empaquetar como `.exe` portable (Windows)
+**Guardar en el PC las imágenes entre ejecuciones** conserva la caché y está desactivado por defecto. Tras una ejecución correcta, si está desmarcado se eliminan las carpetas de imágenes temporales. Al finalizar se abre la carpeta de la ejecución.
 
+### Carpetas y configuración
+
+En la GUI, la carpeta base es la raíz del proyecto al ejecutar desde el código, o la carpeta del ejecutable al usar la versión empaquetada:
+
+```text
+<carpeta base>/MPCFillToPDF/
+├── archivos generados/
+│   └── DD_MM_YYYY_HH-MM-SS/  # PDFs y resumen.txt si hay fusiones
+├── procesamiento/
+│   ├── raw/                 # imágenes de Drive
+│   ├── bled/                # imágenes procesadas para el PDF
+│   ├── op_raw/
+│   ├── rb_raw/
+│   ├── lorcana_raw/
+│   ├── scryfall/
+│   └── gui.log              # al ejecutar desde código o compilar con logging
+└── settings.json            # preferencias de la GUI
 ```
-pip install pyinstaller
-python build_exe.py
+
+Las carpetas se crean según se necesitan. Una carpeta de exportación personalizada sustituye a `archivos generados/`; la caché y `settings.json` mantienen su ubicación. La CLI usa sus propias rutas y no lee estas preferencias.
+
+## Webs soportadas para diferentes TCG
+
+Estos son los importadores implementados en el código. Los mazos deben ser accesibles públicamente; cambios en las webs o sus APIs pueden afectar a la importación.
+
+### Magic: The Gathering
+
+| Web | Formato de URL |
+| --- | --- |
+| Moxfield | `https://moxfield.com/decks/ID` |
+| Archidekt | `https://archidekt.com/decks/ID` |
+| Deckstats | `https://deckstats.net/decks/USUARIO/MAZO` |
+| TappedOut | `https://tappedout.net/mtg-decks/nombre-del-mazo/` |
+| ManaBox | `https://manabox.app/decks/ID` |
+
+Las listas se importan desde esas webs y las imágenes se obtienen de **Scryfall**, por edición y número de colección o por nombre cuando faltan esos datos. El sideboard está desactivado por defecto. Las imágenes de Scryfall se procesan sin recortar el borde MPC y pueden tener distinta calidad que las de un XML de MPCFill.
+
+Los mazos de Moxfield, Archidekt y TappedOut también pueden mostrar un selector para incluir
+una copia de cada token detectado. El selector no aparece si la web no expone tokens imprimibles.
+
+### One Piece Card Game
+
+| Web | Formato de URL |
+| --- | --- |
+| onepiece.gg | `https://onepiece.gg/decks/nombre-del-mazo` |
+| deckbuilder.egmanevents.com | `https://deckbuilder.egmanevents.com/?deck=CARTA:X,...` o `https://deckbuilder.egmanevents.com/d/CODIGO` |
+| deckbuilder.cardkaizoku.com | `https://deckbuilder.cardkaizoku.com/?deck=2xOP01-001\|3xOP01-002\|...` |
+
+Los líderes usan un reverso específico; el resto usa el reverso estándar de One Piece.
+
+### Riftbound TCG
+
+| Web | Formato de URL |
+| --- | --- |
+| riftbound.gg | `https://riftbound.gg/decks/nombre-del-mazo/` |
+| piltoverarchive.com | `https://piltoverarchive.com/decks/view/UUID` |
+| riftmana.com | `https://riftmana.com/decks/nombre-del-mazo` |
+| riftbinder.com | `https://riftbinder.com/decks/ID` |
+| riftdex.com | `https://riftdex.com/deck/UUID` |
+
+Los reversos se asignan según la sección de la carta (leyenda, campo de batalla, runa o mazo).
+
+### Lorcana
+
+| Web | Formato de URL |
+| --- | --- |
+| lorcana.gg | `https://lorcana.gg/decks/nombre-del-mazo/` |
+| inkdecks.com | `https://inkdecks.com/lorcana-metagame/deck-nombre-ID` |
+
+Todas las cartas usan el reverso de Lorcana. El importador actual no admite Dreamborn.
+
+## Google Drive: clave de API opcional
+
+Los XML de MPCFill contienen identificadores de imágenes alojadas en Google Drive. Sin clave, el programa descarga mediante `gdown`. Para usar la API de Drive al ejecutar desde el código, copia `config.example.json` a `config.json` en la raíz y sustituye el valor de ejemplo:
+
+```json
+{
+  "google_drive_api_key": "TU_CLAVE_DE_API"
+}
 ```
 
-Genera `dist/MPCFillToPDF.exe`. El ejecutable es portable: en la carpeta donde lo dejes creará automáticamente `out/` y `workdir/` al ejecutarse por primera vez.
+Usa una clave de un proyecto con la API de Google Drive habilitada. `config.json` está excluido de Git. Reinicia la aplicación después de cambiarlo: la clave se carga al importar el módulo de descargas.
 
----
+Con clave se intenta primero la API v3; ante errores reconocidos como de permisos se prueba también `gdown`. Hay reintentos ante límites de descarga y tiempos de espera, pero una clave no garantiza que todas las imágenes estén disponibles. La aplicación verifica el acceso a las imágenes de Drive que no están en caché y muestra las incidencias.
 
-## Cómo se evita pagar páginas con huecos
+## Línea de comandos
 
-La imprenta cobra cada A4 entera aunque no esté llena. Como cada página tiene 3×3 = 9 cartas, si el total no es múltiplo de 9 la última página queda con espacios vacíos pagados.
+La CLI procesa XML e imágenes locales. La importación de mazos por URL está disponible en la GUI, no como opción de la CLI.
 
-El sistema lo gestiona así:
-
-1. **Cuenta las cartas** de cada XML antes de empezar.
-2. **Si la suma de los XMLs *no múltiplos de 9*** sí es múltiplo de 9 → los fusiona en un único PDF llamado `<a>_<b>_..._union.pdf`. Cada carta conserva su reverso original.
-3. **Si la suma sigue sin ser múltiplo de 9** → avisa de los huecos y pide confirmación.
-4. Cuando hay fusiones, escribe **`resumen.txt`** dentro de la carpeta de la ejecución con el desglose:
-   ```
-   PDF: mazo_a_mazo_b_union.pdf  (99 cartas)
-     - 95 carta(s) de mazo_a.xml
-     - 4 carta(s) de mazo_b.xml
-   ```
-
----
-
-## Estructura del proyecto
-
+```sh
+python -m cli.main --help
+python -m cli.main --xml-dir xml --out-dir out --workdir workdir
 ```
-MPCFillToPDF/
-├── out/                  ← una subcarpeta por ejecución (DD_MM_YYYY_HH-MM-SS) con los PDFs y, si hay fusión, resumen.txt
-├── workdir/              ← caché temporal: raw/ (descargas) y bled/ (recortes)
-├── gui/
-│   ├── main.py           ← entrada GUI (Tkinter)
-│   └── paths.py          ← resolver out/ y workdir/ junto al .exe
-├── src/
-│   ├── parser.py         ← XML → estructura de cartas
-│   ├── downloader.py     ← descarga desde Google Drive (gdown, 5 threads)
-│   ├── cropper.py        ← quita bleed de MPC y añade espejo de 1 mm
-│   ├── pdf_generator.py  ← maquetación + crop marks + barra de calibración
-│   ├── pipeline.py       ← orquestador (run, run_merged)
-│   ├── precheck.py       ← conteo, planificación de fusiones, manifiesto
-│   ├── op_scraper.py     ← descarga mazos de One Piece desde webs especializadas
-│   └── assets/           ← imágenes embebidas (color_bar.png, corner_mark.png)
-├── resources/
-│   └── backs/op/         ← reversos para cartas de One Piece (default.png, lider.png)
-└── build_exe.py          ← script de empaquetado PyInstaller
+
+Crea `xml/` y coloca allí los XML, o indica otra carpeta. Cada ejecución crea `out/DD_MM_YYYY_HH-MM-SS/` con los PDFs, `run.log` y, si hay fusiones, `resumen.txt`.
+
+Ejemplo solo con imágenes locales:
+
+```sh
+python -m cli.main --local-fronts carta1.jpg carta2.png --local-cardback reverso.jpg --locals-base-name mi_mazo --yes
 ```
+
+| Opción | Comportamiento |
+| --- | --- |
+| `--xml-dir`, `--out-dir`, `--workdir` | Carpetas de entrada, salida y trabajo; por defecto `xml`, `out` y `workdir`. |
+| `--local-fronts IMG ...` | Añade frontales al último trabajo del plan, o genera solo con imágenes si no hay XML. |
+| `--local-backs IMG ...` | Reversos emparejados por orden con los frontales locales. Los que falten usan el reverso predeterminado. |
+| `--local-cardback IMG` | Reverso predeterminado obligatorio cuando no hay XML. Actualmente no se aplica en la ruta con XML; usa `--local-backs` para asignar esos reversos explícitamente. |
+| `--locals-base-name NAME` | Nombre base para generación sin XML; por defecto `locales`. |
+| `--local-needs-crop` | Recorta el borde MPC de las imágenes locales; por defecto no se recorta. |
+| `--fronts-only` | Genera solo frontales. Sigue requiriendo los datos de reversos de la entrada. |
+| `--test` | Conserva `workdir/raw` y `workdir/bled` al terminar; no ejecuta pruebas. |
+| `--yes`, `-y` | Continúa sin pedir confirmación por huecos o avisos de acceso a Drive. |
+| `--verbose`, `-v` | Muestra logs de depuración en stderr además de escribir `run.log`. |
+
+## Fusiones y orden de las cartas
+
+El plan cuenta las cartas a partir de los slots de `<fronts>`, no del valor declarado en `<quantity>`:
+
+1. Cada XML con un número de cartas múltiplo de 9 genera un trabajo separado.
+2. Si hay varios XML incompletos, **siempre se fusionan**, aunque la suma siga dejando huecos. Se ordenan de mayor a menor número de cartas para la unión.
+3. Si solo hay un XML incompleto, conserva su trabajo individual.
+4. Los frontales adicionales se añaden al último trabajo. En la GUI se añaden en este orden: locales, One Piece, Riftbound, Lorcana y Magic por URL. Sin XML, estas entradas se combinan en un único trabajo.
+
+Dentro de cada XML, las cartas se ordenan alfabéticamente por nombre, sin distinguir mayúsculas, y por slot original en caso de empate. Cada carta conserva el reverso asociado a su slot original. Los mazos importados en la GUI también ordenan sus cartas por nombre dentro de cada mazo; los frontales locales mantienen el orden elegido.
+
+Los archivos se llaman `out_<nombre>.pdf`, o `out_<nombre>_1.pdf`, `out_<nombre>_2.pdf`, etc. si se dividen por tamaño. Una unión usa un nombre como `out_mazo_a_mazo_b_union.pdf`.
+
+Cuando hay fusiones se escribe `resumen.txt` con el desglose de cartas por XML. Actualmente el manifiesto muestra el nombre base con `.pdf`, sin el prefijo `out_` ni los índices de división; tampoco desglosa las entradas adicionales.
 
 ## Formato del PDF generado
 
-- A4 vertical, 3 columnas × 3 filas = 9 cartas por página.
-- Carta: 63,5 × 88,9 mm (tamaño estándar MPC).
-- Sangrado en espejo de 1 mm alrededor de cada carta.
-- Página `n`: frentes en orden de slot (0–8, izquierda → derecha, arriba → abajo).
-- Página `nB`: dorsos espejados horizontalmente para que el doble cara case.
-- Líneas de corte 1 pt en los márgenes (no cruzan el interior).
-- Marcas de registro en las 4 esquinas + barra CMYK arriba para calibración de imprenta.
-- Numeración de pareja en la esquina inferior derecha: `1`, `1B`, `2`, `2B`, …
+- A4 vertical: 210 × 297 mm, 3 columnas × 3 filas.
+- Carta recortada: 63,5 × 88,9 mm. Sangrado en espejo de 1 mm: imagen final de 65,5 × 90,9 mm.
+- El borde MPC se recorta un 4,2 % del ancho y un 3,1 % del alto por cada lado. Las imágenes locales no se recortan por defecto; las importadas desde webs tampoco. En imágenes sin recorte se aplica un relleno de esquinas para reducir artefactos antes de añadir el sangrado.
+- Margen desde el borde de la página hasta el corte: 5,75 mm horizontal y 11,15 mm vertical. Separación entre cortes: 4 mm en ambos ejes.
+- Frontales de izquierda a derecha y de arriba abajo. En las traseras se invierten las posiciones de las columnas de cada fila; la imagen de la carta no se refleja.
+- Marcas de corte negras de 1 pt en los márgenes por defecto. En la GUI se pueden configurar líneas completas, color, grosor y aplicación sobre frontales/traseras.
+- Marcas de registro en las cuatro esquinas, barra de calibración CMYK en la parte superior y numeración inferior `1`, `1B`, `2`, `2B`, etc.
+- Los slots vacíos de la última página se dejan en blanco. En modo solo frontales se omiten las páginas de traseras.
+
+En la pestaña **Configuración** puedes introducir el **tamaño máximo de PDF** en MB, hasta 2,5 GB (200 MB por defecto). El cambio se guarda al salir de la pestaña. La división usa ese umbral estimado, calculado a partir de las imágenes únicas de cada bloque: JPEG ×1,30; PNG y otros formatos ×2. No es un límite garantizado del tamaño final. Las parejas frontal/trasera no se separan, por lo que cada archivo sigue siendo apto para doble cara; una pareja individual puede superar el umbral.
+
+## Empaquetado
+
+Con las dependencias de la aplicación instaladas:
+
+```sh
+python -m pip install pyinstaller
+python build_exe.py
+```
+
+El script empaqueta para el sistema en el que se ejecuta: `dist/MPCFillToPDF.exe` en Windows y `dist/MPCFillToPDF` en macOS/Linux. Incluye los recursos, iconos y marcas de impresión. La GUI guarda sus datos junto al ejecutable, en las rutas descritas arriba.
+
+```sh
+python build_exe.py --debug-logging
+```
+
+Esta opción habilita `procesamiento/gui.log` en la versión empaquetada; por defecto está deshabilitado. Al ejecutar desde el código, el log está habilitado.
+
+Durante el build se busca la clave de Drive en `config.json` y, si falta, en la variable `DRIVE_API_KEY`. Se incorpora ofuscada mediante XOR. `src/_bundled_key.py` y `gui/_build_flags.py` son temporales generados por el script, excluidos de Git y eliminados al finalizar la invocación de PyInstaller.
+
+El workflow de build se ejecuta al hacer push a `main`, construye para Windows, macOS y Linux con Python 3.11 y sube los artefactos. En Windows también compila el bootloader de PyInstaller.
+
+## Desarrollo y pruebas
+
+```sh
+python -m pip install pytest ruff
+python -m pytest tests/ --ignore=tests/test_downloader.py -m "not network" -q
+python -m ruff check .
+python -m ruff format --check .
+```
+
+El comando de pytest coincide con la selección usada por CI y los hooks. `pytest.ini` excluye por defecto las pruebas marcadas `network`; para incluirlas hay que indicar `-m network` o cambiar la selección. El comando anterior también excluye todo `test_downloader.py`, incluidas sus pruebas con mocks. Puedes ejecutarlas por separado con `python -m pytest tests/test_downloader.py -m "not network"`.
+
+Los tests de integración usan imágenes pequeñas reales para recorte y generación de PDF, con las descargas simuladas. Los tests de GUI se omiten si Tkinter no puede abrir una pantalla. CI prueba Python 3.10, 3.11, 3.12 y 3.13 en Ubuntu.
+
+Las convenciones de contribución están en [CLAUDE.md](CLAUDE.md). Ruff usa Python 3.10 como objetivo y longitud de línea 100. Hay hooks en `.pre-commit-config.yaml` y `.githooks/pre-commit`: ejecutan Ruff y pytest. `ruff_hook.py` aplica correcciones y formato a todo el proyecto y vuelve a añadir a staging los cambios de archivos ya seguidos mediante `git add -u`.
+
+## Estructura del proyecto
+
+```text
+cli/main.py              # CLI para XML e imágenes locales
+gui/main.py              # Tkinter, estado, planificación y eventos del trabajador
+gui/*_tab.py             # Magic/XML, One Piece, Riftbound, Lorcana, locales y ajustes
+gui/widgets.py           # Previsualizaciones, tooltips, progreso y notificaciones
+gui/paths.py             # Directorios de datos de la GUI
+src/parser.py            # XML → CardOrder / CardImage
+src/validator.py         # Avisos sobre slots y estructura de las cartas
+src/precheck.py          # Acceso a Drive, conteo, plan y manifiesto
+src/pipeline.py          # run, run_merged, run_plan, run_locals_only, run_deck_url
+src/downloader.py        # Drive, caché, reintentos y errores de descarga
+src/deck_importer.py     # Listas de mazos de Magic
+src/scryfall.py          # Imágenes de Magic y cartas de doble cara
+src/*_scraper.py         # Importación, descarga y expansión de los otros TCG
+src/cropper.py           # Recorte, relleno de esquinas y sangrado en espejo
+src/pdf_generator.py     # Maquetación, marcas y división de PDFs
+src/app_settings.py      # Persistencia de preferencias de la GUI
+src/config.py            # Resolución de la clave de Drive en tiempo de ejecución
+src/constants.py         # Cuadrícula, extensiones y tipos de callbacks
+src/cancellation.py      # Excepción de cancelación
+src/scraper_utils.py     # Recursos y generación de reversos de reserva
+src/assets/              # Marcas de registro y barra de calibración
+resources/backs/         # Reversos de Magic, One Piece, Riftbound y Lorcana
+icons/                   # Iconos de las pestañas
+tests/                   # Pruebas unitarias, de integración y de GUI
+build_exe.py             # Empaquetado con PyInstaller
+.github/workflows/       # Pruebas y builds multiplataforma
+```
