@@ -187,7 +187,7 @@ Cuando hay fusiones se escribe `resumen.txt` con el desglose de cartas por XML. 
 - Marcas de registro en las cuatro esquinas, barra de calibración CMYK en la parte superior y numeración inferior `1`, `1B`, `2`, `2B`, etc.
 - Los slots vacíos de la última página se dejan en blanco. En modo solo frontales se omiten las páginas de traseras.
 
-La división usa un **umbral estimado de 480 MB decimales**, con la intención de mantener los archivos por debajo de 500 MB. Se calcula a partir de las imágenes únicas de cada bloque: JPEG ×1,30; PNG y otros formatos ×2. No es un límite garantizado del tamaño final. Las parejas frontal/trasera no se separan, por lo que cada archivo sigue siendo apto para doble cara; una pareja individual puede superar el umbral.
+En la pestaña **Configuración** puedes introducir el **tamaño máximo de PDF** en MB, hasta 2,5 GB (200 MB por defecto). El cambio se guarda al salir de la pestaña. La división usa ese umbral estimado, calculado a partir de las imágenes únicas de cada bloque: JPEG ×1,30; PNG y otros formatos ×2. No es un límite garantizado del tamaño final. Las parejas frontal/trasera no se separan, por lo que cada archivo sigue siendo apto para doble cara; una pareja individual puede superar el umbral.
 
 ## Empaquetado
 

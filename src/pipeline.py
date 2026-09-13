@@ -24,7 +24,7 @@ from src.downloader import (
     download_all,
 )
 from src.parser import CardOrder, parse
-from src.pdf_generator import generate
+from src.pdf_generator import MAX_PDF_BYTES, generate
 from src.scraper_utils import resources_dir
 from src.scryfall import ScryfallError, download_deck_images
 
@@ -99,6 +99,7 @@ def run(
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
     """Single-XML pipeline: XML → one or more PDFs named after the XML stem.
 
@@ -122,6 +123,7 @@ def run(
         extra_backs=extra_backs,
         local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+        max_pdf_bytes=max_pdf_bytes,
     )
 
 
@@ -136,6 +138,7 @@ def run_merged(
     extra_backs: list[str | Path | None] | None = None,
     local_crop_map: dict[Path, bool] | None = None,
     fronts_only: bool = False,
+    max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
     """Multi-XML pipeline: concatenate the XMLs' fronts in order and emit one
     or more PDFs named `<base_name>.pdf` (or `<base_name>_1.pdf`, … when split).
@@ -156,6 +159,7 @@ def run_merged(
         extra_backs=extra_backs,
         local_crop_map=local_crop_map,
         fronts_only=fronts_only,
+        max_pdf_bytes=max_pdf_bytes,
     )
 
 
@@ -176,6 +180,7 @@ def run_locals_only(
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
+    max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
     """Generate PDF(s) only from local images (no XML).
 
@@ -202,6 +207,7 @@ def run_locals_only(
         cut_line_over_cards=cut_line_over_cards,
         cut_line_over_fronts=cut_line_over_fronts,
         cut_line_over_backs=cut_line_over_backs,
+        max_pdf_bytes=max_pdf_bytes,
     )
 
 
@@ -296,6 +302,7 @@ def _run_xmls(
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
+    max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
     extra_fronts = [Path(p) for p in (extra_fronts or [])]
     # extra_backs is parallel to extra_fronts; entries may be None to mean
@@ -408,6 +415,7 @@ def _run_xmls(
         front_slot_to_id,
         back_slot_to_id,
         id_to_bled,
+        max_bytes=max_pdf_bytes,
         progress_callback=_cb(Stage.PDF),
         cancel_event=cancel_event,
         fronts_only=fronts_only,
@@ -500,6 +508,7 @@ def run_plan(
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
+    max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
     """Download ALL images first, then crop all, then generate each job's PDFs.
 
@@ -654,6 +663,7 @@ def run_plan(
             jd.front_slot_to_id,
             jd.back_slot_to_id,
             id_to_bled,
+            max_bytes=max_pdf_bytes,
             progress_callback=_cb(Stage.PDF),
             cancel_event=cancel_event,
             fronts_only=fronts_only,

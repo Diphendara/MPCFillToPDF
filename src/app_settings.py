@@ -11,6 +11,9 @@ DEFAULT_CUT_LINE_WIDTH = 1.0
 DEFAULT_CUT_LINE_OVER_CARDS = False
 DEFAULT_CUT_LINE_OVER_FRONTS = True
 DEFAULT_CUT_LINE_OVER_BACKS = True
+DEFAULT_MAX_PDF_SIZE_MB = 200
+MIN_MAX_PDF_SIZE_MB = 1
+MAX_MAX_PDF_SIZE_MB = 2_500
 
 
 @dataclass
@@ -22,6 +25,7 @@ class AppSettings:
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS
+    max_pdf_size_mb: int = DEFAULT_MAX_PDF_SIZE_MB
 
 
 def _settings_path(base_dir: Path) -> Path:
@@ -55,6 +59,11 @@ def load_settings(base_dir: Path) -> AppSettings:
         over_cards = bool(data.get("cut_line_over_cards", DEFAULT_CUT_LINE_OVER_CARDS))
         over_fronts = bool(data.get("cut_line_over_fronts", DEFAULT_CUT_LINE_OVER_FRONTS))
         over_backs = bool(data.get("cut_line_over_backs", DEFAULT_CUT_LINE_OVER_BACKS))
+        try:
+            max_pdf_size_mb = int(data.get("max_pdf_size_mb", DEFAULT_MAX_PDF_SIZE_MB))
+            max_pdf_size_mb = max(MIN_MAX_PDF_SIZE_MB, min(MAX_MAX_PDF_SIZE_MB, max_pdf_size_mb))
+        except (TypeError, ValueError):
+            max_pdf_size_mb = DEFAULT_MAX_PDF_SIZE_MB
         return AppSettings(
             output_dir=output_dir,
             cut_line_color=color,
@@ -63,6 +72,7 @@ def load_settings(base_dir: Path) -> AppSettings:
             cut_line_over_cards=over_cards,
             cut_line_over_fronts=over_fronts,
             cut_line_over_backs=over_backs,
+            max_pdf_size_mb=max_pdf_size_mb,
         )
     except Exception as exc:
         _log.warning("Could not load settings.json: %s", exc)
@@ -82,6 +92,7 @@ def save_settings(settings: AppSettings, base_dir: Path) -> None:
             "cut_line_over_cards": settings.cut_line_over_cards,
             "cut_line_over_fronts": settings.cut_line_over_fronts,
             "cut_line_over_backs": settings.cut_line_over_backs,
+            "max_pdf_size_mb": settings.max_pdf_size_mb,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
