@@ -290,6 +290,46 @@ class TestFrontMultiselection:
 
 
 # ---------------------------------------------------------------------------
+# Duplicate local images
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateLocalImages:
+    def test_drop_duplicate_fronts_creates_parallel_entries(self, app, tmp_path):
+        front = make_rgb_image(tmp_path / "front.jpg")
+        app._decode_drop = lambda _files: [front, front]
+
+        app._on_drop_fronts("ignored")
+
+        assert app.state.local_fronts == [front, front]
+        assert app.state.front_back_paths == [None, None]
+        assert app.state.local_front_crop == [False, False]
+
+    def test_drop_duplicate_backs_creates_parallel_entries(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        app._decode_drop = lambda _files: [back, back]
+
+        app._on_drop_backs("ignored")
+
+        assert app.state.local_backs == [back, back]
+        assert app.state.local_back_crop == [False, False]
+
+    def test_removing_one_duplicate_back_keeps_front_assignments(self, app, tmp_path):
+        back = make_rgb_image(tmp_path / "back.jpg")
+        front = make_rgb_image(tmp_path / "front.jpg")
+        app.state.local_backs = [back, back]
+        app.state.local_back_crop = [False, False]
+        app.state.local_fronts = [front]
+        app.state.front_back_paths = [back]
+        app.state.local_front_crop = [False]
+
+        app._remove_back(0)
+
+        assert app.state.local_backs == [back]
+        assert app.state.front_back_paths == [back]
+
+
+# ---------------------------------------------------------------------------
 # _on_mtg_back_change
 # ---------------------------------------------------------------------------
 

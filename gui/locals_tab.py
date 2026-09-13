@@ -138,10 +138,9 @@ class LocalsTabMixin:
         added = False
         for p in paths:
             pp = Path(p)
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
+            self.state.local_backs.append(pp)
+            self.state.local_back_crop.append(False)
+            added = True
         if added:
             if was_empty and self.state.local_backs:
                 first = self.state.local_backs[0]
@@ -158,9 +157,10 @@ class LocalsTabMixin:
         removed_path = self.state.local_backs[idx]
         del self.state.local_backs[idx]
         del self.state.local_back_crop[idx]
-        for i, assigned in enumerate(self.state.front_back_paths):
-            if assigned == removed_path:
-                self.state.front_back_paths[i] = None
+        if removed_path not in self.state.local_backs:
+            for i, assigned in enumerate(self.state.front_back_paths):
+                if assigned == removed_path:
+                    self.state.front_back_paths[i] = None
         self._refresh_back_rows()
         self._refresh_front_rows()
         self._refresh_generate_state()
@@ -217,18 +217,6 @@ class LocalsTabMixin:
                 width=2,
                 command=lambda idx=i: self._remove_back(idx),
             ).pack(side=tk.RIGHT)
-            ttk.Button(
-                row,
-                text="▼",
-                width=2,
-                command=lambda idx=i: self._move_back_down(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
-            ttk.Button(
-                row,
-                text="▲",
-                width=2,
-                command=lambda idx=i: self._move_back_up(idx),
-            ).pack(side=tk.RIGHT, padx=(0, 1))
 
             self._back_rows.append({"frame": row, "crop_var": crop_var})
 
@@ -245,11 +233,10 @@ class LocalsTabMixin:
         added = False
         for p in paths:
             pp = Path(p)
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
+            self.state.local_fronts.append(pp)
+            self.state.front_back_paths.append(default_back)
+            self.state.local_front_crop.append(False)
+            added = True
         if added:
             self._refresh_front_rows()
             self._refresh_generate_state()
@@ -458,32 +445,6 @@ class LocalsTabMixin:
             f"Frontales (asignar trasera por carta):   Actualmente: {total} cartas"
         )
 
-    def _move_back_up(self, idx: int) -> None:
-        if idx > 0:
-            self.state.local_backs[idx], self.state.local_backs[idx - 1] = (
-                self.state.local_backs[idx - 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx - 1] = (
-                self.state.local_back_crop[idx - 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
-    def _move_back_down(self, idx: int) -> None:
-        if idx < len(self.state.local_backs) - 1:
-            self.state.local_backs[idx], self.state.local_backs[idx + 1] = (
-                self.state.local_backs[idx + 1],
-                self.state.local_backs[idx],
-            )
-            self.state.local_back_crop[idx], self.state.local_back_crop[idx + 1] = (
-                self.state.local_back_crop[idx + 1],
-                self.state.local_back_crop[idx],
-            )
-            self._refresh_back_rows()
-            self._refresh_front_rows()
-
     def _on_drop_backs(self, files) -> None:
         paths = self._decode_drop(files)
         was_empty = not self.state.local_backs
@@ -491,10 +452,9 @@ class LocalsTabMixin:
         for pp in paths:
             if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
                 continue
-            if pp not in self.state.local_backs:
-                self.state.local_backs.append(pp)
-                self.state.local_back_crop.append(False)
-                added = True
+            self.state.local_backs.append(pp)
+            self.state.local_back_crop.append(False)
+            added = True
         if added:
             if was_empty and self.state.local_backs:
                 first = self.state.local_backs[0]
@@ -512,11 +472,10 @@ class LocalsTabMixin:
         for pp in paths:
             if pp.suffix.lower() not in SUPPORTED_IMAGE_EXTS:
                 continue
-            if pp not in self.state.local_fronts:
-                self.state.local_fronts.append(pp)
-                self.state.front_back_paths.append(default_back)
-                self.state.local_front_crop.append(False)
-                added = True
+            self.state.local_fronts.append(pp)
+            self.state.front_back_paths.append(default_back)
+            self.state.local_front_crop.append(False)
+            added = True
         if added:
             self._refresh_front_rows()
             self._refresh_generate_state()
