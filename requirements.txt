@@ -1,6 +1,5 @@
 Pillow>=10.0,<12
 reportlab>=4.0,<5
-gdown>=5.0,<6
 requests>=2.28,<3
 windnd>=1.0,<2
 plyer>=2.0,<3

@@ -268,7 +268,7 @@ def generate(
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
         suffix = f"_{idx}" if multiple else ""
-        path = output_dir / f"out_{base_name}{suffix}.pdf"
+        path = output_dir / f"{base_name}{suffix}.pdf"
         c = canvas.Canvas(str(path), pagesize=A4)
         for page_slots in chunk:
             if cancel_event is not None and cancel_event.is_set():

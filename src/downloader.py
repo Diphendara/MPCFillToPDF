@@ -1,4 +1,3 @@
-import functools
 import logging
 import os
 import threading
@@ -7,19 +6,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Event
 
-import gdown
 import requests
 
 from src.cancellation import Cancelled
-from src.config import get_drive_api_key
 from src.constants import ImageDoneCallback, ProgressCallback, SpeedCallback
 
 _log = logging.getLogger(__name__)
-
-try:
-    from gdown.exceptions import FileURLRetrievalError as _GdownPermissionError
-except ImportError:
-    _GdownPermissionError = None
 
 THREADS = 5
 _MAX_RETRIES = 4
@@ -31,30 +23,6 @@ _TIMEOUT_RETRY_DELAY = 5.0  # seconds to wait before retrying timed-out images
 # large files on a slow connection will still work.
 _CONNECT_TIMEOUT = 10  # seconds to establish the TCP connection
 _READ_TIMEOUT = 30  # seconds without receiving any data
-
-# Loaded once at import time; None means fall back to gdown.
-_DRIVE_API_KEY: str | None = get_drive_api_key()
-
-if _DRIVE_API_KEY:
-    _log.info("Google Drive API key loaded — using Drive API v3 for downloads.")
-else:
-    _log.info("No Google Drive API key found — falling back to gdown.")
-
-
-def _install_download_timeout() -> None:
-    """Patch requests.Session so every request gdown makes has a timeout.
-    Without this, gdown can hang indefinitely when Drive stops responding."""
-    orig = requests.Session.request
-
-    @functools.wraps(orig)
-    def _with_timeout(self, method, url, **kwargs):
-        kwargs.setdefault("timeout", (_CONNECT_TIMEOUT, _READ_TIMEOUT))
-        return orig(self, method, url, **kwargs)
-
-    requests.Session.request = _with_timeout
-
-
-_install_download_timeout()
 
 
 class DownloadRateLimitError(Exception):
@@ -111,12 +79,8 @@ class DownloadTimeoutError(Exception):
         super().__init__(f"Tiempo de espera agotado para '{card_name}' (ID: {drive_id})")
 
 
-def _gdown_url(drive_id: str) -> str:
-    return f"https://drive.google.com/uc?id={drive_id}"
-
-
-def _drive_api_url(drive_id: str, api_key: str) -> str:
-    return f"https://www.googleapis.com/drive/v3/files/{drive_id}?alt=media&key={api_key}"
+def _lh4_url(drive_id: str) -> str:
+    return f"https://lh4.googleusercontent.com/d/{drive_id}=d"
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -139,33 +103,11 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return False
 
 
-def _is_permission_error(exc: Exception) -> bool:
-    if _GdownPermissionError is not None and isinstance(exc, _GdownPermissionError):
-        return True
-    if "FileURLRetrievalError" in type(exc).__name__:
-        return True
-    if isinstance(exc, requests.HTTPError):
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status in (403, 404):
-            return True
-    return False
-
-
 def _safe_unlink(path: Path) -> None:
     try:
         path.unlink()
     except OSError:
         pass
-
-
-def _download_with_api(drive_id: str, output_path: Path, api_key: str) -> None:
-    """Download a Drive file via the v3 API (requires a valid API key)."""
-    url = _drive_api_url(drive_id, api_key)
-    resp = requests.get(url, stream=True, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT))
-    resp.raise_for_status()
-    with output_path.open("wb") as fh:
-        for chunk in resp.iter_content(chunk_size=65536):
-            fh.write(chunk)
 
 
 def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
@@ -182,10 +124,15 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
     delay = _INITIAL_BACKOFF
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            if _DRIVE_API_KEY:
-                _download_with_api(drive_id, tmp_path, _DRIVE_API_KEY)
-            else:
-                gdown.download(_gdown_url(drive_id), str(tmp_path), quiet=True)
+            resp = requests.get(
+                _lh4_url(drive_id),
+                stream=True,
+                timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
+            )
+            resp.raise_for_status()
+            with tmp_path.open("wb") as fh:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    fh.write(chunk)
             tmp_path.replace(output_path)
             _log.debug("Downloaded: %s", output_path.name)
             return output_path
@@ -193,33 +140,29 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
             _safe_unlink(tmp_path)
             _log.error("Timeout downloading %s (%s)", filename, drive_id)
             raise DownloadTimeoutError(drive_id, filename)
-        except Exception as exc:
+        except requests.HTTPError as exc:
             _safe_unlink(tmp_path)
-            if _is_permission_error(exc) and _DRIVE_API_KEY:
-                # Drive API v3 with an API key only works for "Public on the web" files.
-                # Files shared as "Anyone with the link" return 403 via the API but are
-                # downloadable via gdown (which follows Google's web redirect flow).
-                # Fall back to gdown before declaring a permission failure.
-                _log.info("API 403 for %s — retrying via gdown fallback", filename)
-                try:
-                    gdown.download(_gdown_url(drive_id), str(tmp_path), quiet=True)
-                    tmp_path.replace(output_path)
-                    _log.debug("Downloaded via gdown fallback: %s", output_path.name)
-                    return output_path
-                except Exception as gdown_exc:
-                    _safe_unlink(tmp_path)
-                    if _is_permission_error(gdown_exc):
-                        _log.error(
-                            "Permission denied (gdown also failed): %s (%s)", filename, drive_id
-                        )
-                        raise DownloadPermissionError(drive_id, filename) from gdown_exc
-                    if isinstance(gdown_exc, requests.exceptions.Timeout | TimeoutError):
-                        _log.error("Timeout via gdown fallback: %s (%s)", filename, drive_id)
-                        raise DownloadTimeoutError(drive_id, filename) from gdown_exc
-                    raise gdown_exc
-            if _is_permission_error(exc):
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (403, 404):
                 _log.error("Permission denied: %s (%s)", filename, drive_id)
                 raise DownloadPermissionError(drive_id, filename) from exc
+            if _is_rate_limit_error(exc):
+                if attempt < _MAX_RETRIES:
+                    _log.warning(
+                        "Rate limited on %s, retry %d/%d in %.0fs",
+                        drive_id,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                _log.error("Rate limit exhausted for %s", drive_id)
+                raise DownloadRateLimitError() from exc
+            raise
+        except Exception as exc:
+            _safe_unlink(tmp_path)
             if _is_rate_limit_error(exc):
                 if attempt < _MAX_RETRIES:
                     _log.warning(
@@ -255,7 +198,7 @@ def download_all(
     on_speed_update(speed_mbps, eta_sec) is called after each download with running
     speed and estimated remaining time (both floats); only called after ≥0.1 s elapsed.
     If `cancel_event` is provided and gets set mid-run, pending downloads are
-    cancelled, in-flight ones are awaited (gdown is uninterruptible), and the
+    cancelled, in-flight ones are awaited before the executor shuts down, and the
     function raises `Cancelled` once the executor has joined.
     """
     dest_dir = Path(dest_dir)

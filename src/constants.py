@@ -17,5 +17,6 @@ class Stage(str, Enum):
 
 ProgressCallback = Callable[[int, int], None] | None
 StageCallback = Callable[[str, int, int], None] | None
+JobPdfStartCallback = Callable[[int, int, str], None] | None
 SpeedCallback = Callable[[float, float], None] | None
 ImageDoneCallback = Callable[[str], None] | None

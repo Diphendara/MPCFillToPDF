@@ -1,5 +1,4 @@
 import logging
-import math
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -21,8 +20,6 @@ BLEED_MM = 1.0
 _CORNER_RADIUS_FRAC = 0.04
 # Minimum luminance difference to consider a corner pixel "anomalous"
 _CORNER_LUMA_THRESHOLD = 60
-# Offset past the corner zone where border color is sampled
-_CORNER_SAMPLE_OFFSET = 1.0
 
 
 def _luminance(r: int, g: int, b: int) -> float:
@@ -83,45 +80,44 @@ def _fill_rounded_corners(img: Image.Image) -> Image.Image:
     """
     w, h = img.size
     radius = max(1, round(min(w, h) * _CORNER_RADIUS_FRAC))
+    radius_sq = radius * radius
 
-    # corner_name → (origin_x, origin_y, dx_sign, dy_sign)
-    corners = {
-        "tl": (0, 0, 1, 1),
-        "tr": (w - 1, 0, -1, 1),
-        "bl": (0, h - 1, 1, -1),
-        "br": (w - 1, h - 1, -1, -1),
-    }
+    # Precompute quarter-circle offsets once (integer comparison, no sqrt)
+    offsets = [
+        (dx, dy)
+        for dy in range(radius + 1)
+        for dx in range(radius + 1)
+        if dx * dx + dy * dy <= radius_sq
+    ]
+
+    corner_defs = (
+        ("tl", 0, 0, 1, 1),
+        ("tr", w - 1, 0, -1, 1),
+        ("bl", 0, h - 1, 1, -1),
+        ("br", w - 1, h - 1, -1, -1),
+    )
 
     any_filled = False
     pixels = img.load()
 
-    for name, (ox, oy, sx, sy) in corners.items():
+    for name, ox, oy, sx, sy in corner_defs:
         border_color = _sample_border_color(img, name, radius)
         border_luma = _luminance(*border_color)
-
         filled_this = False
-        for dy in range(radius):
-            for dx in range(radius):
-                # Distance from the corner vertex
-                dist = math.sqrt(dx * dx + dy * dy)
-                if dist > radius * _CORNER_SAMPLE_OFFSET:
-                    continue
-                px = ox + dx * sx
-                py = oy + dy * sy
-                if not (0 <= px < w and 0 <= py < h):
-                    continue
-                r, g, b = pixels[px, py][:3]
-                luma = _luminance(r, g, b)
-                if abs(luma - border_luma) > _CORNER_LUMA_THRESHOLD:
-                    pixels[px, py] = border_color
-                    filled_this = True
-
+        for dx, dy in offsets:
+            px = ox + dx * sx
+            py = oy + dy * sy
+            if not (0 <= px < w and 0 <= py < h):
+                continue
+            r, g, b = pixels[px, py][:3]
+            if abs(_luminance(r, g, b) - border_luma) > _CORNER_LUMA_THRESHOLD:
+                pixels[px, py] = border_color
+                filled_this = True
         if filled_this:
             any_filled = True
 
     if any_filled:
         _log.debug("Filled rounded corners")
-
     return img
 
 
