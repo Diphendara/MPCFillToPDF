@@ -1,6 +1,8 @@
 # Examples and reference files (private/local only)
 examples/
 
+app/
+
 # Downloaded card images (generated at runtime)
 images/
 images_original/
