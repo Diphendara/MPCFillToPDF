@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event
 
 from reportlab.lib.pagesizes import A4
@@ -199,6 +200,71 @@ def _pair_drive_ids(
     return ids
 
 
+def _render_chunk(
+    path: Path,
+    chunk: list[list[int]],
+    first_pair_no: int,
+    id_to_path: dict[str, Path],
+    front_slot_to_id: dict[int, str],
+    back_slot_to_id: dict[int, str],
+    fronts_only: bool,
+    cut_line_color: str,
+    cut_line_style: str,
+    cut_line_width: float,
+    cut_line_over_cards: bool,
+    cut_line_over_fronts: bool,
+    cut_line_over_backs: bool,
+    cancel_event: Event | None,
+) -> None:
+    """Write a duplex-safe chunk, preserving its original global page labels."""
+    c = canvas.Canvas(str(path), pagesize=A4)
+    for page_index, page_slots in enumerate(chunk):
+        if cancel_event is not None and cancel_event.is_set():
+            raise Cancelled()
+        pair_no = first_pair_no + page_index
+        padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
+
+        front_over = cut_line_over_cards and cut_line_over_fronts
+        front_style = (
+            cut_line_style if (not cut_line_over_cards or cut_line_over_fronts) else "ticks"
+        )
+        _draw_page(
+            c,
+            padded,
+            id_to_path,
+            front_slot_to_id,
+            page_label=str(pair_no),
+            cut_line_color=cut_line_color,
+            cut_line_style=front_style,
+            cut_line_width=cut_line_width,
+            cut_line_over_cards=front_over,
+        )
+        c.showPage()
+
+        if not fronts_only:
+            mirrored = []
+            for row in range(ROWS):
+                mirrored.extend(reversed(padded[row * COLS : (row + 1) * COLS]))
+
+            back_over = cut_line_over_cards and cut_line_over_backs
+            back_style = (
+                cut_line_style if (not cut_line_over_cards or cut_line_over_backs) else "ticks"
+            )
+            _draw_page(
+                c,
+                mirrored,
+                id_to_path,
+                back_slot_to_id,
+                page_label=f"{pair_no}B",
+                cut_line_color=cut_line_color,
+                cut_line_style=back_style,
+                cut_line_width=cut_line_width,
+                cut_line_over_cards=back_over,
+            )
+            c.showPage()
+    c.save()
+
+
 def generate(
     output_dir: str | Path,
     base_name: str,
@@ -259,70 +325,73 @@ def generate(
     if current:
         chunks.append(current)
 
-    multiple = len(chunks) > 1
+    def _fit_chunk(
+        chunk: list[list[int]], temp_dir: Path, probe_number: list[int]
+    ) -> list[list[list[int]]]:
+        if cancel_event is not None and cancel_event.is_set():
+            raise Cancelled()
+        probe = temp_dir / f"probe_{probe_number[0]}.pdf"
+        probe_number[0] += 1
+        _render_chunk(
+            probe,
+            chunk,
+            1,
+            id_to_path,
+            front_slot_to_id,
+            back_slot_to_id,
+            fronts_only,
+            cut_line_color,
+            cut_line_style,
+            cut_line_width,
+            cut_line_over_cards,
+            cut_line_over_fronts,
+            cut_line_over_backs,
+            cancel_event,
+        )
+        if probe.stat().st_size <= max_bytes or len(chunk) == 1:
+            return [chunk]
+        midpoint = len(chunk) // 2
+        return _fit_chunk(chunk[:midpoint], temp_dir, probe_number) + _fit_chunk(
+            chunk[midpoint:], temp_dir, probe_number
+        )
+
+    with TemporaryDirectory(prefix=".mpcfill_pdf_", dir=output_dir) as temp:
+        probe_number = [0]
+        fitted_chunks = [
+            fitted for chunk in chunks for fitted in _fit_chunk(chunk, Path(temp), probe_number)
+        ]
+
+    multiple = len(fitted_chunks) > 1
     outputs: list[Path] = []
-    total_pairs = sum(len(c) for c in chunks)
+    total_pairs = sum(len(chunk) for chunk in fitted_chunks)
     done_pairs = 0
     pair_no = 0
-    for idx, chunk in enumerate(chunks, start=1):
+    for idx, chunk in enumerate(fitted_chunks, start=1):
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
         suffix = f"_{idx}" if multiple else ""
         path = output_dir / f"{base_name}{suffix}.pdf"
-        c = canvas.Canvas(str(path), pagesize=A4)
-        for page_slots in chunk:
-            if cancel_event is not None and cancel_event.is_set():
-                raise Cancelled()
+        _render_chunk(
+            path,
+            chunk,
+            pair_no + 1,
+            id_to_path,
+            front_slot_to_id,
+            back_slot_to_id,
+            fronts_only,
+            cut_line_color,
+            cut_line_style,
+            cut_line_width,
+            cut_line_over_cards,
+            cut_line_over_fronts,
+            cut_line_over_backs,
+            cancel_event,
+        )
+        for _ in chunk:
             pair_no += 1
-            padded = page_slots + [None] * (CARDS_PER_PAGE - len(page_slots))
-
-            # When over_cards is active but unchecked for this page type,
-            # fall back to ticks-only (margin lines, drawn before images).
-            front_over = cut_line_over_cards and cut_line_over_fronts
-            front_style = (
-                cut_line_style if (not cut_line_over_cards or cut_line_over_fronts) else "ticks"
-            )
-
-            _draw_page(
-                c,
-                padded,
-                id_to_path,
-                front_slot_to_id,
-                page_label=str(pair_no),
-                cut_line_color=cut_line_color,
-                cut_line_style=front_style,
-                cut_line_width=cut_line_width,
-                cut_line_over_cards=front_over,
-            )
-            c.showPage()
-
-            if not fronts_only:
-                mirrored = []
-                for row in range(ROWS):
-                    mirrored.extend(reversed(padded[row * COLS : (row + 1) * COLS]))
-
-                back_over = cut_line_over_cards and cut_line_over_backs
-                back_style = (
-                    cut_line_style if (not cut_line_over_cards or cut_line_over_backs) else "ticks"
-                )
-
-                _draw_page(
-                    c,
-                    mirrored,
-                    id_to_path,
-                    back_slot_to_id,
-                    page_label=f"{pair_no}B",
-                    cut_line_color=cut_line_color,
-                    cut_line_style=back_style,
-                    cut_line_width=cut_line_width,
-                    cut_line_over_cards=back_over,
-                )
-                c.showPage()
-
             done_pairs += 1
             if progress_callback:
                 progress_callback(done_pairs, total_pairs)
-        c.save()
         outputs.append(path)
 
     return outputs

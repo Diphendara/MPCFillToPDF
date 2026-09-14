@@ -44,6 +44,10 @@ La GUI usa rutas relativas a la carpeta base de la aplicación: `procesamiento/`
 
 Los recursos estáticos están en `resources/backs`, `icons` y `src/assets`. `config.json` y `DRIVE_API_KEY` son opcionales y no deben versionarse.
 
+Al seleccionar XML en la GUI, el resumen se construye desde los `CardOrder` ya analizados y muestra el plan efectivo: PDFs independientes, XML fusionados, cartas adicionales que se adjuntan al último trabajo y huecos por PDF. Al iniciar la ejecución, el mismo conteo de entradas adicionales se pasa a `plan()` para que la confirmación de huecos coincida con `run_plan`.
+
+`pdf_generator.generate()` estima primero los grupos por tamaño de imagen y después mide PDFs temporales ya renderizados. Divide de nuevo los grupos que exceden el límite real, siempre entre parejas de páginas para preservar el orden de impresión a doble cara; una pareja individual nunca se parte.
+
 ## Pruebas y calidad
 
 La suite cubre parser, validator, precheck, pipeline, cropper, PDF, downloader, scrapers, configuración, CLI y GUI. Las pruebas de red están marcadas `network`; CI omite `tests/test_downloader.py` completo y ejecuta el resto con `-m "not network"`. Para cambios en downloader hay que ejecutar además sus tests no-red.

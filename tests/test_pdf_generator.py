@@ -2,6 +2,7 @@
 
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from PIL import Image
@@ -257,6 +258,37 @@ def test_generate_split_all_files_exist(tmp_path):
     for r in results:
         assert r.exists()
         assert r.stat().st_size > 0
+
+
+def test_generate_enforces_actual_size_limit_after_projection(tmp_path):
+    """A low image projection must not allow an oversized multi-pair PDF."""
+    img = _img(tmp_path / "card.jpg")
+    one_slots, one_front, one_back = _slot_maps(CARDS_PER_PAGE)
+    one_paths = _id_to_path(one_front, one_back, img)
+    one_pdf = generate(
+        tmp_path / "one",
+        "deck",
+        one_slots,
+        one_front,
+        one_back,
+        one_paths,
+        max_bytes=10**9,
+    )[0]
+
+    slots, front, back = _slot_maps(CARDS_PER_PAGE * 2)
+    paths = _id_to_path(front, back, img)
+    unbounded = generate(
+        tmp_path / "unbounded", "deck", slots, front, back, paths, max_bytes=10**9
+    )[0]
+    max_bytes = (one_pdf.stat().st_size + unbounded.stat().st_size) // 2
+
+    with patch("src.pdf_generator._projected_pdf_bytes", return_value=0):
+        outputs = generate(
+            tmp_path / "limited", "deck", slots, front, back, paths, max_bytes=max_bytes
+        )
+
+    assert len(outputs) == 2
+    assert all(output.stat().st_size <= max_bytes for output in outputs)
 
 
 # ─── _hex_to_rgb ─────────────────────────────────────────────────────────────

@@ -57,6 +57,7 @@ from src.op_scraper import expand_deck as op_expand
 from src.parser import CardOrder
 from src.pipeline import run_locals_only, run_plan
 from src.precheck import (
+    XmlReport,
     analyze,
     check_drive_access,
     collect_drive_ids,
@@ -368,6 +369,28 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _extra_card_count(self) -> int:
+        """Return cards appended to the last XML PDF job."""
+        return (
+            len(self.state.local_fronts)
+            + sum(deck.total_slots for deck in self._op_decks)
+            + sum(deck.total_slots for deck in self._rb_decks)
+            + sum(deck.total_slots for deck in self._lorcana_decks)
+            + sum(deck.active_count for deck in self.state.mtg_url_decks)
+        )
+
+    def _loaded_xml_plan(self):
+        """Build the current XML plan from already parsed orders, if complete."""
+        reports: list[XmlReport] = []
+        for path in self.state.xml_paths:
+            order = self._xml_orders.get(path)
+            if order is None:
+                return None
+            cards = sum(len(card.slots) for card in order.fronts)
+            remainder = cards % CARDS_PER_PAGE
+            reports.append(XmlReport(path, cards, (CARDS_PER_PAGE - remainder) if remainder else 0))
+        return plan(reports, local_count=self._extra_card_count())
+
     def _update_preflight(self) -> None:
         for widget in self._preflight_labels:
             widget.destroy()
@@ -470,13 +493,44 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
 
         total_cards = xml_total + local_count
         if total_cards:
-            pairs = math.ceil(total_cards / CARDS_PER_PAGE)
-            rem = total_cards % CARDS_PER_PAGE
-            blanks = (CARDS_PER_PAGE - rem) if rem else 0
-
             bled_dir = work_dir() / "bled"
             cached = len([f for f in bled_dir.iterdir() if f.is_file()]) if bled_dir.exists() else 0
             cache_str = f" · {cached} imagen(es) en caché" if cached else ""
+
+            xml_plan = self._loaded_xml_plan() if self.state.xml_paths else None
+            if xml_plan is not None:
+                _row(
+                    [
+                        ("Plan XML: ", "normal"),
+                        (f"{len(xml_plan.jobs)} PDF(s)", "bold"),
+                        ("; las cartas adicionales se añaden al último PDF.", "normal"),
+                    ]
+                )
+                for job in xml_plan.jobs:
+                    if job.is_merged:
+                        names = ", ".join(path.name for path in job.xml_paths)
+                        _row([(f"  ↳ Fusión: {names} → {job.total_cards} cartas", "bold")])
+                    elif job.extra_locals:
+                        _row(
+                            [
+                                (
+                                    f"  ↳ {job.display_name}: {job.cards} XML + "
+                                    f"{job.extra_locals} adicionales → {job.total_cards} cartas",
+                                    "normal",
+                                )
+                            ]
+                        )
+                    else:
+                        _row([(f"  ↳ {job.display_name}: {job.total_cards} cartas", "normal")])
+                    if job.has_blanks:
+                        gap = "hueco" if job.blanks == 1 else "huecos"
+                        _row([(f"     ⚠ {job.blanks} {gap} en blanco", "warn")])
+                blanks = sum(job.blanks for job in xml_plan.jobs)
+                pairs = sum(math.ceil(job.total_cards / CARDS_PER_PAGE) for job in xml_plan.jobs)
+            else:
+                pairs = math.ceil(total_cards / CARDS_PER_PAGE)
+                rem = total_cards % CARDS_PER_PAGE
+                blanks = (CARDS_PER_PAGE - rem) if rem else 0
 
             if blanks:
                 _row(
@@ -687,32 +741,15 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 self._show_error_dialog(f"No se pudo analizar el XML:\n{e}")
                 return
 
-            plan_ = plan(reports, local_count=len(self.state.local_fronts))
+            plan_ = plan(reports, local_count=self._extra_card_count())
 
-            if format_warning(plan_):
-                combined_total = (
-                    sum(r.cards for r in reports)
-                    + len(self.state.local_fronts)
-                    + sum(d.total_slots for d in self._op_decks)
-                    + sum(d.total_slots for d in self._rb_decks)
-                    + sum(d.total_slots for d in self._lorcana_decks)
-                    + sum(d.active_count for d in self.state.mtg_url_decks)
-                )
-                combined_rem = combined_total % CARDS_PER_PAGE
-                if combined_rem != 0:
-                    combined_blanks = CARDS_PER_PAGE - combined_rem
-                    s = "hueco" if combined_blanks == 1 else "huecos"
-                    combined_warning = (
-                        f"Aviso: {combined_total} carta(s) en total no es múltiplo de 9.\n"
-                        f"La última página tendrá {combined_blanks} {s} en blanco "
-                        "(la imprenta cobra la página entera aunque no esté llena)."
-                    )
-                    if not messagebox.askyesno(
-                        APP_TITLE,
-                        combined_warning + "\n\n¿Continuar de todos modos?",
-                        icon=messagebox.WARNING,
-                    ):
-                        return
+            warning = format_warning(plan_)
+            if warning and not messagebox.askyesno(
+                APP_TITLE,
+                warning + "\n\n¿Continuar de todos modos?",
+                icon=messagebox.WARNING,
+            ):
+                return
         else:
             total = (
                 len(self.state.local_fronts)

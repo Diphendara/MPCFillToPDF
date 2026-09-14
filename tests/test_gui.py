@@ -8,6 +8,7 @@ import tkinter as tk
 
 import pytest
 
+from src.parser import parse
 from tests.conftest import make_rgb_image, make_xml
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,31 @@ class TestGenerateState:
         app.running = True
         app._refresh_generate_state()
         assert "disabled" in str(app.soriano_btn.state())
+
+
+class TestXmlPlanPreview:
+    def test_plan_includes_cards_appended_to_last_xml_pdf(self, app, tmp_path):
+        first = make_xml(
+            tmp_path / "first.xml",
+            fronts=[{"id": f"F{i}", "name": f"First {i}", "slots": str(i)} for i in range(5)],
+        )
+        second = make_xml(
+            tmp_path / "second.xml",
+            fronts=[{"id": f"S{i}", "name": f"Second {i}", "slots": str(i)} for i in range(5)],
+        )
+        app.state.xml_paths.extend([first, second])
+        app._xml_orders[first] = parse(first)
+        app._xml_orders[second] = parse(second)
+        app.state.local_fronts.extend([tmp_path / f"local{i}.jpg" for i in range(8)])
+
+        current_plan = app._loaded_xml_plan()
+
+        assert current_plan is not None
+        assert len(current_plan.jobs) == 1
+        assert current_plan.jobs[0].is_merged
+        assert current_plan.jobs[0].extra_locals == 8
+        assert current_plan.jobs[0].total_cards == 18
+        assert not current_plan.has_blanks
 
 
 # ---------------------------------------------------------------------------

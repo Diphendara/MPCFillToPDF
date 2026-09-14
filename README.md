@@ -120,6 +120,8 @@ Los reversos se asignan según la sección de la carta (leyenda, campo de batall
 
 Todas las cartas usan el reverso de Lorcana. El importador actual no admite Dreamborn.
 
+El resumen de la pantalla también detalla el plan efectivo de los XML: PDFs independientes, fusiones, cartas adicionales añadidas al último PDF y huecos por PDF.
+
 ## Google Drive: clave de API opcional
 
 Los XML de MPCFill contienen identificadores de imágenes alojadas en Google Drive. Sin clave, el programa descarga mediante `gdown`. Para usar la API de Drive al ejecutar desde el código, copia `config.example.json` a `config.json` en la raíz y sustituye el valor de ejemplo:
@@ -191,6 +193,8 @@ Cuando hay fusiones se escribe `resumen.txt` con el desglose de cartas por XML. 
 - Los slots vacíos de la última página se dejan en blanco. En modo solo frontales se omiten las páginas de traseras.
 
 En la pestaña **Configuración** puedes introducir el **tamaño máximo de PDF** en MB, hasta 2,5 GB (200 MB por defecto). El cambio se guarda al salir de la pestaña. La división usa ese umbral estimado, calculado a partir de las imágenes únicas de cada bloque: JPEG ×1,30; PNG y otros formatos ×2. No es un límite garantizado del tamaño final. Las parejas frontal/trasera no se separan, por lo que cada archivo sigue siendo apto para doble cara; una pareja individual puede superar el umbral.
+
+La división empieza con una estimación para evitar renders innecesarios y se verifica después contra el tamaño real del PDF. Si un archivo excede el máximo se vuelve a dividir por parejas de páginas, manteniendo juntos frontal y trasera. Una pareja individual que por sí sola supere el límite se conserva intacta.
 
 ## Empaquetado
 
