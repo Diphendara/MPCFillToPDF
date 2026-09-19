@@ -16,6 +16,7 @@ from src.cropper import (
     _fill_rounded_corners,
     process_for_pdf,
 )
+from src.pdf_generator import YUGIOH_LAYOUT
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,28 @@ def test_process_for_pdf_output_dimensions_without_crop(tmp_path):
     out = tmp_path / "bled_nocrop.jpg"
     process_for_pdf(inp, out, crop_borders=False)
     assert Image.open(out).size == _expected_bled_size(w, h, crop=False)
+
+
+def test_process_for_pdf_uses_yugioh_trim_dimensions_for_mirror_bleed(tmp_path):
+    inp = _img(tmp_path / "ygo.jpg", 590, 860)
+    out = tmp_path / "ygo_bled.jpg"
+
+    process_for_pdf(inp, out, crop_borders=False, card_w_mm=59, card_h_mm=86)
+
+    assert Image.open(out).size == (610, 880)
+    assert YUGIOH_LAYOUT.trim_size_mm == (59, 86)
+
+
+def test_process_for_pdf_center_crops_wide_yugioh_back_to_card_aspect(tmp_path):
+    inp = _img(tmp_path / "ygo_back.jpg", 3012, 4210)
+    out = tmp_path / "ygo_back_bled.jpg"
+
+    process_for_pdf(inp, out, crop_borders=False, card_w_mm=59, card_h_mm=86)
+
+    trimmed_width = round(4210 * 59 / 86)
+    bleed_x = round(trimmed_width / 59)
+    bleed_y = round(4210 / 86)
+    assert Image.open(out).size == (trimmed_width + 2 * bleed_x, 4210 + 2 * bleed_y)
 
 
 def test_process_for_pdf_without_crop_is_larger(tmp_path):

@@ -9,11 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
 from src.cancellation import Cancelled
 from src.deck_importer import DeckCard, FetchedDeck
 from src.downloader import DownloadPermissionError
 from src.parser import parse
+from src.pdf_generator import YUGIOH_LAYOUT
 from src.pipeline import (
     _build_crop_tasks,
     _build_slot_maps,
@@ -36,6 +38,26 @@ W, H = 200, 280  # image dimensions chosen to survive MPC bleed crop
 
 def _img(path: Path, color=(180, 80, 40)) -> Path:
     return make_rgb_image(path, W, H, color)
+
+
+def test_run_locals_only_yugioh_layout_uses_yugioh_sized_bleed(tmp_path):
+    front = make_rgb_image(tmp_path / "front.jpg", 590, 860)
+    back = make_rgb_image(tmp_path / "back.jpg", 590, 860)
+
+    outputs = run_locals_only(
+        [front],
+        back,
+        tmp_path / "out",
+        "yugioh",
+        tmp_path / "work",
+        local_crop_map={front: False, back: False},
+        layout=YUGIOH_LAYOUT,
+    )
+
+    assert outputs[0].exists()
+    bled_images = list((tmp_path / "work" / "bled").glob("*.jpg"))
+    assert bled_images
+    assert all(Image.open(path).size == (610, 880) for path in bled_images)
 
 
 def _one_card_xml(tmp_path: Path, name: str = "deck") -> Path:
@@ -537,7 +559,7 @@ class TestBuildCropTasks:
         did, _, bled_p, crop = tasks[0]
         assert did == "ABC123"
         assert crop is True
-        assert bled_p.name == "ABC123.jpg"
+        assert bled_p.name.startswith("ABC123_v2_crop_")
 
     def test_local_id_with_crop_true(self, tmp_path):
         local = tmp_path / "local.jpg"
@@ -546,7 +568,7 @@ class TestBuildCropTasks:
         tasks = _build_crop_tasks({lid: local}, tmp_path / "bled", {lid: local}, {local: True})
         _, _, bled_p, crop = tasks[0]
         assert crop is True
-        assert "_nocrop" not in bled_p.name
+        assert "_crop_" in bled_p.name
 
     def test_local_id_with_crop_false(self, tmp_path):
         local = tmp_path / "local.jpg"
@@ -555,7 +577,7 @@ class TestBuildCropTasks:
         tasks = _build_crop_tasks({lid: local}, tmp_path / "bled", {lid: local}, {local: False})
         _, _, bled_p, crop = tasks[0]
         assert crop is False
-        assert "_nocrop" in bled_p.name
+        assert "_nocrop_" in bled_p.name
 
     def test_local_id_missing_from_crop_map_defaults_to_no_crop(self, tmp_path):
         local = tmp_path / "local.jpg"
@@ -564,7 +586,7 @@ class TestBuildCropTasks:
         tasks = _build_crop_tasks({lid: local}, tmp_path / "bled", {lid: local}, {})
         _, _, bled_p, crop = tasks[0]
         assert crop is False
-        assert "_nocrop" in bled_p.name
+        assert "_nocrop_" in bled_p.name
 
     def test_empty_input_returns_empty(self):
         tasks = _build_crop_tasks({}, Path("bled"), {}, {})

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -17,7 +18,25 @@ from src.app_settings import (
 from src.cancellation import Cancelled
 from src.constants import CARDS_PER_PAGE, COLS, ROWS
 
-# Card trim size
+
+@dataclass(frozen=True)
+class CardLayout:
+    """Physical trim grid used for a PDF page."""
+
+    card_w: float
+    card_h: float
+    margin_x: float
+    margin_y: float
+    gap_x: float
+    gap_y: float
+
+    @property
+    def trim_size_mm(self) -> tuple[float, float]:
+        """Trim dimensions shared with image processing, in millimetres."""
+        return round(self.card_w / mm, 6), round(self.card_h / mm, 6)
+
+
+# Standard MPC / Magic-compatible grid.
 CARD_W = 63.5 * mm
 CARD_H = 88.9 * mm
 
@@ -53,11 +72,17 @@ PAGE_W, PAGE_H = A4
 GAP_X = (PAGE_W - 2 * MARGIN_X - COLS * CARD_W) / (COLS - 1)
 GAP_Y = (PAGE_H - 2 * MARGIN_Y - ROWS * CARD_H) / (ROWS - 1)
 
+STANDARD_LAYOUT = CardLayout(CARD_W, CARD_H, MARGIN_X, MARGIN_Y, GAP_X, GAP_Y)
 
-def _trim_origin(col: int, row: int) -> tuple[float, float]:
+# Yu-Gi-Oh! cards are 59 x 86 mm. This remains a 3 x 3 grid, but with
+# dedicated gaps and margins so its cuts do not share the MPC-sized grid.
+YUGIOH_LAYOUT = CardLayout(59 * mm, 86 * mm, 10.5 * mm, 12.5 * mm, 6 * mm, 7 * mm)
+
+
+def _trim_origin(col: int, row: int, layout: CardLayout = STANDARD_LAYOUT) -> tuple[float, float]:
     """Bottom-left of a card's trim area (ReportLab: y=0 at bottom)."""
-    x = MARGIN_X + col * (CARD_W + GAP_X)
-    y = PAGE_H - MARGIN_Y - (row + 1) * CARD_H - row * GAP_Y
+    x = layout.margin_x + col * (layout.card_w + layout.gap_x)
+    y = PAGE_H - layout.margin_y - (row + 1) * layout.card_h - row * layout.gap_y
     return x, y
 
 
@@ -72,6 +97,7 @@ def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
 
 def _draw_crop_marks(
     c: canvas.Canvas,
+    layout: CardLayout = STANDARD_LAYOUT,
     color_rgb: tuple[float, float, float] = (0.0, 0.0, 0.0),
     style: str = DEFAULT_CUT_LINE_STYLE,
     line_width: float = DEFAULT_CUT_LINE_WIDTH,
@@ -81,11 +107,15 @@ def _draw_crop_marks(
     style='ticks': short ticks in page margins only (for print shops).
     style='full': continuous lines spanning the full page (for self-cutting).
     """
-    xs = [MARGIN_X + col * (CARD_W + GAP_X) + dx for col in range(COLS) for dx in (0.0, CARD_W)]
+    xs = [
+        layout.margin_x + col * (layout.card_w + layout.gap_x) + dx
+        for col in range(COLS)
+        for dx in (0.0, layout.card_w)
+    ]
     ys = [
-        PAGE_H - MARGIN_Y - (row + 1) * CARD_H - row * GAP_Y + dy
+        PAGE_H - layout.margin_y - (row + 1) * layout.card_h - row * layout.gap_y + dy
         for row in range(ROWS)
-        for dy in (0.0, CARD_H)
+        for dy in (0.0, layout.card_h)
     ]
 
     c.saveState()
@@ -98,13 +128,13 @@ def _draw_crop_marks(
         for y in ys:
             c.line(0, y, PAGE_W, y)
     else:
-        top_y_end = PAGE_H - MARGIN_Y + MARK_GAP
-        bot_y_end = MARGIN_Y - MARK_GAP
+        top_y_end = PAGE_H - layout.margin_y + MARK_GAP
+        bot_y_end = layout.margin_y - MARK_GAP
         for x in xs:
             c.line(x, 0, x, bot_y_end)
             c.line(x, top_y_end, x, PAGE_H)
-        left_x_end = MARGIN_X - MARK_GAP
-        right_x_end = PAGE_W - MARGIN_X + MARK_GAP
+        left_x_end = layout.margin_x - MARK_GAP
+        right_x_end = PAGE_W - layout.margin_x + MARK_GAP
         for y in ys:
             c.line(0, y, left_x_end, y)
             c.line(right_x_end, y, PAGE_W, y)
@@ -141,6 +171,7 @@ def _draw_page(
     slots: list[int | None],
     id_to_path: dict[str, Path],
     slot_to_id: dict[int, str],
+    layout: CardLayout = STANDARD_LAYOUT,
     page_label: str | None = None,
     cut_line_color: str = DEFAULT_CUT_LINE_COLOR,
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
@@ -150,19 +181,25 @@ def _draw_page(
     color_rgb = _hex_to_rgb(cut_line_color)
 
     if not cut_line_over_cards:
-        _draw_crop_marks(c, color_rgb, cut_line_style, cut_line_width)
+        _draw_crop_marks(c, layout, color_rgb, cut_line_style, cut_line_width)
     _draw_printer_marks(c, page_label)
 
     for idx, slot in enumerate(slots):
         col, row = idx % COLS, idx // COLS
-        x, y = _trim_origin(col, row)
+        x, y = _trim_origin(col, row, layout)
         if slot is not None and slot in slot_to_id:
             img_path = id_to_path.get(slot_to_id[slot])
             if img_path and img_path.exists():
-                c.drawImage(str(img_path), x - BLEED, y - BLEED, width=IMAGE_W, height=IMAGE_H)
+                c.drawImage(
+                    str(img_path),
+                    x - BLEED,
+                    y - BLEED,
+                    width=layout.card_w + 2 * BLEED,
+                    height=layout.card_h + 2 * BLEED,
+                )
 
     if cut_line_over_cards:
-        _draw_crop_marks(c, color_rgb, cut_line_style, cut_line_width)
+        _draw_crop_marks(c, layout, color_rgb, cut_line_style, cut_line_width)
 
 
 # Cap each generated PDF at 500 MB on disk (decimal MB, as reported by file
@@ -215,6 +252,7 @@ def _render_chunk(
     cut_line_over_fronts: bool,
     cut_line_over_backs: bool,
     cancel_event: Event | None,
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> None:
     """Write a duplex-safe chunk, preserving its original global page labels."""
     c = canvas.Canvas(str(path), pagesize=A4)
@@ -233,6 +271,7 @@ def _render_chunk(
             padded,
             id_to_path,
             front_slot_to_id,
+            layout,
             page_label=str(pair_no),
             cut_line_color=cut_line_color,
             cut_line_style=front_style,
@@ -255,6 +294,7 @@ def _render_chunk(
                 mirrored,
                 id_to_path,
                 back_slot_to_id,
+                layout,
                 page_label=f"{pair_no}B",
                 cut_line_color=cut_line_color,
                 cut_line_style=back_style,
@@ -282,6 +322,7 @@ def generate(
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
@@ -347,6 +388,7 @@ def generate(
             cut_line_over_fronts,
             cut_line_over_backs,
             cancel_event,
+            layout,
         )
         if probe.stat().st_size <= max_bytes or len(chunk) == 1:
             return [chunk]
@@ -386,6 +428,7 @@ def generate(
             cut_line_over_fronts,
             cut_line_over_backs,
             cancel_event,
+            layout,
         )
         for _ in chunk:
             pair_no += 1

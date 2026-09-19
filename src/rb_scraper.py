@@ -5,16 +5,15 @@ from __future__ import annotations
 import json
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
-import requests
+import requests  # noqa: F401 - retained as the scraper's test transport seam
 
-from src.cancellation import Cancelled
 from src.constants import ProgressCallback
-from src.scraper_utils import generate_fallback_back
+from src.http_client import get as http_get
+from src.scraper_utils import download_url_images, generate_fallback_back
 from src.scraper_utils import resources_dir as _resources_dir
 
 _HEADERS = {
@@ -199,7 +198,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
         )
     slug = m.group(1).strip("/")
 
-    r = requests.get(_RBGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=20)
+    r = http_get(_RBGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=20)
     r.raise_for_status()
     body = r.text.strip()
     if not body:
@@ -210,7 +209,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
         )
     deck_data = r.json()
 
-    r2 = requests.get(_RBGG_CARDS_API, headers=_HEADERS, timeout=30)
+    r2 = http_get(_RBGG_CARDS_API, headers=_HEADERS, timeout=30)
     r2.raise_for_status()
     raw = r2.json()
     names = raw["names"]
@@ -264,7 +263,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
 
 def _scrape_riftmana(url: str) -> RBDeck:
     html_headers = {**_HEADERS, "Accept": "text/html"}
-    r = requests.get(url, headers=html_headers, timeout=20)
+    r = http_get(url, headers=html_headers, timeout=20)
     r.raise_for_status()
 
     m = re.search(r'data-deck-uuid=["\']([0-9a-f-]{36})["\']', r.text)
@@ -272,7 +271,7 @@ def _scrape_riftmana(url: str) -> RBDeck:
         raise ValueError(f"No se encontró el UUID del mazo en la página de riftmana.com: {url}")
     uuid = m.group(1)
 
-    api_r = requests.get(
+    api_r = http_get(
         _RM_API.format(uuid=uuid),
         headers=_HEADERS,
         timeout=20,
@@ -333,7 +332,7 @@ def _scrape_riftbinder(url: str) -> RBDeck:
         raise ValueError(f"No se pudo extraer el ID del mazo de la URL de riftbinder.com: {url}")
     doc_id = m.group(1)
 
-    r = requests.get(
+    r = http_get(
         _RB_FS_BASE.format(id=doc_id),
         headers=_HEADERS,
         timeout=20,
@@ -403,7 +402,7 @@ def _scrape_riftdex(url: str) -> RBDeck:
         )
     deck_id = m.group(1)
 
-    r = requests.get(
+    r = http_get(
         f"{_RDX_SUPA_URL}/rest/v1/decklists?id=eq.{deck_id}&select=*",
         headers=_RDX_HEADERS,
         timeout=20,
@@ -426,7 +425,7 @@ def _scrape_riftdex(url: str) -> RBDeck:
     for i in range(0, len(card_uuids), chunk_size):
         chunk = card_uuids[i : i + chunk_size]
         ids_param = "(" + ",".join(chunk) + ")"
-        rc = requests.get(
+        rc = http_get(
             f"{_RDX_SUPA_URL}/rest/v1/cards"
             f"?id=in.{ids_param}"
             f"&select=id,card_name,card_number,type,image_url,super",
@@ -466,7 +465,7 @@ def _scrape_riftdex(url: str) -> RBDeck:
 def _trpc_get(proc: str, payload: dict) -> dict:
     inp = quote(json.dumps({"json": payload}))
     url = f"{_TRPC_BASE}/{proc}?input={inp}"
-    r = requests.get(url, headers=_HEADERS, timeout=20)
+    r = http_get(url, headers=_HEADERS, timeout=20)
     r.raise_for_status()
     data = r.json()
     return data["result"]["data"]["json"]
@@ -601,34 +600,21 @@ def download_images(
     """Download one image per unique (card_id, variant_id) pair.
     Returns {variant_id: local_path}.
     """
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    seen: dict[str, Path] = {}
-    done = 0
     unique = {c.variant_id: c for c in deck.cards}
 
-    def _fetch(card: RBCard) -> tuple[str, Path]:
-        ext = card.image_url.rsplit(".", 1)[-1].split("?")[0] or "webp"
-        safe_name = re.sub(r"[^\w\-.]", "_", card.variant_id)
-        path = dest_dir / f"{safe_name}.{ext}"
-        if path.exists():
-            return card.variant_id, path
-        r = requests.get(card.image_url, headers=_HEADERS, timeout=20)
-        r.raise_for_status()
-        path.write_bytes(r.content)
-        return card.variant_id, path
+    def _path_for_key(key: str, url: str) -> Path:
+        extension = url.rsplit(".", 1)[-1].split("?")[0] or "webp"
+        safe_name = re.sub("[^\\w\\-.]", "_", key)
+        return dest_dir / f"{safe_name}.{extension}"
 
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futs = {ex.submit(_fetch, c): c for c in unique.values()}
-        for fut in as_completed(futs):
-            if cancel_event and cancel_event.is_set():
-                raise Cancelled()
-            vid, path = fut.result()
-            seen[vid] = path
-            done += 1
-            if progress_cb:
-                progress_cb(done, len(unique))
-
-    return seen
+    return download_url_images(
+        {variant_id: card.image_url for variant_id, card in unique.items()},
+        dest_dir,
+        _path_for_key,
+        _HEADERS,
+        cancel_event,
+        progress_cb,
+    )
 
 
 # ── Deck expansion ────────────────────────────────────────────────────────────

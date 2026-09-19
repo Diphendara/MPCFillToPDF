@@ -24,8 +24,18 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
           python -m pip install --upgrade pip
           pip install Pillow reportlab gdown requests pytest
 
-      - name: Run tests
-        run: pytest tests/ --ignore=tests/test_downloader.py -m "not network" -v --tb=short
+      - name: Run tests, including Tkinter under a virtual display
+        run: |
+          xvfb-run -a pytest tests/ --ignore=tests/test_downloader.py -m "not network" -v --tb=short
+          xvfb-run -a pytest tests/test_downloader.py -m "not network" -v --tb=short
+
+      - name: Lint and format
+        run: |
+          python -m pip install ruff
+          ruff check .
+          ruff format --check .

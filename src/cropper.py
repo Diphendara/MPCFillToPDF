@@ -128,6 +128,22 @@ def _crop_to_trim(img: Image.Image) -> Image.Image:
     return img.crop((bx, by, w - bx, h - by))
 
 
+def _fit_to_card_aspect(img: Image.Image, card_w_mm: float, card_h_mm: float) -> Image.Image:
+    """Center-crop a non-standard card image to its physical trim proportion."""
+    w, h = img.size
+    target_ratio = card_w_mm / card_h_mm
+    image_ratio = w / h
+    if abs(image_ratio - target_ratio) < 0.001:
+        return img
+    if image_ratio > target_ratio:
+        target_width = round(h * target_ratio)
+        left = (w - target_width) // 2
+        return img.crop((left, 0, left + target_width, h))
+    target_height = round(w / target_ratio)
+    top = (h - target_height) // 2
+    return img.crop((0, top, w, top + target_height))
+
+
 def _add_mirror_bleed(img: Image.Image, bx: int, by: int) -> Image.Image:
     w, h = img.size
     nw, nh = w + 2 * bx, h + 2 * by
@@ -153,6 +169,8 @@ def process_for_pdf(
     input_path: str | Path,
     output_path: str | Path,
     crop_borders: bool = True,
+    card_w_mm: float = CARD_W_MM,
+    card_h_mm: float = CARD_H_MM,
 ) -> Path:
     """Optionally crop MPC bleed, then add mirror bleed. Result is what gets
     placed in the PDF.
@@ -177,9 +195,11 @@ def process_for_pdf(
     if not crop_borders:
         # Scryfall images may have rounded corners with dark pixels
         trimmed = _fill_rounded_corners(trimmed)
+    if (card_w_mm, card_h_mm) != (CARD_W_MM, CARD_H_MM):
+        trimmed = _fit_to_card_aspect(trimmed, card_w_mm, card_h_mm)
     cw, ch = trimmed.size
-    bx = round(cw * BLEED_MM / CARD_W_MM)
-    by = round(ch * BLEED_MM / CARD_H_MM)
+    bx = round(cw * BLEED_MM / card_w_mm)
+    by = round(ch * BLEED_MM / card_h_mm)
     bled = _add_mirror_bleed(trimmed, bx, by)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     bled.save(output_path)

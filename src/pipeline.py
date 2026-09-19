@@ -13,6 +13,7 @@ from src.app_settings import (
     DEFAULT_CUT_LINE_STYLE,
     DEFAULT_CUT_LINE_WIDTH,
 )
+from src.cache_key import crop_cache_path
 from src.cancellation import Cancelled
 from src.constants import JobPdfStartCallback, Stage, StageCallback
 from src.cropper import process_for_pdf
@@ -24,7 +25,8 @@ from src.downloader import (
     download_all,
 )
 from src.parser import CardOrder, parse
-from src.pdf_generator import MAX_PDF_BYTES, generate
+from src.pdf_generator import MAX_PDF_BYTES, STANDARD_LAYOUT, CardLayout, generate
+from src.print_batch import PrintBatch
 from src.scraper_utils import resources_dir
 from src.scryfall import ScryfallError, download_deck_images
 
@@ -42,6 +44,7 @@ def _build_crop_tasks(
     bled_dir: Path,
     local_id_to_path: dict[str, Path],
     crop_map: dict[Path, bool],
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> list[tuple[str, Path, Path, bool]]:
     """Return (drive_id, raw_path, bled_path, crop_borders) for each image."""
     tasks = []
@@ -49,13 +52,10 @@ def _build_crop_tasks(
         if drive_id in local_id_to_path:
             local_path = local_id_to_path[drive_id]
             crop_borders = crop_map.get(local_path, False)
-            suffix = raw_path.suffix.lower() or ".jpg"
-            tag = "" if crop_borders else "_nocrop"
-            bled_name = f"{drive_id}{tag}{suffix}"
         else:
             crop_borders = True
-            bled_name = raw_path.name
-        tasks.append((drive_id, raw_path, bled_dir / bled_name, crop_borders))
+        bled_path = crop_cache_path(bled_dir, drive_id, raw_path, crop_borders, layout.trim_size_mm)
+        tasks.append((drive_id, raw_path, bled_path, crop_borders))
     return tasks
 
 
@@ -63,6 +63,7 @@ def _run_crop_parallel(
     tasks: list[tuple[str, Path, Path, bool]],
     cancel_event: Event | None,
     on_done: StageCallback = None,
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> dict[str, Path]:
     """Crop images in parallel using CROP_THREADS workers."""
     total = len(tasks)
@@ -73,7 +74,8 @@ def _run_crop_parallel(
 
     with ThreadPoolExecutor(max_workers=CROP_THREADS) as executor:
         futures = {
-            executor.submit(process_for_pdf, raw, bled, crop): did for did, raw, bled, crop in tasks
+            executor.submit(process_for_pdf, raw, bled, crop, *layout.trim_size_mm): did
+            for did, raw, bled, crop in tasks
         }
         for future in as_completed(futures):
             if cancel_event is not None and cancel_event.is_set():
@@ -181,6 +183,7 @@ def run_locals_only(
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
     max_pdf_bytes: int = MAX_PDF_BYTES,
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> list[Path]:
     """Generate PDF(s) only from local images (no XML).
 
@@ -208,6 +211,33 @@ def run_locals_only(
         cut_line_over_fronts=cut_line_over_fronts,
         cut_line_over_backs=cut_line_over_backs,
         max_pdf_bytes=max_pdf_bytes,
+        layout=layout,
+    )
+
+
+def run_print_batch(
+    batch: PrintBatch,
+    output_dir: str | Path,
+    work_dir: str | Path = "workdir",
+    progress_callback: StageCallback = None,
+    cancel_event: Event | None = None,
+    **pdf_options,
+) -> list[Path]:
+    """Render any fully prepared batch through the shared local-image pipeline."""
+    if batch.default_back is None:
+        raise ValueError("El lote imprimible necesita un reverso predeterminado.")
+    return run_locals_only(
+        batch.fronts,
+        batch.default_back,
+        output_dir,
+        batch.name,
+        work_dir,
+        progress_callback,
+        cancel_event=cancel_event,
+        extra_backs=batch.backs,
+        local_crop_map=batch.crop_map,
+        layout=batch.layout or STANDARD_LAYOUT,
+        **pdf_options,
     )
 
 
@@ -284,6 +314,47 @@ def _local_synthetic_id(path: Path) -> str:
     return f"local_{h}"
 
 
+def _render_pdf_job(
+    output_dir: Path,
+    base_name: str,
+    ordered_slots: list[int],
+    front_slot_to_id: dict[int, str],
+    back_slot_to_id: dict[int, str],
+    id_to_bled: dict[str, Path],
+    progress_callback: StageCallback,
+    cancel_event: Event | None,
+    fronts_only: bool,
+    cut_line_color: str,
+    cut_line_style: str,
+    cut_line_width: float,
+    cut_line_over_cards: bool,
+    cut_line_over_fronts: bool,
+    cut_line_over_backs: bool,
+    max_pdf_bytes: int,
+    layout: CardLayout = STANDARD_LAYOUT,
+) -> list[Path]:
+    """Render one normalized slot job through the sole PDF-generation seam."""
+    return generate(
+        output_dir,
+        base_name,
+        ordered_slots,
+        front_slot_to_id,
+        back_slot_to_id,
+        id_to_bled,
+        max_bytes=max_pdf_bytes,
+        progress_callback=progress_callback,
+        cancel_event=cancel_event,
+        fronts_only=fronts_only,
+        cut_line_color=cut_line_color,
+        cut_line_style=cut_line_style,
+        cut_line_width=cut_line_width,
+        cut_line_over_cards=cut_line_over_cards,
+        cut_line_over_fronts=cut_line_over_fronts,
+        cut_line_over_backs=cut_line_over_backs,
+        layout=layout,
+    )
+
+
 def _run_xmls(
     xml_paths: list[Path],
     base_name: str,
@@ -303,6 +374,7 @@ def _run_xmls(
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
     max_pdf_bytes: int = MAX_PDF_BYTES,
+    layout: CardLayout = STANDARD_LAYOUT,
 ) -> list[Path]:
     extra_fronts = [Path(p) for p in (extra_fronts or [])]
     # extra_backs is parallel to extra_fronts; entries may be None to mean
@@ -393,7 +465,7 @@ def _run_xmls(
 
     # 3. Crop + mirror bleed (parallel)
     _log.info("Phase 3 — crop: %d images", len(id_to_raw))
-    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, local_id_to_path, crop_map)
+    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, local_id_to_path, crop_map, layout)
 
     def _on_crop(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
@@ -401,21 +473,21 @@ def _run_xmls(
 
     if progress_callback and crop_tasks:
         progress_callback(Stage.CROP, 0, len(crop_tasks))
-    id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop)
+    id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop, layout=layout)
 
     _check_cancel(cancel_event)
 
     # 4. Generate PDF(s)
     _log.info("Phase 4 — generate PDF: %s (%d slots)", base_name, len(front_slot_to_id))
     ordered_slots = sorted(front_slot_to_id.keys())
-    return generate(
+    return _render_pdf_job(
         output_dir,
         base_name,
         ordered_slots,
         front_slot_to_id,
         back_slot_to_id,
         id_to_bled,
-        max_bytes=max_pdf_bytes,
+        max_pdf_bytes=max_pdf_bytes,
         progress_callback=_cb(Stage.PDF),
         cancel_event=cancel_event,
         fronts_only=fronts_only,
@@ -425,6 +497,7 @@ def _run_xmls(
         cut_line_over_cards=cut_line_over_cards,
         cut_line_over_fronts=cut_line_over_fronts,
         cut_line_over_backs=cut_line_over_backs,
+        layout=layout,
     )
 
 
@@ -631,7 +704,7 @@ def run_plan(
             for _did in _xids & _raw_ids_set:
                 _crop_id_to_xml.setdefault(_did, []).append(_xname)
 
-    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, combined_locals, crop_map)
+    crop_tasks = _build_crop_tasks(id_to_raw, bled_dir, combined_locals, crop_map, STANDARD_LAYOUT)
 
     def _on_crop_plan(drive_id: str, done: int, total: int) -> None:
         if progress_callback:
@@ -643,7 +716,9 @@ def run_plan(
 
     if progress_callback and crop_tasks:
         progress_callback(Stage.CROP, 0, len(crop_tasks))
-    id_to_bled = _run_crop_parallel(crop_tasks, cancel_event, on_done=_on_crop_plan)
+    id_to_bled = _run_crop_parallel(
+        crop_tasks, cancel_event, on_done=_on_crop_plan, layout=STANDARD_LAYOUT
+    )
 
     _check_cancel(cancel_event)
 
@@ -654,14 +729,14 @@ def run_plan(
         _check_cancel(cancel_event)
         if on_job_pdf_start:
             on_job_pdf_start(job_idx, total_jobs, jd.base_name)
-        outputs = generate(
+        outputs = _render_pdf_job(
             output_dir,
             jd.base_name,
             jd.ordered_slots,
             jd.front_slot_to_id,
             jd.back_slot_to_id,
             id_to_bled,
-            max_bytes=max_pdf_bytes,
+            max_pdf_bytes=max_pdf_bytes,
             progress_callback=_cb(Stage.PDF),
             cancel_event=cancel_event,
             fronts_only=fronts_only,

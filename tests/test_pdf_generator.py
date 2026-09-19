@@ -6,13 +6,16 @@ from unittest.mock import patch
 
 import pytest
 from PIL import Image
+from reportlab.lib.units import mm
 
 from src.cancellation import Cancelled
 from src.pdf_generator import (
     CARDS_PER_PAGE,
+    YUGIOH_LAYOUT,
     _hex_to_rgb,
     _pair_drive_ids,
     _projected_pdf_bytes,
+    _trim_origin,
     generate,
 )
 
@@ -113,6 +116,26 @@ def test_generate_creates_output_dir(tmp_path):
 def test_generate_no_slots_returns_empty(tmp_path):
     results = generate(tmp_path / "out", "empty", [], {}, {}, {})
     assert results == []
+
+
+def test_yugioh_layout_uses_a_dedicated_smaller_three_by_three_grid(tmp_path):
+    img = _img(tmp_path / "card.jpg")
+    slots, front, back = _slot_maps(CARDS_PER_PAGE)
+    result = generate(
+        tmp_path / "out",
+        "yugioh",
+        slots,
+        front,
+        back,
+        _id_to_path(front, back, img),
+        layout=YUGIOH_LAYOUT,
+    )
+    first_x, first_y = _trim_origin(0, 0, YUGIOH_LAYOUT)
+    last_x, last_y = _trim_origin(2, 2, YUGIOH_LAYOUT)
+    assert result[0].exists()
+    assert YUGIOH_LAYOUT.card_w == 59 * mm
+    assert first_x < last_x
+    assert first_y > last_y
 
 
 # ─── generate — page counts ──────────────────────────────────────────────────

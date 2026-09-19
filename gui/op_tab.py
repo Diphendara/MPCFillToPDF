@@ -3,20 +3,11 @@
 from __future__ import annotations
 
 import threading
-import time
 import tkinter as tk
-import traceback
-from datetime import datetime
-from pathlib import Path
 from tkinter import messagebox, ttk
 
-from gui.paths import work_dir
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
-from src.op_scraper import download_images as op_download
-from src.op_scraper import expand_deck as op_expand
-from src.op_scraper import get_op_backs
 from src.op_scraper import scrape_deck as op_scrape_deck
-from src.pipeline import run_locals_only
 
 
 class OPTabMixin:
@@ -222,133 +213,3 @@ class OPTabMixin:
         self._op_load_btn.state(["!disabled"])
         self._op_refresh_rows()
         self._refresh_generate_state()
-
-    def _start_op(self, fronts_only: bool = False) -> None:
-        self.running = True
-        self.cancel_event.clear()
-        self._dl_speed_str = ""
-        self.timing_var.set("")
-        self.soriano_btn.state(["disabled"])
-        self.fronts_only_btn.state(["disabled"])
-        self.stop_btn.state(["!disabled"])
-        self.stop_btn.pack(fill=tk.X, pady=(4, 0), after=self.fronts_only_btn)
-        self.progress["value"] = 0
-        self.status_var.set("Preparando One Piece…")
-        self.worker = threading.Thread(
-            target=self._work_op,
-            args=(fronts_only,),
-            daemon=True,
-        )
-        self.worker.start()
-
-    def _work_op(self, fronts_only: bool = False) -> None:
-        run_dir = None
-        try:
-            decks = self._op_decks
-            if not decks:
-                raise ValueError("No hay mazos de One Piece cargados.")
-
-            out = self._effective_output_dir()
-            wd = work_dir()
-            run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            _run_start = time.time()
-            label = " + ".join(d.name for d in decks)
-
-            op_raw_dir = wd / "op_raw"
-            total_unique = sum(len({c.card_id for c in d.cards}) for d in decks)
-            self.events.put(("progress", "download", 0, total_unique, label))
-
-            image_map: dict[str, Path] = {}
-            done_dl_offset = 0
-
-            for deck in decks:
-                _offset = done_dl_offset
-
-                def _dl_progress(done, total, _off=_offset):
-                    self.events.put(("progress", "download", _off + done, total_unique, label))
-
-                partial = op_download(
-                    deck,
-                    op_raw_dir,
-                    cancel_event=self.cancel_event,
-                    progress_cb=_dl_progress,
-                )
-                image_map.update(partial)
-                done_dl_offset += len({c.card_id for c in deck.cards})
-
-                if self.cancel_event.is_set():
-                    self.events.put(("cancelled", run_dir))
-                    return
-
-            standard_back, leader_back_res = get_op_backs()
-
-            leader_backs: dict[str, Path] = {}
-            for deck in decks:
-                leader = deck.leader
-                if leader and leader.card_id not in leader_backs:
-                    leader_backs[leader.card_id] = leader_back_res
-
-            all_fronts: list[Path] = []
-            all_backs: list[Path | None] = []
-            for deck in decks:
-                leader = deck.leader
-                lb = leader_backs.get(leader.card_id) if leader else None
-                fronts, backs = op_expand(deck, image_map, lb, standard_back)
-                all_fronts.extend(fronts)
-                all_backs.extend(backs)
-
-            if not all_fronts:
-                raise ValueError("No se pudieron expandir las cartas.")
-
-            all_back_paths = {standard_back} | set(leader_backs.values())
-            crop_map = {p: False for p in set(all_fronts) | all_back_paths}
-
-            base_name = "_".join(d.slug for d in decks)[:60]
-            self.events.put(("file", 1, 1, label))
-
-            _phase_first: dict[str, float] = {}
-            _phase_done: dict[str, float] = {}
-
-            def cb(stage, done, total):
-                now = time.time()
-                if stage not in _phase_first:
-                    _phase_first[stage] = now
-                if done == total and total > 0:
-                    _phase_done[stage] = now
-                self.events.put(("progress", stage, done, total, label))
-
-            pdfs = run_locals_only(
-                all_fronts,
-                standard_back,
-                run_dir,
-                base_name,
-                wd,
-                cb,
-                cancel_event=self.cancel_event,
-                extra_backs=all_backs,
-                local_crop_map=crop_map,
-                fronts_only=fronts_only,
-            )
-
-            def _fmt_dur(sec: float) -> str:
-                return f"{int(sec) // 60}m {int(sec) % 60}s" if sec >= 60 else f"{sec:.0f}s"
-
-            timing_parts = []
-            for stage in ("download", "crop", "pdf"):
-                if stage in _phase_first and stage in _phase_done:
-                    dur = _phase_done[stage] - _phase_first[stage]
-                    lbl = {"download": "Descarga", "crop": "Recorte", "pdf": "PDF"}.get(
-                        stage, stage
-                    )
-                    timing_parts.append(f"{lbl}: {_fmt_dur(dur)}")
-            total_dur = time.time() - _run_start
-            timing_str = "  ".join(timing_parts)
-            if timing_str:
-                timing_str += f"  Total: {_fmt_dur(total_dur)}"
-
-            self.events.put(("done", pdfs, None, run_dir, timing_str))
-
-        except Exception as e:
-            self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir))

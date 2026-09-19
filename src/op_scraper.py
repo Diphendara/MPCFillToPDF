@@ -13,6 +13,8 @@ import requests
 
 from src.cancellation import Cancelled
 from src.constants import ProgressCallback
+from src.http_client import get as http_get
+from src.http_client import post as http_post
 from src.scraper_utils import generate_fallback_back
 from src.scraper_utils import resources_dir as _resources_dir
 
@@ -141,11 +143,11 @@ def _scrape_dotgg(url: str) -> OPDeck:
         raise ValueError(f"No se pudo extraer el slug de la URL: {url}")
     slug = m.group(1).strip("/")
 
-    r = requests.get(_DOTGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=15)
+    r = http_get(_DOTGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=15)
     r.raise_for_status()
     deck_data = r.json()
 
-    r2 = requests.get(_DOTGG_CARDS_API, headers=_HEADERS, timeout=30)
+    r2 = http_get(_DOTGG_CARDS_API, headers=_HEADERS, timeout=30)
     r2.raise_for_status()
     raw = r2.json()
     names = raw["names"]
@@ -179,7 +181,7 @@ def _scrape_dotgg(url: str) -> OPDeck:
 
 
 def _egman_cards_db() -> dict[str, dict]:
-    r = requests.get(_EGMAN_CARDS_API, headers=_HEADERS, timeout=20)
+    r = http_get(_EGMAN_CARDS_API, headers=_HEADERS, timeout=20)
     r.raise_for_status()
     return {c["card_code"]: c for c in r.json()}
 
@@ -261,7 +263,7 @@ def _egman_load_short_code(code: str) -> tuple[dict[str, int], str]:
         "Authorization": f"Bearer {_EGMAN_SUPA_KEY}",
         "Content-Type": "application/json",
     }
-    r = requests.post(rpc_url, json={"p_code": code}, headers=headers, timeout=15)
+    r = http_post(rpc_url, json={"p_code": code}, headers=headers, timeout=15)
     r.raise_for_status()
     data = r.json()
 
