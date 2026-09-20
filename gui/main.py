@@ -11,7 +11,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -38,6 +38,7 @@ from gui.widgets import (
     notify,
 )
 from gui.xml_tab import XmlTabMixin
+from gui.ygo_tab import YGOTabMixin
 from src.app_settings import AppSettings, load_settings
 from src.cancellation import Cancelled
 from src.constants import CARDS_PER_PAGE, Stage
@@ -48,14 +49,11 @@ from src.downloader import (
     DownloadRateLimitError,
     DownloadTimeoutError,
 )
-from src.lorcana_scraper import LocanaDeck, get_lorcana_back
-from src.lorcana_scraper import download_images as lorcana_download
-from src.lorcana_scraper import expand_deck as lorcana_expand
-from src.op_scraper import OPDeck, get_op_backs
-from src.op_scraper import download_images as op_download
-from src.op_scraper import expand_deck as op_expand
+from src.execution_plan import build_combined_print_run, standalone_print_batches
+from src.lorcana_scraper import LocanaDeck
+from src.op_scraper import OPDeck
 from src.parser import CardOrder
-from src.pipeline import run_locals_only, run_plan
+from src.pipeline import run_plan, run_print_batch
 from src.precheck import (
     XmlReport,
     analyze,
@@ -65,12 +63,26 @@ from src.precheck import (
     plan,
     write_manifest,
 )
-from src.rb_scraper import RBDeck, get_rb_backs
-from src.rb_scraper import download_images as rb_download
-from src.rb_scraper import expand_deck as rb_expand
+from src.print_batch import PrintBatch
+from src.print_run import StandalonePrintRun
+from src.rb_scraper import RBDeck
 from src.scraper_utils import resources_dir
-from src.scryfall import download_deck_images as scryfall_download
+from src.tcg_batches import (
+    LorcanaBatchAdapter,
+    MagicBatchAdapter,
+    OnePieceBatchAdapter,
+    RiftboundBatchAdapter,
+    YugiohBatchAdapter,
+)
 from src.validator import ValidationWarning
+from src.worker_events import (
+    FileEvent,
+    ProgressEvent,
+    RunFinishedEvent,
+    VerificationWarningEvent,
+    normalize_event,
+)
+from src.ygo_scraper import YGODeck
 
 _log = logging.getLogger(__name__)
 
@@ -118,7 +130,41 @@ class AppState:
     mtg_url_decks: list[MtgUrlDeck] = field(default_factory=list)
 
 
-class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, SettingsTabMixin):
+@dataclass(frozen=True)
+class ExecutionRequest:
+    """Snapshot of GUI state consumed by the worker without touching Tkinter."""
+
+    plan: object | None
+    reports: tuple[XmlReport, ...]
+    fronts_only: bool
+    keep_cache: bool
+    local_fronts: tuple[Path, ...]
+    local_backs: tuple[Path, ...]
+    extra_backs: tuple[Path | None, ...]
+    crop_map: dict[Path, bool]
+    op_decks: tuple[OPDeck, ...]
+    rb_decks: tuple[tuple[RBDeck, bool], ...]
+    lorcana_decks: tuple[LocanaDeck, ...]
+    ygo_decks: tuple[tuple[YGODeck, bool], ...]
+    mtg_decks: tuple[MtgUrlDeck, ...]
+    cut_line_color: str
+    cut_line_style: str
+    cut_line_width: float
+    cut_line_over_cards: bool
+    cut_line_over_fronts: bool
+    cut_line_over_backs: bool
+    max_pdf_bytes: int
+
+
+class App(
+    XmlTabMixin,
+    OPTabMixin,
+    RBTabMixin,
+    LorcanaTabMixin,
+    YGOTabMixin,
+    LocalsTabMixin,
+    SettingsTabMixin,
+):
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_TITLE)
@@ -153,6 +199,9 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
 
         self._lorcana_decks: list[LocanaDeck] = []
         self._lorcana_deck_rows: list[dict] = []
+
+        self._ygo_decks: list[YGODeck] = []
+        self._ygo_deck_rows: list[dict] = []
 
         self._build_ui()
         self.root.after(80, self._drain_events)
@@ -240,6 +289,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         self._op_icon_img = load_tab_icon("op_icon")
         self._rb_icon_img = load_tab_icon("riftbound_icon")
         self._lorcana_icon_img = load_tab_icon("lorcana_icon")
+        self._ygo_icon_img = load_tab_icon("yugioh_icon")
 
         magic_frame = ttk.Frame(notebook)
         magic_kw: dict = {"text": " Magic"}
@@ -272,6 +322,14 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             lorcana_kw["compound"] = "left"
         notebook.add(lorcana_frame, **lorcana_kw)
         self._build_lorcana_tab(lorcana_frame)
+
+        ygo_frame = ttk.Frame(notebook)
+        ygo_kw: dict = {"text": " Yu-Gi-Oh!"}
+        if self._ygo_icon_img:
+            ygo_kw["image"] = self._ygo_icon_img
+            ygo_kw["compound"] = "left"
+        notebook.add(ygo_frame, **ygo_kw)
+        self._build_yugioh_tab(ygo_frame)
 
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text=" ⚙ Configuración")
@@ -402,6 +460,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             and not self._op_decks
             and not self._rb_decks
             and not self._lorcana_decks
+            and not self._ygo_decks
             and not self.state.mtg_url_decks
         ):
             self._preflight_frame.pack_forget()
@@ -467,6 +526,16 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     (f"• Lorcana – {ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
+                ]
+            )
+
+        for deck, row in zip(self._ygo_decks, self._ygo_deck_rows):
+            n = deck.total_slots(row["include_side_var"].get())
+            _row(
+                [
+                    (f"• Yu-Gi-Oh! – {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas (PDF separado)", "normal"),
                 ]
             )
 
@@ -559,6 +628,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             or self._op_decks
             or self._rb_decks
             or self._lorcana_decks
+            or self._ygo_decks
             or bool(self.state.mtg_url_decks)
         )
         if ready and not self.running:
@@ -582,6 +652,39 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         for p, c in zip(self.state.local_fronts, self.state.local_front_crop):
             m[p] = c
         return m
+
+    def _build_execution_request(
+        self, plan_: object | None, reports: list[XmlReport], fronts_only: bool
+    ) -> ExecutionRequest:
+        """Capture every worker input while running on the Tkinter thread."""
+        return ExecutionRequest(
+            plan=plan_,
+            reports=tuple(reports),
+            fronts_only=fronts_only,
+            keep_cache=bool(self.keep_cache.get()),
+            local_fronts=tuple(self.state.local_fronts),
+            local_backs=tuple(self.state.local_backs),
+            extra_backs=tuple(self._resolve_extra_backs()),
+            crop_map=self._build_crop_map(),
+            op_decks=tuple(self._op_decks),
+            rb_decks=tuple(
+                (deck, bool(row["print_runes_var"].get()))
+                for deck, row in zip(self._rb_decks, self._rb_deck_rows)
+            ),
+            lorcana_decks=tuple(self._lorcana_decks),
+            ygo_decks=tuple(
+                (deck, bool(row["include_side_var"].get()))
+                for deck, row in zip(self._ygo_decks, self._ygo_deck_rows)
+            ),
+            mtg_decks=tuple(replace(deck) for deck in self.state.mtg_url_decks),
+            cut_line_color=self._settings.cut_line_color,
+            cut_line_style=self._settings.cut_line_style,
+            cut_line_width=self._settings.cut_line_width,
+            cut_line_over_cards=self._settings.cut_line_over_cards,
+            cut_line_over_fronts=self._settings.cut_line_over_fronts,
+            cut_line_over_backs=self._settings.cut_line_over_backs,
+            max_pdf_bytes=self._settings.max_pdf_size_mb * 1_000_000,
+        )
 
     def _confirm_cut_lines(self) -> bool:
         """Show a modal summary of cut-line settings before generating.
@@ -694,6 +797,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             and not self._op_decks
             and not self._rb_decks
             and not self._lorcana_decks
+            and not self._ygo_decks
             and not self.state.mtg_url_decks
         ):
             messagebox.showerror(
@@ -756,6 +860,10 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 + sum(d.total_slots for d in self._op_decks)
                 + sum(d.total_slots for d in self._rb_decks)
                 + sum(d.total_slots for d in self._lorcana_decks)
+                + sum(
+                    deck.total_slots(row["include_side_var"].get())
+                    for deck, row in zip(self._ygo_decks, self._ygo_deck_rows)
+                )
                 + sum(d.active_count for d in self.state.mtg_url_decks)
             )
             rem = total % CARDS_PER_PAGE
@@ -782,20 +890,10 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         self.progress["value"] = 0
         self.status_var.set("Preparando…")
         self._reset_xml_download_progress()
+        request = self._build_execution_request(plan_, reports, fronts_only)
         self.worker = threading.Thread(
             target=self._work,
-            args=(
-                plan_,
-                reports,
-                fronts_only,
-                self._settings.cut_line_color,
-                self._settings.cut_line_style,
-                self._settings.cut_line_width,
-                self._settings.cut_line_over_cards,
-                self._settings.cut_line_over_fronts,
-                self._settings.cut_line_over_backs,
-                self._settings.max_pdf_size_mb * 1_000_000,
-            ),
+            args=(request,),
             daemon=True,
         )
         self.worker.start()
@@ -813,19 +911,26 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
         self.stop_btn.state(["disabled"])
         self.status_var.set("Cancelando…")
 
-    def _work(
-        self,
-        plan_,
-        reports,
-        fronts_only: bool = False,
-        cut_line_color: str = "#000000",
-        cut_line_style: str = "ticks",
-        cut_line_width: float = 1.0,
-        cut_line_over_cards: bool = False,
-        cut_line_over_fronts: bool = True,
-        cut_line_over_backs: bool = True,
-        max_pdf_bytes: int = 500_000_000,
-    ) -> None:
+    def _work(self, request: ExecutionRequest) -> None:
+        plan_ = request.plan
+        reports = request.reports
+        fronts_only = request.fronts_only
+        cut_line_color = request.cut_line_color
+        cut_line_style = request.cut_line_style
+        cut_line_width = request.cut_line_width
+        cut_line_over_cards = request.cut_line_over_cards
+        cut_line_over_fronts = request.cut_line_over_fronts
+        cut_line_over_backs = request.cut_line_over_backs
+        max_pdf_bytes = request.max_pdf_bytes
+        ygo_decks = request.ygo_decks
+        op_decks = request.op_decks
+        rb_decks = request.rb_decks
+        lorcana_decks = request.lorcana_decks
+        mtg_decks = request.mtg_decks
+        local_fronts = request.local_fronts
+        local_backs = request.local_backs
+        extra_backs = request.extra_backs
+        crop_map = request.crop_map
         run_dir = None
         wd = None
         try:
@@ -841,9 +946,6 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             run_dir = out / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
             run_dir.mkdir(parents=True, exist_ok=True)
             generated: list[Path] = []
-            extra_backs = self._resolve_extra_backs()
-            crop_map = self._build_crop_map()
-
             _run_start = time.time()
             _phase_first: dict[str, float] = {}
             _phase_done: dict[str, float] = {}
@@ -855,217 +957,69 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 if done == total and total > 0:
                     _phase_done[stage] = now
 
-            op_fronts: list[Path] = []
-            op_backs_resolved: list[Path] = []
-            op_crop_extra: dict[Path, bool] = {}
-            op_standard_back: Path | None = None
+            def _report_tcg(stage: str, done: int, total: int, label: str) -> None:
+                _track(stage, done, total)
+                self.events.put(ProgressEvent(stage, done, total, label))
 
-            if self._op_decks:
-                op_raw_dir = wd / "op_raw"
-                op_label = " + ".join(d.name for d in self._op_decks)
-                op_total_unique = sum(len({c.card_id for c in d.cards}) for d in self._op_decks)
-                self.events.put(
-                    ("progress", "download", 0, op_total_unique, f"One Piece – {op_label}")
-                )
-                image_map_op: dict[str, Path] = {}
-                done_dl_op = 0
-                for deck in self._op_decks:
-                    _off_op = done_dl_op
+            ygo_batch = YugiohBatchAdapter(ygo_decks, wd, self.cancel_event, _report_tcg).prepare()
+            if self.cancel_event.is_set():
+                self.events.put(("cancelled", run_dir))
+                return
+            op_batch = OnePieceBatchAdapter(op_decks, wd, self.cancel_event, _report_tcg).prepare()
+            rb_batch = RiftboundBatchAdapter(rb_decks, wd, self.cancel_event, _report_tcg).prepare()
+            lorcana_batch = LorcanaBatchAdapter(
+                lorcana_decks, wd, self.cancel_event, _report_tcg
+            ).prepare()
+            mtg_batch = MagicBatchAdapter(
+                mtg_decks,
+                wd,
+                resources_dir() / "backs" / "mtg" / "back.jpg",
+                local_backs,
+                self.cancel_event,
+                _report_tcg,
+            ).prepare()
 
-                    def _op_prog(done, total, _o=_off_op, _t=op_total_unique, _lbl=op_label):
-                        _track("download", _o + done, _t)
-                        self.events.put(
-                            ("progress", "download", _o + done, _t, f"One Piece – {_lbl}")
-                        )
+            if self.cancel_event.is_set():
+                self.events.put(("cancelled", run_dir))
+                return
 
-                    part = op_download(
-                        deck, op_raw_dir, cancel_event=self.cancel_event, progress_cb=_op_prog
-                    )
-                    image_map_op.update(part)
-                    done_dl_op += len({c.card_id for c in deck.cards})
-                    if self.cancel_event.is_set():
-                        self.events.put(("cancelled", run_dir))
-                        return
-                op_standard_back, op_leader_back_res = get_op_backs()
-                leader_backs_op: dict[str, Path] = {}
-                for deck in self._op_decks:
-                    if deck.leader and deck.leader.card_id not in leader_backs_op:
-                        leader_backs_op[deck.leader.card_id] = op_leader_back_res
-                for deck in self._op_decks:
-                    lb = leader_backs_op.get(deck.leader.card_id) if deck.leader else None
-                    fronts_op, backs_op = op_expand(deck, image_map_op, lb, op_standard_back)
-                    op_fronts.extend(fronts_op)
-                    op_backs_resolved.extend(op_standard_back if b is None else b for b in backs_op)
-                op_all_back_paths = {op_standard_back} | set(leader_backs_op.values())
-                op_crop_extra = {p: False for p in set(op_fronts) | op_all_back_paths}
+            batches = [
+                PrintBatch("locales", list(local_fronts), list(extra_backs), dict(crop_map)),
+                ygo_batch,
+                op_batch,
+                rb_batch,
+                lorcana_batch,
+                mtg_batch,
+            ]
+            for batch in standalone_print_batches(batches):
+                self.events.put(FileEvent(1, 1, batch.name))
 
-            rb_fronts: list[Path] = []
-            rb_backs_resolved: list[Path] = []
-            rb_crop_extra: dict[Path, bool] = {}
-            rb_default_back: Path | None = None
+                def _standalone_progress(stage, done, total, _label=batch.name):
+                    _track(stage, done, total)
+                    self.events.put(ProgressEvent(stage, done, total, _label))
 
-            if self._rb_decks:
-                rb_raw_dir = wd / "rb_raw"
-                rb_label = " + ".join(d.name for d in self._rb_decks)
-                rb_total_unique = sum(len({c.variant_id for c in d.cards}) for d in self._rb_decks)
-                self.events.put(
-                    ("progress", "download", 0, rb_total_unique, f"Riftbound – {rb_label}")
-                )
-                image_map_rb: dict[str, Path] = {}
-                done_dl_rb = 0
-                for deck in self._rb_decks:
-                    _off_rb = done_dl_rb
-
-                    def _rb_prog(done, total, _o=_off_rb, _t=rb_total_unique, _lbl=rb_label):
-                        _track("download", _o + done, _t)
-                        self.events.put(
-                            ("progress", "download", _o + done, _t, f"Riftbound – {_lbl}")
-                        )
-
-                    part = rb_download(
-                        deck, rb_raw_dir, cancel_event=self.cancel_event, progress_cb=_rb_prog
-                    )
-                    image_map_rb.update(part)
-                    done_dl_rb += len({c.variant_id for c in deck.cards})
-                    if self.cancel_event.is_set():
-                        self.events.put(("cancelled", run_dir))
-                        return
-                rb_backs_map = get_rb_backs()
-                rb_default_back = rb_backs_map.get("maindeck") or next(iter(rb_backs_map.values()))
-                rb_all_back_paths = set(rb_backs_map.values())
-                print_runes_flags = [row["print_runes_var"].get() for row in self._rb_deck_rows]
-                for idx, deck in enumerate(self._rb_decks):
-                    include_runes = print_runes_flags[idx] if idx < len(print_runes_flags) else True
-                    fronts_rb, backs_rb = rb_expand(
-                        deck, image_map_rb, rb_backs_map, include_runes=include_runes
-                    )
-                    rb_fronts.extend(fronts_rb)
-                    rb_backs_resolved.extend(rb_default_back if b is None else b for b in backs_rb)
-                rb_crop_extra = {p: False for p in set(rb_fronts) | rb_all_back_paths}
-
-            lorcana_fronts: list[Path] = []
-            lorcana_backs_resolved: list[Path | None] = []
-            lorcana_crop_extra: dict[Path, bool] = {}
-            lorcana_default_back: Path | None = None
-
-            if self._lorcana_decks:
-                lorcana_raw_dir = wd / "lorcana_raw"
-                lorcana_label = " + ".join(d.name for d in self._lorcana_decks)
-                lorcana_total_unique = sum(
-                    len({c.card_id for c in d.cards}) for d in self._lorcana_decks
-                )
-                self.events.put(
-                    (
-                        "progress",
-                        "download",
-                        0,
-                        lorcana_total_unique,
-                        f"Lorcana – {lorcana_label}",
+                generated.extend(
+                    StandalonePrintRun(batch).render(
+                        run_dir,
+                        wd,
+                        _standalone_progress,
+                        self.cancel_event,
+                        fronts_only=fronts_only,
+                        cut_line_color=cut_line_color,
+                        cut_line_style=cut_line_style,
+                        cut_line_width=cut_line_width,
+                        cut_line_over_cards=cut_line_over_cards,
+                        cut_line_over_fronts=cut_line_over_fronts,
+                        cut_line_over_backs=cut_line_over_backs,
+                        max_pdf_bytes=max_pdf_bytes,
                     )
                 )
-                image_map_lorcana: dict[str, Path] = {}
-                done_dl_lorcana = 0
-                for deck in self._lorcana_decks:
-                    _off_lorcana = done_dl_lorcana
-
-                    def _lorcana_prog(
-                        done, total, _o=_off_lorcana, _t=lorcana_total_unique, _lbl=lorcana_label
-                    ):
-                        _track("download", _o + done, _t)
-                        self.events.put(
-                            ("progress", "download", _o + done, _t, f"Lorcana – {_lbl}")
-                        )
-
-                    part = lorcana_download(
-                        deck,
-                        lorcana_raw_dir,
-                        cancel_event=self.cancel_event,
-                        progress_cb=_lorcana_prog,
-                    )
-                    image_map_lorcana.update(part)
-                    done_dl_lorcana += len({c.card_id for c in deck.cards})
-                    if self.cancel_event.is_set():
-                        self.events.put(("cancelled", run_dir))
-                        return
-                lorcana_back = get_lorcana_back()
-                lorcana_default_back = lorcana_back
-                for deck in self._lorcana_decks:
-                    fronts_lorcana, backs_lorcana = lorcana_expand(deck, image_map_lorcana)
-                    lorcana_fronts.extend(fronts_lorcana)
-                    lorcana_backs_resolved.extend(
-                        lorcana_back if b is None else b for b in backs_lorcana
-                    )
-                lorcana_crop_extra = {p: False for p in set(lorcana_fronts) | {lorcana_back}}
-
-            mtg_fronts: list[Path] = []
-            mtg_backs_resolved: list[Path] = []
-            mtg_crop_extra: dict[Path, bool] = {}
-            mtg_default_back: Path | None = None
-
-            if self.state.mtg_url_decks:
-                mtg_default_back = resources_dir() / "backs" / "mtg" / "back.jpg"
-                scryfall_dir = wd / "scryfall"
-                mtg_cards_with_deck: list[tuple[DeckCard, MtgUrlDeck]] = []
-                for _deck in self.state.mtg_url_decks:
-                    deck_cards = sorted(
-                        ((c, _deck) for c in _deck.cards if _deck.includes(c)),
-                        key=lambda x: x[0].name.casefold(),
-                    )
-                    mtg_cards_with_deck.extend(deck_cards)
-                mtg_cards_all = [c for c, _ in mtg_cards_with_deck]
-                mtg_label = f"Magic – {len(self.state.mtg_url_decks)} mazo(s)"
-                self.events.put(("progress", "download", 0, len(mtg_cards_all), mtg_label))
-
-                def _mtg_prog(done: int, total: int) -> None:
-                    _track("download", done, total)
-                    self.events.put(("progress", "download", done, total, mtg_label))
-
-                dl_results = scryfall_download(
-                    mtg_cards_all, scryfall_dir, _mtg_prog, cancel_event=self.cancel_event
-                )
-
-                if self.cancel_event.is_set():
-                    self.events.put(("cancelled", run_dir))
-                    return
-
-                local_back_set = set(self.state.local_backs)
-                all_mtg_back_paths: set[Path] = {mtg_default_back}
-                for (card, front_path, back_path), (_, deck) in zip(
-                    dl_results, mtg_cards_with_deck
-                ):
-                    if back_path is not None:
-                        resolved_back = back_path
-                    elif deck.back_path in local_back_set:
-                        resolved_back = deck.back_path
-                    else:
-                        resolved_back = mtg_default_back
-                    all_mtg_back_paths.add(resolved_back)
-                    for _ in range(card.quantity):
-                        mtg_fronts.append(front_path)
-                        mtg_backs_resolved.append(resolved_back)
-                mtg_crop_extra = {
-                    p: False
-                    for p in set(mtg_fronts) | all_mtg_back_paths
-                    if p not in local_back_set
-                }
-
-            all_extra_fronts = (
-                list(self.state.local_fronts) + op_fronts + rb_fronts + lorcana_fronts + mtg_fronts
-            )
-            all_extra_backs: list[Path | None] = (
-                list(extra_backs)
-                + op_backs_resolved
-                + rb_backs_resolved
-                + lorcana_backs_resolved
-                + mtg_backs_resolved
-            )
-            all_crop_map = {
-                **crop_map,
-                **op_crop_extra,
-                **rb_crop_extra,
-                **lorcana_crop_extra,
-                **mtg_crop_extra,
-            }
+            combined_run = build_combined_print_run(batches)
+            if plan_ is None and not combined_run.fronts:
+                if not request.keep_cache:
+                    self._cleanup_workdir(wd)
+                self.events.put(RunFinishedEvent(generated, None, run_dir, ""))
+                return
 
             if plan_ is not None:
                 xml_paths_flat = [Path(p) for job in plan_.jobs for p in job.xml_paths]
@@ -1082,14 +1036,14 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     def _verify_cb(done, total):
                         _track(Stage.VERIFY, done, total)
                         self.events.put(
-                            ("progress", Stage.VERIFY, done, total, "XML seleccionados")
+                            ProgressEvent(Stage.VERIFY, done, total, "XML seleccionados")
                         )
 
                     inaccessible = check_drive_access(to_check, _verify_cb)
 
                     if inaccessible and not self.cancel_event.is_set():
                         confirm_event = threading.Event()
-                        self.events.put(("verify_warning", inaccessible, confirm_event))
+                        self.events.put(VerificationWarningEvent(inaccessible, confirm_event))
                         while not confirm_event.wait(timeout=0.1):
                             if self.cancel_event.is_set():
                                 break
@@ -1103,13 +1057,13 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 def cb(stage, done, total):
                     _track(stage, done, total)
                     name = _pdf_label[0] if stage == "pdf" else "Todas las imágenes"
-                    self.events.put(("progress", stage, done, total, name))
+                    self.events.put(ProgressEvent(stage, done, total, name))
 
                 def on_job_pdf_start(job_idx, total_jobs, job_name):
                     job = next((j for j in plan_.jobs if j.base_name == job_name), None)
                     label = job_name + (" (fusión)" if job and job.is_merged else "")
                     _pdf_label[0] = label
-                    self.events.put(("file", job_idx, total_jobs, label))
+                    self.events.put(FileEvent(job_idx, total_jobs, label))
 
                 def on_xml_download_progress(xml_name, done, total):
                     self.events.put(("xml_download_progress", xml_name, done, total))
@@ -1126,9 +1080,9 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                     wd,
                     cb,
                     cancel_event=self.cancel_event,
-                    extra_fronts=all_extra_fronts or None,
-                    extra_backs=all_extra_backs or None,
-                    local_crop_map=all_crop_map or None,
+                    extra_fronts=combined_run.fronts or None,
+                    extra_backs=combined_run.backs or None,
+                    local_crop_map=combined_run.crop_map or None,
                     on_job_pdf_start=on_job_pdf_start,
                     on_xml_download_progress=on_xml_download_progress,
                     on_xml_crop_progress=on_xml_crop_progress,
@@ -1145,48 +1099,44 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 generated.extend(pdfs)
                 manifest = write_manifest(plan_, reports, run_dir)
             else:
-                if not all_extra_fronts:
+                if not combined_run.fronts:
                     raise ValueError("No hay cartas para generar.")
-                if self.state.local_fronts and self.state.local_backs:
-                    default_back: Path = self.state.local_backs[0]
-                elif op_standard_back is not None:
-                    default_back = op_standard_back
-                elif rb_default_back is not None:
-                    default_back = rb_default_back
-                elif lorcana_default_back is not None:
-                    default_back = lorcana_default_back
-                elif mtg_default_back is not None:
-                    default_back = mtg_default_back
+                if local_fronts and local_backs:
+                    default_back: Path = local_backs[0]
+                elif combined_run.default_back is not None:
+                    default_back = combined_run.default_back
                 else:
                     raise ValueError("No se encontró reverso por defecto.")
                 parts = [
                     p
                     for p in [
-                        "locales" if self.state.local_fronts else None,
-                        "One Piece" if op_fronts else None,
-                        "Riftbound" if rb_fronts else None,
-                        "Lorcana" if lorcana_fronts else None,
-                        "magic_url" if mtg_fronts else None,
+                        "locales" if local_fronts else None,
+                        "One Piece" if op_batch.fronts else None,
+                        "Riftbound" if rb_batch.fronts else None,
+                        "Lorcana" if lorcana_batch.fronts else None,
+                        "magic_url" if mtg_batch.fronts else None,
                     ]
                     if p
                 ]
                 base = "_".join(parts) if parts else "combinado"
-                self.events.put(("file", 1, 1, base))
+                self.events.put(FileEvent(1, 1, base))
 
                 def cb(stage, done, total, _label=base):
                     _track(stage, done, total)
-                    self.events.put(("progress", stage, done, total, _label))
+                    self.events.put(ProgressEvent(stage, done, total, _label))
 
-                pdfs = run_locals_only(
-                    all_extra_fronts,
-                    default_back,
+                pdfs = run_print_batch(
+                    PrintBatch(
+                        base,
+                        combined_run.fronts,
+                        combined_run.backs,
+                        combined_run.crop_map,
+                        default_back,
+                    ),
                     run_dir,
-                    base,
                     wd,
                     cb,
-                    cancel_event=self.cancel_event,
-                    extra_backs=all_extra_backs,
-                    local_crop_map=all_crop_map,
+                    self.cancel_event,
                     fronts_only=fronts_only,
                     cut_line_color=cut_line_color,
                     cut_line_style=cut_line_style,
@@ -1199,7 +1149,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
                 generated.extend(pdfs)
                 manifest = None
 
-            if not self.keep_cache.get():
+            if not request.keep_cache:
                 self._cleanup_workdir(wd)
 
             def _fmt_dur(sec: float) -> str:
@@ -1221,7 +1171,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             if timing_str:
                 timing_str += f"  Total: {_fmt_dur(total_dur)}"
 
-            self.events.put(("done", generated, manifest, run_dir, timing_str))
+            self.events.put(RunFinishedEvent(generated, manifest, run_dir, timing_str))
         except DownloadPartialError as e:
             self.events.put(
                 (
@@ -1245,7 +1195,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
 
     @staticmethod
     def _cleanup_workdir(wd: Path) -> None:
-        for sub in ("raw", "bled", "op_raw", "rb_raw", "lorcana_raw", "scryfall"):
+        for sub in ("raw", "bled", "op_raw", "rb_raw", "lorcana_raw", "ygo_raw", "scryfall"):
             target = wd / sub
             if target.exists():
                 shutil.rmtree(target, ignore_errors=True)
@@ -1258,7 +1208,7 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
     def _drain_events(self) -> None:
         try:
             while True:
-                ev = self.events.get_nowait()
+                ev = normalize_event(self.events.get_nowait())
                 self._handle(ev)
         except queue.Empty:
             pass
@@ -1453,6 +1403,20 @@ class App(XmlTabMixin, OPTabMixin, RBTabMixin, LorcanaTabMixin, LocalsTabMixin, 
             _, msg = ev
             self._lorcana_status_var.set("Error al cargar el mazo.")
             self._lorcana_load_btn.state(["!disabled"])
+            self._show_error_dialog(msg)
+        elif kind == "ygo_deck_loaded":
+            _, deck = ev
+            if not any(d.deck_id == deck.deck_id for d in self._ygo_decks):
+                self._ygo_decks.append(deck)
+                self._ygo_refresh_rows()
+                self._refresh_generate_state()
+            self._ygo_url_var.set("")
+            self._ygo_status_var.set(f"Añadido: {deck.name}")
+            self._ygo_load_btn.state(["!disabled"])
+        elif kind == "ygo_deck_error":
+            _, msg = ev
+            self._ygo_status_var.set("Error al cargar el mazo.")
+            self._ygo_load_btn.state(["!disabled"])
             self._show_error_dialog(msg)
         elif kind == "mtg_url_loaded":
             _, url, cards, include_side, deck_name = ev

@@ -15,7 +15,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from src.constants import SUPPORTED_IMAGE_EXTS, Stage
 from src.downloader import DownloadPermissionError, DownloadTimeoutError
-from src.pipeline import run_locals_only, run_plan
+from src.pipeline import run_deck_url, run_locals_only, run_plan
 from src.precheck import (
     analyze,
     check_drive_access,
@@ -167,12 +167,38 @@ def main() -> None:
         help="Generar solo páginas de frontales (sin páginas de traseras).",
     )
     parser.add_argument(
+        "--deck-url",
+        metavar="URL",
+        help="Importar un mazo de Magic desde una URL compatible y generar su PDF.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
         help="Mostrar mensajes de depuración en stderr además de escribirlos en el log.",
     )
     args = parser.parse_args()
+
+    if args.deck_url:
+        run_dir = Path(args.out_dir) / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _setup_logging(run_dir / "run.log", args.verbose)
+        try:
+            pdfs = run_deck_url(
+                args.deck_url,
+                run_dir,
+                Path(args.workdir),
+                "mazo_url",
+                _progress,
+                include_sideboard=False,
+                fronts_only=args.fronts_only,
+            )
+        finally:
+            if not args.test:
+                _cleanup(Path(args.workdir))
+        for pdf in pdfs:
+            print(f"  -> {pdf}")
+        return
 
     local_fronts = _validate_local_images(args.local_fronts, "--local-fronts")
     local_backs = _validate_local_images(args.local_backs, "--local-backs")

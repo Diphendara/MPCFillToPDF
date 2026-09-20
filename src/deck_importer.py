@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 import requests
 
+from src.http_client import get as http_get
+
 _log = logging.getLogger(__name__)
 
 _HEADERS = {
@@ -91,7 +93,7 @@ def fetch_deck(url: str) -> FetchedDeck:
 def _fetch_moxfield(deck_id: str) -> FetchedDeck:
     url = _MOXFIELD_API.format(deck_id=deck_id)
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -123,7 +125,7 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
 def _fetch_archidekt(deck_id: str) -> FetchedDeck:
     url = _ARCHIDEKT_API.format(deck_id=deck_id)
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -159,7 +161,7 @@ def _fetch_archidekt(deck_id: str) -> FetchedDeck:
 def _fetch_deckstats(owner_id: str, deck_id: str) -> FetchedDeck:
     url = _DECKSTATS_API.format(owner_id=owner_id, deck_id=deck_id)
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -186,7 +188,7 @@ def _fetch_deckstats(owner_id: str, deck_id: str) -> FetchedDeck:
 def _fetch_tappedout(slug: str) -> FetchedDeck:
     url = _TAPPEDOUT_API.format(slug=slug)
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise DeckImportError(f"Error al acceder a TappedOut: {exc}", "tappedout") from exc
@@ -245,7 +247,7 @@ def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
 def _fetch_tappedout_tokens(slug: str) -> list[DeckCard]:
     """Read TappedOut's generated-token summary without failing the deck import."""
     try:
-        resp = requests.get(
+        resp = http_get(
             f"https://tappedout.net/mtg-decks/{slug}/", headers=_HEADERS, timeout=_TIMEOUT
         )
         resp.raise_for_status()
@@ -317,7 +319,7 @@ def _manabox_extract_props(raw: str) -> str:
 def _fetch_manabox(deck_id: str) -> FetchedDeck:
     url = f"https://manabox.app/decks/{deck_id}"
     try:
-        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        resp = http_get(url, headers=_HEADERS, timeout=_TIMEOUT)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise DeckImportError(f"Error al acceder a Manabox: {exc}", "manabox") from exc

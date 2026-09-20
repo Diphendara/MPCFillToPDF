@@ -120,6 +120,16 @@ Los reversos se asignan según la sección de la carta (leyenda, campo de batall
 
 Todas las cartas usan el reverso de Lorcana. El importador actual no admite Dreamborn.
 
+### Yu-Gi-Oh!
+
+Puedes pegar una URL publica de YGOPRODeck, Master Duel Meta, Yu-Gi-Oh! Meta o Edison Format,
+o una cadena `ydke://` exportada desde un constructor. Las cartas se resuelven
+con la API de YGOPRODeck. Los mazos de
+Yu-Gi-Oh! generan siempre un PDF separado (`yugioh_proxies.pdf`) con su propia
+rejilla A4 de 3x3 a tamano 59 x 86 mm; cada mazo puede incluir su Side Deck.
+Si la URL no expone un codigo YDKE, usa **Export Deck** en YGOPRODeck y pega la
+cadena. Los proxies no son validos para torneos oficiales.
+
 El resumen de la pantalla también detalla el plan efectivo de los XML: PDFs independientes, fusiones, cartas adicionales añadidas al último PDF y huecos por PDF.
 
 ## Google Drive: clave de API opcional
@@ -228,7 +238,7 @@ python -m ruff format --check .
 
 El comando de pytest coincide con la selección usada por CI y los hooks. `pytest.ini` excluye por defecto las pruebas marcadas `network`; para incluirlas hay que indicar `-m network` o cambiar la selección. El comando anterior también excluye todo `test_downloader.py`, incluidas sus pruebas con mocks. Puedes ejecutarlas por separado con `python -m pytest tests/test_downloader.py -m "not network"`.
 
-Los tests de integración usan imágenes pequeñas reales para recorte y generación de PDF, con las descargas simuladas. Los tests de GUI se omiten si Tkinter no puede abrir una pantalla. CI prueba Python 3.10, 3.11, 3.12 y 3.13 en Ubuntu.
+Los tests de integración usan imágenes pequeñas reales para recorte y generación de PDF, con las descargas simuladas. Los tests de GUI se omiten si Tkinter no puede abrir una pantalla; CI los ejecuta con Xvfb. CI prueba Python 3.10, 3.11, 3.12 y 3.13 en Ubuntu.
 
 Las convenciones de contribución están en [CLAUDE.md](CLAUDE.md). Ruff usa Python 3.10 como objetivo y longitud de línea 100. Hay hooks en `.pre-commit-config.yaml` y `.githooks/pre-commit`: ejecutan Ruff y pytest. `ruff_hook.py` aplica correcciones y formato a todo el proyecto y vuelve a añadir a staging los cambios de archivos ya seguidos mediante `git add -u`.
 

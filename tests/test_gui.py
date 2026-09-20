@@ -453,3 +453,23 @@ class TestMtgBackChange:
         app.state.local_back_crop.clear()
         app._refresh_xml_rows()
         assert deck.back_path is None
+
+
+class TestYugiohRows:
+    def test_side_deck_count_is_visible_and_selectable(self, app):
+        from src.ygo_scraper import YGOCard, YGODeck
+
+        app._ygo_decks.append(
+            YGODeck(
+                "Prueba",
+                "id",
+                [YGOCard(1, "Main", 2, "main"), YGOCard(2, "Side", 15, "side")],
+            )
+        )
+
+        app._ygo_refresh_rows()
+
+        row = app._ygo_deck_rows[0]
+        controls = row["outer"].winfo_children()[0].winfo_children()
+        assert "Incluir Side (15)" in [control.cget("text") for control in controls]
+        assert row["include_side_var"].get() is False

@@ -9,9 +9,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-import requests
+import requests  # noqa: F401 - retained as the precheck test transport seam
 
 from src.constants import CARDS_PER_PAGE
+from src.http_client import get as http_get
 from src.parser import parse
 
 _THUMB_CHECK_URL = "https://lh4.googleusercontent.com/d/{}=d"
@@ -52,10 +53,11 @@ def check_drive_access(
 
     def _check(drive_id: str, name: str) -> tuple[str, str, bool]:
         try:
-            r = requests.get(
+            r = http_get(
                 _THUMB_CHECK_URL.format(drive_id),
                 timeout=_CHECK_TIMEOUT,
                 stream=True,
+                raise_for_status=False,
             )
             r.close()
             ok = r.status_code < 400

@@ -23,6 +23,8 @@ En esta máquina `python` puede no estar disponible fuera del entorno virtual; c
 - No confundir `quantity` del XML con los slots reales de `<fronts>`: el pipeline cuenta los slots.
 - Probar cambios de PDF/cropper con las imágenes reales pequeñas de los tests, no solo con mocks.
 - No incluir `config.json`, cachés, logs, PDFs ni artefactos de build en commits.
+- No generar, solicitar ni incorporar imágenes creadas por IA; el proyecto solo procesa
+  imágenes locales, recursos incluidos o imágenes descargadas de las fuentes soportadas.
 
 Para detalles de contratos, flujo y riesgos conocidos, consultar `docs/PROJECT_CONTEXT.md`.
 Para localizar rápidamente los módulos y las pruebas de un cambio, consultar

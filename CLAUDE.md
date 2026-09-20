@@ -104,6 +104,11 @@ The GUI downloads/expands web decks before calling `run_plan` or `run_locals_onl
 
 ## Development style
 
+### Image-source policy
+
+- Never generate, request, or add AI-created images. The application may only process local
+  images, bundled resources, or images downloaded from its supported external sources.
+
 ### Language and Python version
 - Python 3.10+. Use built-in generics (`list[Path]`, `dict[str, str]`, `X | None`) — never import `List`, `Dict`, `Optional` from `typing`.
 - User-facing strings (UI labels, error messages, warnings) in **Spanish**. Code identifiers, log messages, and docstrings in **English**.

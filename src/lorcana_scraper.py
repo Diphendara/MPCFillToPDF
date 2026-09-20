@@ -5,15 +5,14 @@ from __future__ import annotations
 import re
 import threading
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import requests
 
-from src.cancellation import Cancelled
 from src.constants import ProgressCallback
-from src.scraper_utils import generate_fallback_back
+from src.http_client import get as http_get
+from src.scraper_utils import download_url_images, generate_fallback_back
 from src.scraper_utils import resources_dir as _resources_dir
 
 _HEADERS = {
@@ -98,7 +97,7 @@ def _load_dotgg_card_db() -> tuple[dict[str, dict], dict[str, str]]:
     with _dotgg_lock:
         if _dotgg_cache is not None:
             return _dotgg_cache, _dotgg_name_cache  # type: ignore[return-value]
-        r = requests.get(_DOTGG_CARDS_API, headers=_HEADERS, timeout=30)
+        r = http_get(_DOTGG_CARDS_API, headers=_HEADERS, timeout=30)
         r.raise_for_status()
         try:
             raw = r.json()
@@ -163,7 +162,7 @@ def _scrape_lorcana_gg(url: str) -> LocanaDeck:
         )
     slug = m.group(1).strip("/")
 
-    r = requests.get(_DOTGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=20)
+    r = http_get(_DOTGG_DECK_API.format(slug=slug), headers=_HEADERS, timeout=20)
     r.raise_for_status()
     body = r.text.strip()
     if not body:
@@ -231,7 +230,7 @@ def _scrape_inkdecks(url: str) -> LocanaDeck:
     # Try JSON API first
     api_url = _INKDECKS_API.format(deck_id=deck_id)
     try:
-        r = requests.get(api_url, headers=_HEADERS, timeout=20)
+        r = http_get(api_url, headers=_HEADERS, timeout=20)
         if r.status_code == 200:
             return _parse_inkdecks_api(r.json(), deck_id)
     except Exception:
@@ -240,7 +239,7 @@ def _scrape_inkdecks(url: str) -> LocanaDeck:
     # Fall back to HTML page scraping (__NEXT_DATA__ JSON embedded in the page)
     html_headers = {**_HEADERS, "Accept": "text/html,application/xhtml+xml,*/*"}
     try:
-        r = requests.get(url, headers=html_headers, timeout=20)
+        r = http_get(url, headers=html_headers, timeout=20)
         r.raise_for_status()
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "?"
@@ -359,36 +358,26 @@ def download_images(
     progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
     """Download one image per unique card_id. Returns {card_id: local_path}."""
-    dest_dir.mkdir(parents=True, exist_ok=True)
     unique: dict[str, LorcanaCard] = {c.card_id: c for c in deck.cards}
-    done = 0
-
-    def _fetch(card: LorcanaCard) -> tuple[str, Path]:
+    urls = {}
+    for card_id, card in unique.items():
         if not card.image_url:
             raise ValueError(f"Sin URL de imagen para la carta '{card.name}'")
-        ext = card.image_url.rsplit(".", 1)[-1].split("?")[0] or "webp"
-        safe_name = re.sub(r"[^\w\-.]", "_", card.card_id)
-        path = dest_dir / f"{safe_name}.{ext}"
-        if path.exists():
-            return card.card_id, path
-        r = requests.get(card.image_url, headers=_HEADERS, timeout=20)
-        r.raise_for_status()
-        path.write_bytes(r.content)
-        return card.card_id, path
+        urls[card_id] = card.image_url
 
-    image_map: dict[str, Path] = {}
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futs = {ex.submit(_fetch, c): c for c in unique.values()}
-        for fut in as_completed(futs):
-            if cancel_event and cancel_event.is_set():
-                raise Cancelled()
-            card_id, path = fut.result()
-            image_map[card_id] = path
-            done += 1
-            if progress_cb:
-                progress_cb(done, len(unique))
+    def _path_for_key(key: str, url: str) -> Path:
+        extension = url.rsplit(".", 1)[-1].split("?")[0] or "webp"
+        safe_name = re.sub("[^\\w\\-.]", "_", key)
+        return dest_dir / f"{safe_name}.{extension}"
 
-    return image_map
+    return download_url_images(
+        urls,
+        dest_dir,
+        _path_for_key,
+        _HEADERS,
+        cancel_event,
+        progress_cb,
+    )
 
 
 # ── Deck expansion ────────────────────────────────────────────────────────────
