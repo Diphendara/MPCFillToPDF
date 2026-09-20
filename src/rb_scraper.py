@@ -26,6 +26,7 @@ _HEADERS = {
 }
 
 _TRPC_BASE = "https://piltoverarchive.com/api/trpc"
+_PILTOVER_DECK_PAGE = "https://piltoverarchive.com/decks/view/{deck_id}"
 
 # ── riftmana.com ──────────────────────────────────────────────────────────────
 _RM_BASE = "https://riftmana.com"
@@ -471,6 +472,43 @@ def _trpc_get(proc: str, payload: dict) -> dict:
     return data["result"]["data"]["json"]
 
 
+def _page_deck_data(page_html: str, deck_id: str) -> dict | None:
+    """Extract a public deck from Piltover Archive's Next.js page payload."""
+    payload_parts: list[str] = []
+    for match in re.finditer(r"self\.__next_f\.push\((\[.*?\])\)</script>", page_html, re.DOTALL):
+        try:
+            packet = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        payload_parts.extend(part for part in packet if isinstance(part, str))
+
+    marker = re.compile(rf'"id"\s*:\s*"{re.escape(deck_id)}"')
+    decoder = json.JSONDecoder()
+    for payload in payload_parts:
+        for match in marker.finditer(payload):
+            start = payload.rfind("{", 0, match.start())
+            if start < 0:
+                continue
+            try:
+                data, _ = decoder.raw_decode(payload[start:])
+            except json.JSONDecodeError:
+                continue
+            if data.get("id") == deck_id and "maindeck" in data:
+                return data
+    return None
+
+
+def _fetch_page_deck(deck_id: str) -> dict | None:
+    page_url = _PILTOVER_DECK_PAGE.format(deck_id=deck_id)
+    response = http_get(page_url, headers={**_HEADERS, "Accept": "text/html"}, timeout=20)
+    return _page_deck_data(response.text, deck_id)
+
+
+def _is_server_error(error: requests.HTTPError) -> bool:
+    response = error.response
+    return response is not None and 500 <= response.status_code < 600
+
+
 def _resolve_image(item: dict) -> str:
     """Find the imageUrl for the selected variantId in the card's variants list."""
     variant_id = item.get("variantId")
@@ -485,7 +523,12 @@ def _resolve_image(item: dict) -> str:
 
 
 def _fetch_deck(deck_id: str) -> RBDeck:
-    raw = _trpc_get("decks.getById", {"id": deck_id})
+    try:
+        raw = _trpc_get("decks.getById", {"id": deck_id})
+    except requests.HTTPError as error:
+        if not _is_server_error(error):
+            raise
+        raw = _fetch_page_deck(deck_id)
     if raw is None:
         raise ValueError(
             f"No se encontró el mazo con ID {deck_id} en piltoverarchive.com.\n"

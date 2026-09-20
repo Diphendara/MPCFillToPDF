@@ -13,11 +13,13 @@ Run everything including live checks:
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.cancellation import Cancelled
 from src.rb_scraper import (
@@ -27,6 +29,7 @@ from src.rb_scraper import (
     _fetch_deck,
     _fs_arr,
     _fs_str,
+    _page_deck_data,
     _resolve_image,
     _scrape_riftbinder,
     _scrape_riftbound_gg,
@@ -634,6 +637,24 @@ class TestFetchDeck:
         with patch("src.rb_scraper._trpc_get", return_value=None):
             with pytest.raises(ValueError, match="No se encontró"):
                 _fetch_deck("missing-id")
+
+    def test_falls_back_to_public_page_when_trpc_returns_server_error(self):
+        response = MagicMock(status_code=500)
+        error = requests.HTTPError(response=response)
+        with patch("src.rb_scraper._trpc_get", side_effect=error):
+            with patch("src.rb_scraper._fetch_page_deck", return_value=self._raw()) as page_fetch:
+                deck = _fetch_deck("test-id")
+        page_fetch.assert_called_once_with("test-id")
+        assert deck.name == "PA Deck"
+
+
+class TestPiltoverPagePayload:
+    def test_extracts_deck_from_next_payload(self):
+        raw = TestFetchDeck()._raw()
+        raw = {"id": "test-id", **raw}
+        payload = json.dumps([1, "0:" + json.dumps(raw)])
+        html = f"<script>self.__next_f.push({payload})</script>"
+        assert _page_deck_data(html, "test-id") == raw
 
 
 # ---------------------------------------------------------------------------
