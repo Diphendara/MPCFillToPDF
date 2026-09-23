@@ -159,6 +159,14 @@ class RBTabMixin:
             ).grid(row=0, column=5)
 
             detail = ttk.Frame(outer)
+            selected_ids = getattr(
+                deck, "selected_card_ids", {card.variant_id for card in deck.cards}
+            )
+            card_vars: dict[str, tk.BooleanVar] = {}
+
+            def _sync_selection(d=deck, vars=card_vars) -> None:
+                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+                self._refresh_generate_state()
 
             for section, cards in by_sec.items():
                 if not cards:
@@ -171,9 +179,15 @@ class RBTabMixin:
                     font=("Segoe UI", 8, "italic"),
                     padding=(12, 2, 0, 0),
                 ).pack(anchor="w")
-                for card in cards:
+                for card in sorted(cards, key=lambda c: c.name.casefold()):
                     row_f = ttk.Frame(detail)
                     row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
+                    card_vars[card.variant_id] = tk.BooleanVar(
+                        value=card.variant_id in selected_ids
+                    )
+                    ttk.Checkbutton(
+                        row_f, variable=card_vars[card.variant_id], command=_sync_selection
+                    ).pack(side=tk.LEFT, padx=(0, 2))
                     ttk.Label(
                         row_f,
                         text=f"x{card.quantity}",

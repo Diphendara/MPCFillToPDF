@@ -95,6 +95,7 @@ class MtgUrlDeck:
     include_tokens: bool = False
     name: str = ""
     back_path: Path | None = None
+    selected_card_ids: set[int] | None = None
 
     @property
     def display_name(self) -> str:
@@ -112,7 +113,7 @@ class MtgUrlDeck:
         return sum(c.quantity for c in self.cards if self.includes(c))
 
     def includes(self, card: DeckCard) -> bool:
-        return (
+        return (self.selected_card_ids is None or id(card) in self.selected_card_ids) and (
             card.zone == "main"
             or (card.zone == "side" and self.include_side)
             or (card.zone == "token" and self.include_tokens)

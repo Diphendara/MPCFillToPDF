@@ -290,8 +290,10 @@ class XmlTabMixin:
             detail: ttk.Frame | None = None
             expanded: tk.BooleanVar | None = None
             extras_btn: ttk.Button | None = None
-            if token_count:
+            if True:
                 detail = ttk.Frame(outer)
+                controls = ttk.Frame(detail)
+                controls.pack(fill=tk.X, padx=(12, 4), pady=(0, 4))
                 expanded = tk.BooleanVar(value=False)
 
                 if side_count:
@@ -302,7 +304,7 @@ class XmlTabMixin:
                         self._refresh_generate_state()
 
                     ttk.Checkbutton(
-                        detail, text="Incluir sideboard", variable=side_var, command=_toggle_side
+                        controls, text="Incluir sideboard", variable=side_var, command=_toggle_side
                     ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
 
                 token_var = tk.BooleanVar(value=deck.include_tokens)
@@ -312,16 +314,40 @@ class XmlTabMixin:
                     self._refresh_generate_state()
 
                 ttk.Checkbutton(
-                    detail,
+                    controls,
                     text="Incluir tokens y extras",
                     variable=token_var,
                     command=_toggle_tokens,
                 ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
 
+                selected_ids = deck.selected_card_ids
+                if selected_ids is None:
+                    selected_ids = {id(card) for card in deck.cards}
+                card_vars: dict[int, tk.BooleanVar] = {}
+
+                def _sync_cards(d=deck, vars=card_vars):
+                    d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+                    self._refresh_generate_state()
+
+                for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
+                    card_row = ttk.Frame(detail)
+                    card_row.pack(fill=tk.X, padx=(12, 4))
+                    card_vars[id(card)] = tk.BooleanVar(value=id(card) in selected_ids)
+                    ttk.Checkbutton(
+                        card_row, variable=card_vars[id(card)], command=_sync_cards
+                    ).pack(side=tk.LEFT)
+                    ttk.Label(card_row, text=f"x{card.quantity}", width=4, anchor="e").pack(
+                        side=tk.LEFT
+                    )
+                    ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(
+                        side=tk.LEFT
+                    )
+                    ttk.Label(card_row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+
                 extras_btn = ttk.Button(
                     right,
-                    text="Extras ▼",
-                    width=9,
+                    text="Cartas ▼",
+                    width=10,
                     command=lambda idx=i: self._toggle_mtg_extras(idx),
                 )
                 extras_btn.grid(row=0, column=col)
@@ -349,11 +375,11 @@ class XmlTabMixin:
             return
         if expanded.get():
             detail.pack_forget()
-            extras_btn.configure(text="Extras ▼")
+            extras_btn.configure(text="Cartas ▼")
             expanded.set(False)
         else:
-            detail.pack(fill=tk.X, padx=0, pady=(0, 4))
-            extras_btn.configure(text="Extras ▲")
+            detail.pack(fill=tk.X, padx=(12, 4), pady=(0, 4))
+            extras_btn.configure(text="Cartas ▲")
             expanded.set(True)
         self.xml_inner.update_idletasks()
         self.xml_canvas.configure(scrollregion=self.xml_canvas.bbox("all"))

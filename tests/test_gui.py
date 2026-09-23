@@ -69,7 +69,7 @@ class TestMtgUrlDeckZones:
 
 
 class TestMtgExtras:
-    def test_only_decks_with_tokens_show_the_extras_control(self, app):
+    def test_all_magic_decks_show_the_card_selector(self, app):
         from gui.main import MtgUrlDeck
         from src.deck_importer import DeckCard
 
@@ -91,12 +91,12 @@ class TestMtgExtras:
         )
         app._refresh_xml_rows()
 
-        assert app._mtg_deck_rows[0]["extras_btn"] is None
-        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▼"
+        assert app._mtg_deck_rows[0]["extras_btn"] is not None
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Cartas ▼"
 
         app._toggle_mtg_extras(1)
 
-        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Extras ▲"
+        assert app._mtg_deck_rows[1]["extras_btn"].cget("text") == "Cartas ▲"
 
 
 class TestBuildCropMap:

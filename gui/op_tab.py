@@ -136,9 +136,19 @@ class OPTabMixin:
             ).grid(row=0, column=4)
 
             detail = ttk.Frame(outer)
+            selected_ids = getattr(deck, "selected_card_ids", {card.card_id for card in deck.cards})
+            card_vars: dict[str, tk.BooleanVar] = {}
 
-            for card in deck.cards:
+            def _sync_selection(d=deck, vars=card_vars) -> None:
+                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+                self._refresh_generate_state()
+
+            for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
                 row_f = ttk.Frame(detail)
+                card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
+                ttk.Checkbutton(
+                    row_f, variable=card_vars[card.card_id], command=_sync_selection
+                ).pack(side=tk.LEFT, padx=(0, 2))
                 row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
 
                 if card.is_leader:

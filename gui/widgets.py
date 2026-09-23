@@ -21,7 +21,7 @@ except ImportError:
 from PIL import Image, ImageTk
 
 from src.constants import Stage
-from src.parser import CardOrder
+from src.parser import CardImage, CardOrder
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
@@ -259,7 +259,8 @@ class PreviewWindow(tk.Toplevel):
         inner.bind("<MouseWheel>", _scroll)
 
         self._img_labels: list[tk.Label] = []
-        for idx, card in enumerate(order.fronts):
+        preview_cards = sorted(order.fronts, key=lambda card: card.name.casefold())
+        for idx, card in enumerate(preview_cards):
             r, c = divmod(idx, self._COLS)
             cell = ttk.Frame(inner, relief=tk.RIDGE, borderwidth=1)
             cell.grid(row=r, column=c, padx=4, pady=4)
@@ -298,7 +299,7 @@ class PreviewWindow(tk.Toplevel):
         self.after(200, self._tick_spinner)
 
         self._executor = ThreadPoolExecutor(max_workers=4)
-        threading.Thread(target=self._load_all, args=(order,), daemon=True).start()
+        threading.Thread(target=self._load_all, args=(preview_cards,), daemon=True).start()
 
     def _tick_spinner(self) -> None:
         if self._cancel.is_set() or not self._loading_set:
@@ -317,10 +318,9 @@ class PreviewWindow(tk.Toplevel):
         resp.raise_for_status()
         return resp.content
 
-    def _load_all(self, order: CardOrder) -> None:
+    def _load_all(self, cards: list[CardImage]) -> None:
         futs = {
-            self._executor.submit(self._fetch, card.drive_id): idx
-            for idx, card in enumerate(order.fronts)
+            self._executor.submit(self._fetch, card.drive_id): idx for idx, card in enumerate(cards)
         }
         for fut in as_completed(futs):
             if self._cancel.is_set():

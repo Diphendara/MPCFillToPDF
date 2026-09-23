@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
 from typing import Protocol
@@ -60,6 +60,11 @@ class YugiohBatchAdapter:
         fronts: list[Path] = []
         downloaded = 0
         for deck, include_side in self.decks:
+            selected = getattr(deck, "selected_card_ids", None)
+            if selected is not None:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.card_id in selected]
+                )
             offset = downloaded
 
             def _progress(done: int, _total: int, *, _offset=offset) -> None:
@@ -101,6 +106,11 @@ class OnePieceBatchAdapter:
         image_map: dict[str, Path] = {}
         downloaded = 0
         for deck in self.decks:
+            selected = getattr(deck, "selected_card_ids", None)
+            if selected is not None:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.card_id in selected]
+                )
             offset = downloaded
 
             def _progress(done: int, _total: int, *, _offset=offset) -> None:
@@ -149,6 +159,11 @@ class RiftboundBatchAdapter:
         image_map: dict[str, Path] = {}
         downloaded = 0
         for deck, _ in self.decks:
+            selected = getattr(deck, "selected_card_ids", None)
+            if selected is not None:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.variant_id in selected]
+                )
             offset = downloaded
 
             def _progress(done: int, _total: int, *, _offset=offset) -> None:
@@ -193,6 +208,11 @@ class LorcanaBatchAdapter:
         image_map: dict[str, Path] = {}
         downloaded = 0
         for deck in self.decks:
+            selected = getattr(deck, "selected_card_ids", None)
+            if selected is not None:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.card_id in selected]
+                )
             offset = downloaded
 
             def _progress(done: int, _total: int, *, _offset=offset) -> None:

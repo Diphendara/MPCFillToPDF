@@ -106,6 +106,42 @@ class YGOTabMixin:
             ttk.Label(summary, text=f"{deck.total_slots()} Main/Extra", foreground="#888").pack(
                 side=tk.RIGHT, padx=(0, 8)
             )
+            detail = ttk.Frame(outer)
+            expanded = tk.BooleanVar(value=False)
+            selected_ids = getattr(deck, "selected_card_ids", {card.card_id for card in deck.cards})
+            card_vars: dict[int, tk.BooleanVar] = {}
+
+            def _sync_selection(d=deck, vars=card_vars) -> None:
+                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+                self._refresh_generate_state()
+
+            for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
+                row = ttk.Frame(detail)
+                row.pack(fill=tk.X, padx=(12, 4))
+                card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
+                ttk.Checkbutton(
+                    row, variable=card_vars[card.card_id], command=_sync_selection
+                ).pack(side=tk.LEFT)
+                ttk.Label(row, text=f"x{card.quantity}", width=4, anchor=tk.E).pack(side=tk.LEFT)
+                ttk.Label(row, text=ellipsize(card.name, 28), width=29, anchor=tk.W).pack(
+                    side=tk.LEFT
+                )
+                ttk.Label(row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+
+            def _toggle() -> None:
+                if expanded.get():
+                    detail.pack_forget()
+                    toggle_btn.configure(text="Cartas v")
+                    expanded.set(False)
+                else:
+                    detail.pack(fill=tk.X, padx=0, pady=(0, 4))
+                    toggle_btn.configure(text="Cartas ^")
+                    expanded.set(True)
+                self._ygo_inner.update_idletasks()
+                self._ygo_canvas.configure(scrollregion=self._ygo_canvas.bbox("all"))
+
+            toggle_btn = ttk.Button(summary, text="Cartas v", width=10, command=_toggle)
+            toggle_btn.pack(side=tk.RIGHT, padx=(0, 5))
             self._ygo_deck_rows.append({"outer": outer, "include_side_var": include_side})
         self._ygo_inner.update_idletasks()
         self._ygo_canvas.configure(scrollregion=self._ygo_canvas.bbox("all"))
