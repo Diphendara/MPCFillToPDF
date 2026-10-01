@@ -197,6 +197,26 @@ def test_run_plan_produces_one_pdf_per_job(tmp_path):
     assert len(results) == 2
 
 
+def test_run_plan_uses_short_numbered_name_for_overlong_merge_name(tmp_path):
+    xml1 = make_xml(
+        tmp_path / "a.xml",
+        fronts=[{"id": "FA", "name": "A", "slots": "0"}],
+        cardback_id="CBA",
+    )
+    xml2 = make_xml(
+        tmp_path / "b.xml",
+        fronts=[{"id": "FB", "name": "B", "slots": "0"}],
+        cardback_id="CBB",
+    )
+    p = make_plan(analyze([xml1, xml2]))
+    p.jobs[0].base_name = "a" * 252
+
+    with patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")):
+        results = run_plan(p.jobs, tmp_path / "out", tmp_path / "work")
+
+    assert results[0].name == "fusion_2_mazos_1.pdf"
+
+
 def test_run_plan_fronts_only(tmp_path):
     xml = _one_card_xml(tmp_path)
     reports = analyze([xml])

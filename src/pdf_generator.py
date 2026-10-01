@@ -323,6 +323,7 @@ def generate(
     cut_line_over_fronts: bool = DEFAULT_CUT_LINE_OVER_FRONTS,
     cut_line_over_backs: bool = DEFAULT_CUT_LINE_OVER_BACKS,
     layout: CardLayout = STANDARD_LAYOUT,
+    fallback_base_name: str | None = None,
 ) -> list[Path]:
     """Generate one or more PDFs in `output_dir`. A new chunk starts after
     every front/back pair whose addition would push the cumulative image
@@ -404,6 +405,12 @@ def generate(
         ]
 
     multiple = len(fitted_chunks) > 1
+    suffixes = [f"_{idx}" if multiple else "" for idx in range(1, len(fitted_chunks) + 1)]
+    use_fallback = fallback_base_name is not None and any(
+        _is_windows_invalid_output_path(output_dir / f"{base_name}{suffix}.pdf")
+        for suffix in suffixes
+    )
+    effective_base_name = fallback_base_name if use_fallback else base_name
     outputs: list[Path] = []
     total_pairs = sum(len(chunk) for chunk in fitted_chunks)
     done_pairs = 0
@@ -411,8 +418,8 @@ def generate(
     for idx, chunk in enumerate(fitted_chunks, start=1):
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
-        suffix = f"_{idx}" if multiple else ""
-        path = output_dir / f"{base_name}{suffix}.pdf"
+        suffix = f"_{idx}" if multiple or use_fallback else ""
+        path = output_dir / f"{effective_base_name}{suffix}.pdf"
         _render_chunk(
             path,
             chunk,
@@ -438,3 +445,7 @@ def generate(
         outputs.append(path)
 
     return outputs
+
+
+def _is_windows_invalid_output_path(path: Path) -> bool:
+    return len(path.name) > 255 or len(str(path)) >= 260

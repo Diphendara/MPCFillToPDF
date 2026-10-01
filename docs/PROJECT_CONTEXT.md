@@ -56,7 +56,7 @@ Los recursos estáticos están en `resources/backs`, `icons` y `src/assets`. `co
 
 Al seleccionar XML en la GUI, el resumen se construye desde los `CardOrder` ya analizados y muestra el plan efectivo: PDFs independientes, XML fusionados, cartas adicionales que se adjuntan al último trabajo y huecos por PDF. Al iniciar la ejecución, el mismo conteo de entradas adicionales se pasa a `plan()` para que la confirmación de huecos coincida con `run_plan`.
 
-`pdf_generator.generate()` estima primero los grupos por tamaño de imagen y después mide PDFs temporales ya renderizados. Divide de nuevo los grupos que exceden el límite real, siempre entre parejas de páginas para preservar el orden de impresión a doble cara; una pareja individual nunca se parte.
+`pdf_generator.generate()` estima primero los grupos por tamaño de imagen y después mide PDFs temporales ya renderizados. Divide de nuevo los grupos que exceden el límite real, siempre entre parejas de páginas para preservar el orden de impresión a doble cara; una pareja individual nunca se parte. Si el nombre de una fusión supera los límites de ruta de Windows, usa el nombre corto y numerado `fusion_X_mazos_N.pdf`.
 
 ## Pruebas y calidad
 

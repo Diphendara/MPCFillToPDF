@@ -105,6 +105,23 @@ def test_generate_pdf_named_correctly(tmp_path):
     assert results[0].name == "mydeck.pdf"
 
 
+def test_generate_uses_numbered_fallback_name_for_an_overlong_output_path(tmp_path):
+    img = _img(tmp_path / "card.jpg")
+    slots, front, back = _slot_maps(1)
+
+    results = generate(
+        tmp_path / "out",
+        "a" * 252,
+        slots,
+        front,
+        back,
+        _id_to_path(front, back, img),
+        fallback_base_name="fusion_2_mazos",
+    )
+
+    assert results[0].name == "fusion_2_mazos_1.pdf"
+
+
 def test_generate_creates_output_dir(tmp_path):
     img = _img(tmp_path / "card.jpg")
     out_dir = tmp_path / "nested" / "output"

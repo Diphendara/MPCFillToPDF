@@ -187,7 +187,7 @@ El plan cuenta las cartas a partir de los slots de `<fronts>`, no del valor decl
 
 Dentro de cada XML, las cartas se ordenan alfabéticamente por nombre, sin distinguir mayúsculas, y por slot original en caso de empate. Cada carta conserva el reverso asociado a su slot original. Los mazos importados en la GUI también ordenan sus cartas por nombre dentro de cada mazo; los frontales locales mantienen el orden elegido.
 
-Los archivos se llaman `out_<nombre>.pdf`, o `out_<nombre>_1.pdf`, `out_<nombre>_2.pdf`, etc. si se dividen por tamaño. Una unión usa un nombre como `out_mazo_a_mazo_b_union.pdf`.
+Los archivos se llaman `out_<nombre>.pdf`, o `out_<nombre>_1.pdf`, `out_<nombre>_2.pdf`, etc. si se dividen por tamaño. Una unión usa un nombre como `out_mazo_a_mazo_b_union.pdf`. Si ese nombre haría que la ruta no fuese válida en Windows, se acorta a `fusion_X_mazos_1.pdf`, `fusion_X_mazos_2.pdf`, etc., donde `X` es el número de XML fusionados.
 
 Cuando hay fusiones se escribe `resumen.txt` con el desglose de cartas por XML. Actualmente el manifiesto muestra el nombre base con `.pdf`, sin el prefijo `out_` ni los índices de división; tampoco desglosa las entradas adicionales.
 

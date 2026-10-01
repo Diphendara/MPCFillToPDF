@@ -148,6 +148,15 @@ def test_plan_merged_job_name_contains_union(tmp_path):
     assert "union" in p.jobs[0].base_name
 
 
+def test_plan_merged_job_has_short_fallback_name(tmp_path):
+    r1 = XmlReport(tmp_path / "alpha.xml", 7, 2)
+    r2 = XmlReport(tmp_path / "beta.xml", 5, 4)
+
+    p = plan([r1, r2])
+
+    assert p.jobs[0].fallback_base_name == "fusion_2_mazos"
+
+
 def test_plan_mixed_aligned_and_unaligned(tmp_path):
     r_aligned = XmlReport(tmp_path / "a.xml", 9, 0)
     r1 = XmlReport(tmp_path / "b.xml", 7, 2)

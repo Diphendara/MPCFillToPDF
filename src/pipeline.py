@@ -332,6 +332,7 @@ def _render_pdf_job(
     cut_line_over_backs: bool,
     max_pdf_bytes: int,
     layout: CardLayout = STANDARD_LAYOUT,
+    fallback_base_name: str | None = None,
 ) -> list[Path]:
     """Render one normalized slot job through the sole PDF-generation seam."""
     return generate(
@@ -352,6 +353,7 @@ def _render_pdf_job(
         cut_line_over_fronts=cut_line_over_fronts,
         cut_line_over_backs=cut_line_over_backs,
         layout=layout,
+        fallback_base_name=fallback_base_name,
     )
 
 
@@ -509,6 +511,7 @@ def _run_xmls(
 @dataclass
 class _JobData:
     base_name: str
+    fallback_base_name: str | None
     ordered_slots: list[int]
     front_slot_to_id: dict[int, str]
     back_slot_to_id: dict[int, str]
@@ -521,6 +524,7 @@ class _JobData:
 def _build_job_data(
     xml_paths: list[Path],
     base_name: str,
+    fallback_base_name: str | None,
     next_slot: int,
     extra_fronts: list[Path],
     extra_backs: list[Path | None],
@@ -551,6 +555,7 @@ def _build_job_data(
 
     return _JobData(
         base_name=base_name,
+        fallback_base_name=fallback_base_name,
         ordered_slots=sorted(front_slot_to_id.keys()),
         front_slot_to_id=front_slot_to_id,
         back_slot_to_id=back_slot_to_id,
@@ -625,6 +630,7 @@ def run_plan(
         jd, next_slot = _build_job_data(
             xml_paths=[Path(p) for p in job.xml_paths],
             base_name=job.base_name,
+            fallback_base_name=getattr(job, "fallback_base_name", None),
             next_slot=next_slot,
             extra_fronts=ef,
             extra_backs=eb,
@@ -746,6 +752,7 @@ def run_plan(
             cut_line_over_cards=cut_line_over_cards,
             cut_line_over_fronts=cut_line_over_fronts,
             cut_line_over_backs=cut_line_over_backs,
+            fallback_base_name=jd.fallback_base_name,
         )
         all_outputs.extend(outputs)
 
