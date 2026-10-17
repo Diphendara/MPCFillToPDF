@@ -173,19 +173,48 @@ class OPTabMixin:
                 row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
 
                 if card.is_leader:
+                    # Leaders don't have editable quantity
                     badge_text, badge_fg = "LÍDER", "#1565C0"
                     badge_font = ("Segoe UI", 8, "bold")
+                    ttk.Label(
+                        row_f,
+                        text=badge_text,
+                        foreground=badge_fg,
+                        font=badge_font,
+                        width=6,
+                        anchor="e",
+                    ).pack(side=tk.LEFT, padx=(0, 6))
                 else:
-                    badge_text, badge_fg = f"x{card.quantity}", "#444"
-                    badge_font = ("Segoe UI", 8)
-                ttk.Label(
-                    row_f,
-                    text=badge_text,
-                    foreground=badge_fg,
-                    font=badge_font,
-                    width=6,
-                    anchor="e",
-                ).pack(side=tk.LEFT, padx=(0, 6))
+                    # Editable quantity spinbox for non-leaders
+                    qty_var = tk.IntVar(value=card.quantity)
+
+                    def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
+                        def _update(*_args):
+                            try:
+                                new_qty = var.get()
+                                if new_qty == 0:
+                                    # Quantity 0 = deselect card
+                                    checkvar.set(False)
+                                    _sync_selection()
+                                elif new_qty >= 1:
+                                    c.quantity = new_qty
+                                    checkvar.set(True)
+                                    _sync_selection()
+                            except tk.TclError:
+                                pass  # Invalid input, ignore
+                        return _update
+
+                    qty_spinbox = ttk.Spinbox(
+                        row_f,
+                        from_=0,
+                        to=99,
+                        width=4,
+                        textvariable=qty_var,
+                        command=_make_qty_updater()
+                    )
+                    qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
+                    qty_var.trace_add("write", _make_qty_updater())
+
                 ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", width=25).pack(
                     side=tk.LEFT
                 )

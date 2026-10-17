@@ -340,9 +340,37 @@ class XmlTabMixin:
                     ttk.Checkbutton(
                         card_row, variable=card_vars[id(card)], command=_sync_cards
                     ).pack(side=tk.LEFT)
-                    ttk.Label(card_row, text=f"x{card.quantity}", width=4, anchor="e").pack(
-                        side=tk.LEFT
+
+                    # Editable quantity spinbox
+                    qty_var = tk.IntVar(value=card.quantity)
+
+                    def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[id(card)]):
+                        def _update(*_args):
+                            try:
+                                new_qty = var.get()
+                                if new_qty == 0:
+                                    # Quantity 0 = deselect card
+                                    checkvar.set(False)
+                                    _sync_cards()
+                                elif new_qty >= 1:
+                                    c.quantity = new_qty
+                                    checkvar.set(True)
+                                    _sync_cards()
+                            except tk.TclError:
+                                pass  # Invalid input, ignore
+                        return _update
+
+                    qty_spinbox = ttk.Spinbox(
+                        card_row,
+                        from_=0,
+                        to=99,
+                        width=4,
+                        textvariable=qty_var,
+                        command=_make_qty_updater()
                     )
+                    qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
+                    qty_var.trace_add("write", _make_qty_updater())
+
                     ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(
                         side=tk.LEFT
                     )
