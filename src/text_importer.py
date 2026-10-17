@@ -218,8 +218,22 @@ def build_riftbound_deck_from_text(
         code = f"{line.set_code}-{line.collector_number}"
 
         # Try to find the card in the database
-        # First try the exact code, then try the base code (without variant suffix)
-        card_data = cards_db.get(code)
+        # Try multiple case variations (dotgg uses lowercase for some variants)
+        card_data = None
+        code_variations = [
+            code,  # Original: OGN-039A
+            code.lower(),  # Lowercase: ogn-039a
+            code.upper(),  # Uppercase: OGN-039A
+            # Mixed: OGN-039a (uppercase set, lowercase variant)
+            f"{line.set_code.upper()}-{line.collector_number.lower()}",
+        ]
+
+        for code_var in code_variations:
+            card_data = cards_db.get(code_var)
+            if card_data:
+                break
+
+        # If still not found, try base code (without variant suffix)
         if not card_data:
             base_code = _get_base_code(code)
             card_data = cards_db.get(base_code)
@@ -231,16 +245,14 @@ def build_riftbound_deck_from_text(
             card_super = card_data.get("supertype") or None
             section = _type_to_section(card_type, card_super)
 
-            # Get image URL from dotgg
-            # If the exact code wasn't found, construct URL with the variant code
-            if code in cards_db:
-                image_url = card_data.get("image", "")
-            else:
-                # Variant not in DB, construct URL with variant code
-                image_url = f"https://static.dotgg.gg/riftbound/cards/{code}.webp"
-
-            # Use the card ID from the database
+            # Get image URL from dotgg (use the ID from the database, which has correct case)
             card_id = card_data.get("id", code)
+            image_url = card_data.get("image", "")
+
+            # If no image URL, construct it with the card_id from DB
+            if not image_url:
+                image_url = f"https://static.dotgg.gg/riftbound/cards/{card_id}.webp"
+
             variant_id = code  # Keep the original code as variant_id for tracking
         else:
             # Fallback: use minimal data and construct CDN URL
