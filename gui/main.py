@@ -23,22 +23,18 @@ try:
 except ImportError:
     _WINDND_AVAILABLE = False
 
+from gui.decks_tab import DecksTabMixin
 from gui.locals_tab import LocalsTabMixin
-from gui.lorcana_tab import LorcanaTabMixin
-from gui.op_tab import OPTabMixin
 from gui.paths import app_base_dir, output_dir, work_dir
-from gui.rb_tab import RBTabMixin
 from gui.settings_tab import SettingsTabMixin
+from gui.universal_import import UniversalImportDialog
 from gui.widgets import (
     APP_TITLE,
     STAGE_LABELS,
     attach_context_menu,
     ellipsize,
-    load_tab_icon,
     notify,
 )
-from gui.xml_tab import XmlTabMixin
-from gui.ygo_tab import YGOTabMixin
 from src.app_settings import AppSettings, load_settings
 from src.cancellation import Cancelled
 from src.constants import CARDS_PER_PAGE, Stage
@@ -158,11 +154,7 @@ class ExecutionRequest:
 
 
 class App(
-    XmlTabMixin,
-    OPTabMixin,
-    RBTabMixin,
-    LorcanaTabMixin,
-    YGOTabMixin,
+    DecksTabMixin,
     LocalsTabMixin,
     SettingsTabMixin,
 ):
@@ -282,55 +274,14 @@ class App(
         self._build_locals_pane(top)
 
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
+        """Build the left side: unified decks panel + Settings tab."""
         notebook = ttk.Notebook(parent)
         notebook.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         self._game_notebook = notebook
 
-        self._mtg_icon_img = load_tab_icon("mtg_icon")
-        self._op_icon_img = load_tab_icon("op_icon")
-        self._rb_icon_img = load_tab_icon("riftbound_icon")
-        self._lorcana_icon_img = load_tab_icon("lorcana_icon")
-        self._ygo_icon_img = load_tab_icon("yugioh_icon")
-
-        magic_frame = ttk.Frame(notebook)
-        magic_kw: dict = {"text": " Magic"}
-        if self._mtg_icon_img:
-            magic_kw["image"] = self._mtg_icon_img
-            magic_kw["compound"] = "left"
-        notebook.add(magic_frame, **magic_kw)
-        self._build_magic_tab(magic_frame)
-
-        op_frame = ttk.Frame(notebook)
-        op_kw: dict = {"text": " One Piece"}
-        if self._op_icon_img:
-            op_kw["image"] = self._op_icon_img
-            op_kw["compound"] = "left"
-        notebook.add(op_frame, **op_kw)
-        self._build_onepiece_tab(op_frame)
-
-        rb_frame = ttk.Frame(notebook)
-        rb_kw: dict = {"text": " Riftbound"}
-        if self._rb_icon_img:
-            rb_kw["image"] = self._rb_icon_img
-            rb_kw["compound"] = "left"
-        notebook.add(rb_frame, **rb_kw)
-        self._build_riftbound_tab(rb_frame)
-
-        lorcana_frame = ttk.Frame(notebook)
-        lorcana_kw: dict = {"text": " Lorcana"}
-        if self._lorcana_icon_img:
-            lorcana_kw["image"] = self._lorcana_icon_img
-            lorcana_kw["compound"] = "left"
-        notebook.add(lorcana_frame, **lorcana_kw)
-        self._build_lorcana_tab(lorcana_frame)
-
-        ygo_frame = ttk.Frame(notebook)
-        ygo_kw: dict = {"text": " Yu-Gi-Oh!"}
-        if self._ygo_icon_img:
-            ygo_kw["image"] = self._ygo_icon_img
-            ygo_kw["compound"] = "left"
-        notebook.add(ygo_frame, **ygo_kw)
-        self._build_yugioh_tab(ygo_frame)
+        decks_frame = ttk.Frame(notebook)
+        notebook.add(decks_frame, text=" 🃏 Mazos")
+        self._build_decks_panel(decks_frame)
 
         settings_frame = ttk.Frame(notebook)
         notebook.add(settings_frame, text=" ⚙ Configuración")
@@ -339,6 +290,10 @@ class App(
         self._was_on_settings_tab = False
 
         notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
+
+    def _show_universal_import_dialog(self) -> None:
+        """Open the universal text import dialog (works for all TCGs)."""
+        UniversalImportDialog(self.root, self.events).show()
 
     def _on_notebook_tab_changed(self, _event=None) -> None:
         on_settings = self._game_notebook.index("current") == self._settings_tab_idx
@@ -1367,65 +1322,33 @@ class App(
             _, deck = ev
             if not any(d.slug == deck.slug for d in self._op_decks):
                 self._op_decks.append(deck)
-                self._op_refresh_rows()
+                self._refresh_xml_rows()
                 self._refresh_generate_state()
-            self._op_url_var.set("")
-            self._op_status_var.set(f"Añadido: {deck.name}")
-            self._op_load_btn.state(["!disabled"])
-        elif kind == "op_deck_error":
-            _, msg = ev
-            self._op_status_var.set("Error al cargar el mazo.")
-            self._op_load_btn.state(["!disabled"])
-            self._show_error_dialog(msg)
+            self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "rb_deck_loaded":
             _, deck = ev
             if not any(d.deck_id == deck.deck_id for d in self._rb_decks):
                 self._rb_decks.append(deck)
-                self._rb_refresh_rows()
+                self._refresh_xml_rows()
                 self._refresh_generate_state()
-            self._rb_url_var.set("")
-            self._rb_status_var.set(f"Añadido: {deck.name}")
-            self._rb_load_btn.state(["!disabled"])
-        elif kind == "rb_deck_error":
-            _, msg = ev
-            self._rb_status_var.set("Error al cargar el mazo.")
-            self._rb_load_btn.state(["!disabled"])
-            self._show_error_dialog(msg)
-        elif kind == "rb_text_import_done":
-            self._rb_text_status_var.set("¡Importado!")
-            self._rb_import_text_btn.state(["!disabled"])
-        elif kind == "rb_text_import_error":
-            _, msg = ev
-            self._rb_text_status_var.set("Error al importar.")
-            self._rb_import_text_btn.state(["!disabled"])
-            self._show_error_dialog(msg)
+            self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "lorcana_deck_loaded":
             _, deck = ev
             if not any(d.deck_id == deck.deck_id for d in self._lorcana_decks):
                 self._lorcana_decks.append(deck)
-                self._lorcana_refresh_rows()
+                self._refresh_xml_rows()
                 self._refresh_generate_state()
-            self._lorcana_url_var.set("")
-            self._lorcana_status_var.set(f"Añadido: {deck.name}")
-            self._lorcana_load_btn.state(["!disabled"])
-        elif kind == "lorcana_deck_error":
-            _, msg = ev
-            self._lorcana_status_var.set("Error al cargar el mazo.")
-            self._lorcana_load_btn.state(["!disabled"])
-            self._show_error_dialog(msg)
+            self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "ygo_deck_loaded":
             _, deck = ev
             if not any(d.deck_id == deck.deck_id for d in self._ygo_decks):
                 self._ygo_decks.append(deck)
-                self._ygo_refresh_rows()
+                self._refresh_xml_rows()
                 self._refresh_generate_state()
-            self._ygo_url_var.set("")
-            self._ygo_status_var.set(f"Añadido: {deck.name}")
-            self._ygo_load_btn.state(["!disabled"])
-        elif kind == "ygo_deck_error":
-            _, msg = ev
-            self._ygo_status_var.set("Error al cargar el mazo.")
-            self._ygo_load_btn.state(["!disabled"])
+            self.status_var.set(f"Añadido: {deck.name}")
+        elif kind == "deck_url_error":
+            _, (tcg, msg) = ev
+            self.status_var.set(f"Error al cargar el mazo de {tcg}.")
             self._show_error_dialog(msg)
         elif kind == "mtg_url_loaded":
             _, url, cards, include_side, deck_name = ev
