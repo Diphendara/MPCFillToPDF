@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
 from src.rb_scraper import scrape_deck as rb_scrape_deck
+from src.text_importer import build_riftbound_deck_from_text, TextImportError
 
 _SECTION_LABELS = {
     "legend": "Leyenda",
@@ -24,8 +25,9 @@ class RBTabMixin:
 
     def _build_riftbound_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
+        parent.rowconfigure(2, weight=1)
 
+        # URL import section
         url_row = ttk.Frame(parent)
         url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
         url_row.columnconfigure(1, weight=1)
@@ -51,8 +53,69 @@ class RBTabMixin:
             row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
         )
 
+        # Text import section
+        text_import_frame = ttk.LabelFrame(parent, text="Importar desde texto", padding=6)
+        text_import_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 4))
+        text_import_frame.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            text_import_frame,
+            text="Formato: Cantidad Nombre (SET-NUMERO)",
+            foreground="#999",
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+        # Text widget with scrollbar
+        text_container = ttk.Frame(text_import_frame)
+        text_container.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        text_container.columnconfigure(0, weight=1)
+
+        self._rb_text_import = tk.Text(text_container, height=6, wrap=tk.WORD, font=("Consolas", 9))
+        text_scroll = ttk.Scrollbar(text_container, orient=tk.VERTICAL, command=self._rb_text_import.yview)
+        self._rb_text_import.configure(yscrollcommand=text_scroll.set)
+
+        self._rb_text_import.grid(row=0, column=0, sticky="ew")
+        text_scroll.grid(row=0, column=1, sticky="ns")
+
+        # Placeholder text
+        placeholder = "3 Sabotage (OGN-156)\n1 Seal of Discord (OGN-204)\n1 Elder Dragon (UNL-118A)"
+        self._rb_text_import.insert("1.0", placeholder)
+        self._rb_text_import.config(foreground="#999")
+
+        def _on_text_focus_in(event):
+            if self._rb_text_import.get("1.0", tk.END).strip() == placeholder:
+                self._rb_text_import.delete("1.0", tk.END)
+                self._rb_text_import.config(foreground="#000")
+
+        def _on_text_focus_out(event):
+            if not self._rb_text_import.get("1.0", tk.END).strip():
+                self._rb_text_import.insert("1.0", placeholder)
+                self._rb_text_import.config(foreground="#999")
+
+        self._rb_text_import.bind("<FocusIn>", _on_text_focus_in)
+        self._rb_text_import.bind("<FocusOut>", _on_text_focus_out)
+
+        btn_row = ttk.Frame(text_import_frame)
+        btn_row.grid(row=2, column=0, sticky="ew")
+
+        self._rb_import_text_btn = ttk.Button(
+            btn_row,
+            text="Importar desde texto",
+            command=self._rb_import_from_text
+        )
+        self._rb_import_text_btn.pack(side=tk.LEFT)
+
+        self._rb_text_status_var = tk.StringVar(value="")
+        ttk.Label(
+            btn_row,
+            textvariable=self._rb_text_status_var,
+            foreground="#555",
+            anchor="w"
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Deck list section
         rb_list_frame = ttk.Frame(parent)
-        rb_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))
+        rb_list_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 2))
         rb_list_frame.columnconfigure(0, weight=1)
         rb_list_frame.rowconfigure(0, weight=1)
 
@@ -69,7 +132,7 @@ class RBTabMixin:
         self._rb_empty_label.pack(anchor="w")
 
         rb_btn_row = ttk.Frame(parent)
-        rb_btn_row.grid(row=2, column=0, sticky="ew", padx=6, pady=(2, 6))
+        rb_btn_row.grid(row=3, column=0, sticky="ew", padx=6, pady=(2, 6))
         ttk.Button(rb_btn_row, text="Vaciar todo", command=self._rb_clear).pack(side=tk.LEFT)
 
     def _rb_load_deck(self) -> None:
@@ -89,6 +152,30 @@ class RBTabMixin:
                 self.events.put(("rb_deck_error", str(e)))
 
         threading.Thread(target=_fetch, daemon=True).start()
+
+    def _rb_import_from_text(self) -> None:
+        """Import a deck from pasted text."""
+        text = self._rb_text_import.get("1.0", tk.END).strip()
+
+        # Check if it's just the placeholder
+        if not text or text == "3 Sabotage (OGN-156)\n1 Seal of Discord (OGN-204)\n1 Elder Dragon (UNL-118A)":
+            messagebox.showwarning(APP_TITLE, "Pega una lista de cartas en el área de texto.")
+            return
+
+        self._rb_import_text_btn.state(["disabled"])
+        self._rb_text_status_var.set("Importando…")
+
+        def _import():
+            try:
+                deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
+                self.events.put(("rb_deck_loaded", deck))
+                self.events.put(("rb_text_import_done", None))
+            except TextImportError as e:
+                self.events.put(("rb_text_import_error", str(e)))
+            except Exception as e:
+                self.events.put(("rb_text_import_error", f"Error inesperado: {e}"))
+
+        threading.Thread(target=_import, daemon=True).start()
 
     def _rb_refresh_rows(self) -> None:
         for row in self._rb_deck_rows:
@@ -249,5 +336,9 @@ class RBTabMixin:
         self._rb_url_var.set("")
         self._rb_status_var.set("")
         self._rb_load_btn.state(["!disabled"])
+        # Clear text import area
+        self._rb_text_import.delete("1.0", tk.END)
+        self._rb_text_status_var.set("")
+        self._rb_import_text_btn.state(["!disabled"])
         self._rb_refresh_rows()
         self._refresh_generate_state()

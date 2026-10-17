@@ -1391,6 +1391,14 @@ class App(
             self._rb_status_var.set("Error al cargar el mazo.")
             self._rb_load_btn.state(["!disabled"])
             self._show_error_dialog(msg)
+        elif kind == "rb_text_import_done":
+            self._rb_text_status_var.set("¡Importado!")
+            self._rb_import_text_btn.state(["!disabled"])
+        elif kind == "rb_text_import_error":
+            _, msg = ev
+            self._rb_text_status_var.set("Error al importar.")
+            self._rb_import_text_btn.state(["!disabled"])
+            self._show_error_dialog(msg)
         elif kind == "lorcana_deck_loaded":
             _, deck = ev
             if not any(d.deck_id == deck.deck_id for d in self._lorcana_decks):
