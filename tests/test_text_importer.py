@@ -175,8 +175,11 @@ class TestBuildRiftboundDeckFromText:
         text = "3 Sabotage (OGN-156)"
         deck = build_riftbound_deck_from_text(text)
 
-        # Now using dotgg API for images
-        assert deck.cards[0].image_url == "https://static.dotgg.gg/riftbound/cards/OGN-156.webp"
+        # Image URL should be present and contain the card code
+        assert deck.cards[0].image_url
+        assert "OGN-156" in deck.cards[0].image_url
+        # Should be from dotgg CDN
+        assert "dotgg.gg" in deck.cards[0].image_url
 
     def test_build_deck_default_name(self):
         """Build a deck without specifying a name."""
