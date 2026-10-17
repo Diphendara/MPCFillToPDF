@@ -37,15 +37,6 @@ _SECTION_LABELS = {
     "sideboard": "Sideboard",
 }
 
-# Accepted URL sites per TCG (shown in the universal URL dialog)
-URL_HINTS = {
-    "MTG": "moxfield.com, archidekt.com, deckstats.net, tappedout.net, manabox.app",
-    "One Piece": "onepiece.gg, egmanevents.com, cardkaizoku.com",
-    "Riftbound": "piltoverarchive.com, riftbound.gg, riftmana.com, riftbinder.com, riftdex.com",
-    "Lorcana": "lorcana.gg, inkdecks.com",
-    "Yu-Gi-Oh": "ygoprodeck.com, yugiohmeta.com, o cadena YDKE",
-}
-
 
 class DecksTabMixin:
     """Unified deck list: XMLs + all TCG decks in one scrollable panel."""
@@ -116,59 +107,40 @@ class DecksTabMixin:
     # ─────────────────────────────────────────────────────────────────────
 
     def _open_url_dialog(self) -> None:
-        """Universal URL import dialog with TCG selection."""
+        """Universal URL import dialog with automatic TCG detection from domain."""
         dlg = tk.Toplevel(self.root)
         dlg.title("Añadir mazo desde URL")
-        dlg.geometry("520x330")
+        dlg.geometry("520x280")
         dlg.resizable(False, False)
         dlg.grab_set()
         self._mtg_url_dialog = dlg  # kept for the mtg_url_loaded handler
 
         ttk.Label(
             dlg,
-            text="Pega la URL del mazo y selecciona el TCG:",
+            text="Pega la URL del mazo:",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=10, pady=(10, 4))
 
-        # TCG selector buttons
-        tcg_frame = ttk.Frame(dlg)
-        tcg_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
-
-        selected_tcg = tk.StringVar(value="")
-        self._url_icon_refs = []
-
-        tcg_buttons = [
-            ("MTG", self._mtg_icon_img),
-            ("One Piece", self._op_icon_img),
-            ("Riftbound", self._rb_icon_img),
-            ("Lorcana", self._lorcana_icon_img),
-            ("Yu-Gi-Oh", self._ygo_icon_img),
-        ]
-
-        hint_var = tk.StringVar(value="")
-
-        def _select(tcg: str) -> None:
-            selected_tcg.set(tcg)
-            hint_var.set(f"Webs aceptadas: {URL_HINTS[tcg]}")
-
-        for tcg, icon in tcg_buttons:
-            self._url_icon_refs.append(icon)
-            ttk.Button(
-                tcg_frame,
-                text=tcg,
-                image=icon,
-                compound=tk.LEFT,
-                command=lambda t=tcg: _select(t),
-            ).pack(side=tk.LEFT, padx=2)
+        # Detection result label
+        detection_var = tk.StringVar(value="")
+        ttk.Label(
+            dlg,
+            textvariable=detection_var,
+            foreground="#1565C0",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=10, pady=(0, 4))
 
         ttk.Label(
             dlg,
-            textvariable=hint_var,
+            text="Webs aceptadas: moxfield.com, archidekt.com, deckstats.net, tappedout.net, "
+            "manabox.app, onepiece.gg, egmanevents.com, cardkaizoku.com, piltoverarchive.com, "
+            "riftbound.gg, riftmana.com, riftbinder.com, riftdex.com, lorcana.gg, inkdecks.com, "
+            "ygoprodeck.com, yugiohmeta.com",
             foreground="#999",
             font=("Segoe UI", 8),
             wraplength=490,
             justify="left",
-        ).pack(anchor="w", padx=10, pady=(0, 2))
+        ).pack(anchor="w", padx=10, pady=(0, 4))
 
         ttk.Label(
             dlg,
@@ -198,14 +170,68 @@ class DecksTabMixin:
         btn_row = ttk.Frame(dlg)
         btn_row.pack(fill=tk.X, padx=10, pady=(6, 10))
 
+        # Auto-detect TCG from URL
+        detected_tcg = [None]  # Use list to allow modification in nested function
+
+        def _detect_tcg_from_url(*_args):
+            url = url_var.get().strip().lower()
+            if not url:
+                detection_var.set("")
+                detected_tcg[0] = None
+                return
+
+            # Detect by domain
+            if any(
+                domain in url
+                for domain in [
+                    "moxfield.com",
+                    "archidekt.com",
+                    "deckstats.net",
+                    "tappedout.net",
+                    "manabox.app",
+                ]
+            ):
+                detected_tcg[0] = "MTG"
+                detection_var.set("🎴 Detectado: Magic: The Gathering")
+            elif any(
+                domain in url for domain in ["onepiece.gg", "egmanevents.com", "cardkaizoku.com"]
+            ):
+                detected_tcg[0] = "One Piece"
+                detection_var.set("🏴‍☠️ Detectado: One Piece")
+            elif any(
+                domain in url
+                for domain in [
+                    "piltoverarchive.com",
+                    "riftbound.gg",
+                    "riftmana.com",
+                    "riftbinder.com",
+                    "riftdex.com",
+                ]
+            ):
+                detected_tcg[0] = "Riftbound"
+                detection_var.set("⚔️ Detectado: Riftbound")
+            elif any(domain in url for domain in ["lorcana.gg", "inkdecks.com"]):
+                detected_tcg[0] = "Lorcana"
+                detection_var.set("✨ Detectado: Lorcana")
+            elif any(
+                domain in url for domain in ["ygoprodeck.com", "yugiohmeta.com"]
+            ) or url.startswith("ydke://"):
+                detected_tcg[0] = "Yu-Gi-Oh"
+                detection_var.set("🎲 Detectado: Yu-Gi-Oh")
+            else:
+                detected_tcg[0] = None
+                detection_var.set("❌ URL no reconocida. Verifica que sea de una web aceptada.")
+
+        url_var.trace_add("write", _detect_tcg_from_url)
+
         def _do_import():
             url = url_var.get().strip()
-            tcg = selected_tcg.get()
-            if not tcg:
-                status_var.set("⚠️ Selecciona el TCG primero")
-                return
+            tcg = detected_tcg[0]
             if not url:
                 status_var.set("⚠️ Introduce una URL")
+                return
+            if not tcg:
+                status_var.set("⚠️ URL no reconocida. Verifica que sea de una web aceptada.")
                 return
             import_btn.state(["disabled"])
             status_var.set("Cargando…")
