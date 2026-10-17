@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
 from src.op_scraper import scrape_deck as op_scrape_deck
-from src.text_importer import parse_op_text, TextImportError
+from src.text_importer import TextImportError, parse_op_text
 
 
 class OPTabMixin:
@@ -317,10 +317,12 @@ class OPTabMixin:
                     deck = parse_op_text(text)
                     self.events.put(("op_deck_loaded", deck))
                     dialog.after(0, dialog.destroy)
-                except TextImportError as e:
-                    dialog.after(0, lambda: status_var.set(f"❌ {e}"))
-                except Exception as e:
-                    dialog.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+                except TextImportError as exc:
+                    error_msg = str(exc)
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ {msg}"))
+                except Exception as exc:
+                    error_msg = str(exc)
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ Error: {msg}"))
 
             threading.Thread(target=_import, daemon=True).start()
 

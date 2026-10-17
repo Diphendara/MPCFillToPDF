@@ -85,7 +85,6 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
 
         quantity = int(match.group(1))
         name = match.group(2).strip()
-        full_code = match.group(3).upper()  # e.g., "OGN-156"
         set_code = match.group(4).upper()   # e.g., "OGN"
         collector_number = match.group(5).upper()  # e.g., "156" or "118A" or "T01g"
 
@@ -305,7 +304,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
 
     Returns list of (quantity, name, card_number) tuples.
     """
-    from src.lorcana_scraper import LorcanaCard, LocanaDeck
+    from src.lorcana_scraper import LocanaDeck, LorcanaCard
 
     cards: list[LorcanaCard] = []
 

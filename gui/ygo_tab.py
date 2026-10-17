@@ -7,8 +7,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
+from src.text_importer import TextImportError, parse_ygo_text
 from src.ygo_scraper import scrape_deck as ygo_scrape_deck
-from src.text_importer import parse_ygo_text, TextImportError
 
 
 class YGOTabMixin:
@@ -253,10 +253,12 @@ class YGOTabMixin:
                     deck = parse_ygo_text(text)
                     self.events.put(("ygo_deck_loaded", deck))
                     dialog.after(0, dialog.destroy)
-                except TextImportError as e:
-                    dialog.after(0, lambda: status_var.set(f"❌ {e}"))
-                except Exception as e:
-                    dialog.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+                except TextImportError as exc:
+                    error_msg = str(exc)
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ {msg}"))
+                except Exception as exc:
+                    error_msg = str(exc)
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ Error: {msg}"))
 
             threading.Thread(target=_import, daemon=True).start()
 

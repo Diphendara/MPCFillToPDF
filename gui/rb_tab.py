@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
 from src.rb_scraper import scrape_deck as rb_scrape_deck
-from src.text_importer import build_riftbound_deck_from_text, TextImportError
+from src.text_importer import TextImportError, build_riftbound_deck_from_text
 
 _SECTION_LABELS = {
     "legend": "Leyenda",
@@ -199,12 +199,14 @@ class RBTabMixin:
                     self.events.put(("rb_deck_loaded", deck))
                     self.events.put(("rb_text_import_done", None))
                     dialog.after(0, dialog.destroy)
-                except TextImportError as e:
-                    self.events.put(("rb_text_import_error", str(e)))
-                    dialog.after(0, lambda: status_var.set(f"❌ {e}"))
-                except Exception as e:
-                    self.events.put(("rb_text_import_error", f"Error inesperado: {e}"))
-                    dialog.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+                except TextImportError as exc:
+                    error_msg = str(exc)
+                    self.events.put(("rb_text_import_error", error_msg))
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ {msg}"))
+                except Exception as exc:
+                    error_msg = str(exc)
+                    self.events.put(("rb_text_import_error", f"Error inesperado: {error_msg}"))
+                    dialog.after(0, lambda msg=error_msg: status_var.set(f"❌ Error: {msg}"))
 
             threading.Thread(target=_import, daemon=True).start()
 

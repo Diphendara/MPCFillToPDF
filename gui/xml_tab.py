@@ -20,7 +20,7 @@ from gui.widgets import (
 from src.deck_importer import DeckImportError, fetch_deck
 from src.parser import parse
 from src.precheck import analyze
-from src.text_importer import parse_mtg_text, TextImportError
+from src.text_importer import TextImportError, parse_mtg_text
 from src.validator import validate
 
 
@@ -590,10 +590,12 @@ class XmlTabMixin:
                     result = parse_mtg_text(text)
                     self.events.put(("mtg_url_loaded", "", result.cards, False, result.name))
                     dlg.after(0, dlg.destroy)
-                except TextImportError as e:
-                    dlg.after(0, lambda: status_var.set(f"❌ {e}"))
-                except Exception as e:
-                    dlg.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+                except TextImportError as exc:
+                    error_msg = str(exc)
+                    dlg.after(0, lambda msg=error_msg: status_var.set(f"❌ {msg}"))
+                except Exception as exc:
+                    error_msg = str(exc)
+                    dlg.after(0, lambda msg=error_msg: status_var.set(f"❌ Error: {msg}"))
 
             threading.Thread(target=_import, daemon=True).start()
 

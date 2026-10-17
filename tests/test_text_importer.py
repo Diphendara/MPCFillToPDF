@@ -4,8 +4,8 @@ import pytest
 
 from src.text_importer import (
     TextImportError,
-    parse_riftbound_text,
     build_riftbound_deck_from_text,
+    parse_riftbound_text,
 )
 
 
