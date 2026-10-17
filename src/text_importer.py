@@ -294,9 +294,9 @@ def build_riftbound_deck_from_text(
 # MTG (Magic: The Gathering) Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142" or "1 Mana Confluence (CMR) 721 *F*"
+# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142" or "1 Mana Confluence (CMR) 721 *F*" or "1 Liesa, Shroud of Dusk (PLST) CMR-286"
 _MTG_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+(\d+))?)?(?:\s+\*[A-Z]+\*)?\s*$",
+    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+([A-Z0-9-]+))?)?(?:\s+\*[A-Z]+\*)?\s*$",
     re.IGNORECASE
 )
 
@@ -339,6 +339,16 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
         name = match.group(2).strip()
         set_code = match.group(3).upper() if match.group(3) else ""
         collector_number = match.group(4) if match.group(4) else ""
+
+        # Handle special collector formats like "CMR-286" (The List cards)
+        # If collector contains a hyphen, it might be "ORIGINAL_SET-NUMBER"
+        if collector_number and "-" in collector_number:
+            # Extract the actual set and number from "CMR-286"
+            parts = collector_number.split("-", 1)
+            if len(parts) == 2:
+                # Use the embedded set code instead of the display set
+                set_code = parts[0].upper()
+                collector_number = parts[1]
 
         if quantity < 1:
             raise TextImportError(
