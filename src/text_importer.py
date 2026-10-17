@@ -294,9 +294,9 @@ def build_riftbound_deck_from_text(
 # MTG (Magic: The Gathering) Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142"
+# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142" or "1 Mana Confluence (CMR) 721 *F*"
 _MTG_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+(\d+))?)?\s*$",
+    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+(\d+))?)?(?:\s+\*[A-Z]+\*)?\s*$",
     re.IGNORECASE
 )
 
