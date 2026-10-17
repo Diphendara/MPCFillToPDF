@@ -322,8 +322,13 @@ class RBTabMixin:
                         def _update(*_args):
                             try:
                                 new_qty = var.get()
-                                if new_qty >= 1:
+                                if new_qty == 0:
+                                    # Quantity 0 = deselect card
+                                    c.selected = False
+                                    self._refresh_card_list()
+                                elif new_qty >= 1:
                                     c.quantity = new_qty
+                                    c.selected = True
                                     self._refresh_generate_state()
                             except tk.TclError:
                                 pass  # Invalid input, ignore
@@ -331,7 +336,7 @@ class RBTabMixin:
 
                     qty_spinbox = ttk.Spinbox(
                         row_f,
-                        from_=1,
+                        from_=0,
                         to=99,
                         width=4,
                         textvariable=qty_var,
