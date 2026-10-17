@@ -6,9 +6,12 @@ to the same data structures used by URL-based importers.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from urllib.parse import quote
 
+from src.http_client import get as http_get
 from src.rb_scraper import RBCard, RBDeck, _type_to_section
 
 
@@ -40,6 +43,16 @@ _RIFTBOUND_LINE_RE = re.compile(
     r"^(\d+)\s+(.+?)\s*\((([A-Z]+)-([0-9A-Z]+))\)\s*$",
     re.IGNORECASE
 )
+
+_TRPC_BASE = "https://piltoverarchive.com/api/trpc"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://piltoverarchive.com/",
+}
 
 
 def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
@@ -99,6 +112,39 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
     return lines
 
 
+def _trpc_get(proc: str, payload: dict) -> dict:
+    """Make a tRPC GET request to Piltover Archive API."""
+    inp = quote(json.dumps({"json": payload}))
+    url = f"{_TRPC_BASE}/{proc}?input={inp}"
+    r = http_get(url, headers=_HEADERS, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+    return data["result"]["data"]["json"]
+
+
+def _search_card_by_code(code: str) -> dict | None:
+    """Search for a card by its code (e.g., 'OGN-156') using Piltover Archive API.
+
+    Returns card metadata dict or None if not found.
+    """
+    try:
+        # Try the cards.search endpoint
+        result = _trpc_get("cards.search", {"query": code})
+
+        # The result might be a list of cards or a dict with cards
+        if isinstance(result, list) and result:
+            return result[0]
+        elif isinstance(result, dict) and "cards" in result:
+            cards = result["cards"]
+            if cards:
+                return cards[0]
+
+        return None
+    except Exception:
+        # If search fails, return None
+        return None
+
+
 def build_riftbound_deck_from_text(
     text: str,
     deck_name: str = "Imported Deck"
@@ -108,36 +154,49 @@ def build_riftbound_deck_from_text(
     Parses the text and enriches each card with data from Piltover Archive API.
     Returns an RBDeck ready to be used in the GUI and PDF generation pipeline.
     """
-    from src.http_client import get as http_get
-
     parsed_lines = parse_riftbound_text(text)
-
-    # Build card codes for batch lookup
-    card_codes = [f"{line.set_code}-{line.collector_number}" for line in parsed_lines]
-
-    # Fetch card metadata from Piltover Archive
-    # The API endpoint for card lookup by code
-    cards_data = _fetch_cards_metadata(card_codes)
 
     # Build RBCard objects
     cards: list[RBCard] = []
     for line in parsed_lines:
         code = f"{line.set_code}-{line.collector_number}"
-        metadata = cards_data.get(code, {})
 
-        card_type = metadata.get("type", "")
-        card_super = metadata.get("super")
-        section = _type_to_section(card_type, card_super)
+        # Try to fetch card metadata from API
+        metadata = _search_card_by_code(code)
 
-        # Use the image URL from metadata, or construct from CDN pattern
-        image_url = metadata.get("imageUrl", "")
-        if not image_url:
+        if metadata:
+            # Use real data from API
+            card_type = metadata.get("type", "")
+            card_super = metadata.get("super")
+            section = _type_to_section(card_type, card_super)
+
+            # Get image URL from variants
+            image_url = ""
+            variants = metadata.get("cardVariants", [])
+            if variants:
+                # Use first variant's image
+                image_url = variants[0].get("imageUrl", "")
+
+            # Fallback to CDN if no image URL
+            if not image_url:
+                image_url = f"https://cdn.piltoverarchive.com/cards/{code}.webp"
+
+            # Use real card ID and variant ID from API
+            card_id = metadata.get("id", code)
+            variant_id = variants[0].get("id", code) if variants else code
+        else:
+            # Fallback: use minimal data
+            card_type = ""
+            card_super = None
+            section = "maindeck"  # Default section
             image_url = f"https://cdn.piltoverarchive.com/cards/{code}.webp"
+            card_id = code
+            variant_id = code
 
         cards.append(
             RBCard(
-                card_id=code,
-                variant_id=code,
+                card_id=card_id,
+                variant_id=variant_id,
                 name=line.name,  # Use the name from the text (user-friendly)
                 card_type=card_type,
                 card_super=card_super,
@@ -152,55 +211,3 @@ def build_riftbound_deck_from_text(
         name=deck_name,
         cards=cards,
     )
-
-
-def _fetch_cards_metadata(card_codes: list[str]) -> dict[str, dict]:
-    """Fetch metadata for multiple cards from Piltover Archive API.
-
-    Returns a dict mapping card code (e.g., "OGN-156") to card metadata.
-    Uses the cards.search tRPC endpoint to look up cards by their codes.
-    """
-    from src.http_client import get as http_get
-    import json
-    from urllib.parse import quote
-
-    if not card_codes:
-        return {}
-
-    _TRPC_BASE = "https://piltoverarchive.com/api/trpc"
-    _HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json",
-        "Referer": "https://piltoverarchive.com/",
-    }
-
-    metadata_map: dict[str, dict] = {}
-
-    # Try to fetch each card individually using the search endpoint
-    # This is a fallback approach - ideally we'd use a batch endpoint
-    for code in card_codes:
-        try:
-            # Search for the card by code
-            # The API might have an endpoint like cards.getByCode or cards.search
-            # For now, we'll use a simple approach and construct image URLs from CDN
-            # TODO: Implement actual API lookup when the correct endpoint is identified
-
-            # For now, return minimal metadata
-            # The image URL will be constructed from the CDN pattern
-            metadata_map[code] = {
-                "type": "",  # Will be determined from card type patterns
-                "super": None,
-                "imageUrl": f"https://cdn.piltoverarchive.com/cards/{code}.webp",
-            }
-        except Exception:
-            # If lookup fails, continue with minimal data
-            metadata_map[code] = {
-                "type": "",
-                "super": None,
-                "imageUrl": f"https://cdn.piltoverarchive.com/cards/{code}.webp",
-            }
-
-    return metadata_map

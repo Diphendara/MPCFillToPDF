@@ -53,65 +53,33 @@ class RBTabMixin:
             row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
         )
 
-        # Text import section
-        text_import_frame = ttk.LabelFrame(parent, text="Importar desde texto", padding=6)
-        text_import_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 4))
-        text_import_frame.columnconfigure(0, weight=1)
+        # Text import section - just a button that opens a dialog
+        text_import_row = ttk.Frame(parent)
+        text_import_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 4))
+        text_import_row.columnconfigure(0, weight=1)
 
         ttk.Label(
-            text_import_frame,
-            text="Formato: Cantidad Nombre (SET-NUMERO)",
+            text_import_row,
+            text="ó",
             foreground="#999",
-            font=("Segoe UI", 8),
-        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
-
-        # Text widget with scrollbar
-        text_container = ttk.Frame(text_import_frame)
-        text_container.grid(row=1, column=0, sticky="ew", pady=(0, 4))
-        text_container.columnconfigure(0, weight=1)
-
-        self._rb_text_import = tk.Text(text_container, height=6, wrap=tk.WORD, font=("Consolas", 9))
-        text_scroll = ttk.Scrollbar(text_container, orient=tk.VERTICAL, command=self._rb_text_import.yview)
-        self._rb_text_import.configure(yscrollcommand=text_scroll.set)
-
-        self._rb_text_import.grid(row=0, column=0, sticky="ew")
-        text_scroll.grid(row=0, column=1, sticky="ns")
-
-        # Placeholder text
-        placeholder = "3 Sabotage (OGN-156)\n1 Seal of Discord (OGN-204)\n1 Elder Dragon (UNL-118A)"
-        self._rb_text_import.insert("1.0", placeholder)
-        self._rb_text_import.config(foreground="#999")
-
-        def _on_text_focus_in(event):
-            if self._rb_text_import.get("1.0", tk.END).strip() == placeholder:
-                self._rb_text_import.delete("1.0", tk.END)
-                self._rb_text_import.config(foreground="#000")
-
-        def _on_text_focus_out(event):
-            if not self._rb_text_import.get("1.0", tk.END).strip():
-                self._rb_text_import.insert("1.0", placeholder)
-                self._rb_text_import.config(foreground="#999")
-
-        self._rb_text_import.bind("<FocusIn>", _on_text_focus_in)
-        self._rb_text_import.bind("<FocusOut>", _on_text_focus_out)
-
-        btn_row = ttk.Frame(text_import_frame)
-        btn_row.grid(row=2, column=0, sticky="ew")
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, pady=(0, 4))
 
         self._rb_import_text_btn = ttk.Button(
-            btn_row,
-            text="Importar desde texto",
-            command=self._rb_import_from_text
+            text_import_row,
+            text="📋 Añadir desde texto",
+            command=self._rb_show_text_import_dialog,
+            width=25
         )
-        self._rb_import_text_btn.pack(side=tk.LEFT)
+        self._rb_import_text_btn.grid(row=1, column=0)
 
         self._rb_text_status_var = tk.StringVar(value="")
         ttk.Label(
-            btn_row,
+            text_import_row,
             textvariable=self._rb_text_status_var,
             foreground="#555",
-            anchor="w"
-        ).pack(side=tk.LEFT, padx=(8, 0))
+            anchor="center"
+        ).grid(row=2, column=0, pady=(4, 0))
 
         # Deck list section
         rb_list_frame = ttk.Frame(parent)
@@ -153,29 +121,98 @@ class RBTabMixin:
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _rb_import_from_text(self) -> None:
-        """Import a deck from pasted text."""
-        text = self._rb_text_import.get("1.0", tk.END).strip()
+    def _rb_show_text_import_dialog(self) -> None:
+        """Show a dialog to import a deck from pasted text."""
+        dialog = tk.Toplevel()
+        dialog.title("Importar mazo desde texto")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
 
-        # Check if it's just the placeholder
-        if not text or text == "3 Sabotage (OGN-156)\n1 Seal of Discord (OGN-204)\n1 Elder Dragon (UNL-118A)":
-            messagebox.showwarning(APP_TITLE, "Pega una lista de cartas en el área de texto.")
-            return
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
 
-        self._rb_import_text_btn.state(["disabled"])
-        self._rb_text_status_var.set("Importando…")
+        main_frame = ttk.Frame(dialog, padding=12)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        def _import():
-            try:
-                deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
-                self.events.put(("rb_deck_loaded", deck))
-                self.events.put(("rb_text_import_done", None))
-            except TextImportError as e:
-                self.events.put(("rb_text_import_error", str(e)))
-            except Exception as e:
-                self.events.put(("rb_text_import_error", f"Error inesperado: {e}"))
+        ttk.Label(
+            main_frame,
+            text="Pega la lista de cartas (una por línea):",
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", pady=(0, 4))
 
-        threading.Thread(target=_import, daemon=True).start()
+        ttk.Label(
+            main_frame,
+            text="Formato: Cantidad Nombre (SET-NUMERO)",
+            foreground="#666",
+            font=("Segoe UI", 8)
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Text widget with scrollbar
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Consolas", 9))
+        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=text_scroll.set)
+
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Example text
+        example = "3 Sabotage (OGN-156)\n1 Seal of Discord (OGN-204)\n1 Elder Dragon (UNL-118A)"
+        text_widget.insert("1.0", example)
+        text_widget.config(foreground="#999")
+
+        def _on_focus_in(event):
+            if text_widget.get("1.0", tk.END).strip() == example:
+                text_widget.delete("1.0", tk.END)
+                text_widget.config(foreground="#000")
+
+        text_widget.bind("<FocusIn>", _on_focus_in)
+        text_widget.focus_set()
+
+        # Status label
+        status_var = tk.StringVar(value="")
+        status_label = ttk.Label(main_frame, textvariable=status_var, foreground="#d32f2f")
+        status_label.pack(anchor="w", pady=(0, 8))
+
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+
+        def _do_import():
+            text = text_widget.get("1.0", tk.END).strip()
+            if not text or text == example:
+                status_var.set("⚠️ Pega una lista de cartas primero")
+                return
+
+            status_var.set("Importando...")
+            dialog.update()
+
+            def _import():
+                try:
+                    deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
+                    self.events.put(("rb_deck_loaded", deck))
+                    self.events.put(("rb_text_import_done", None))
+                    dialog.after(0, dialog.destroy)
+                except TextImportError as e:
+                    self.events.put(("rb_text_import_error", str(e)))
+                    dialog.after(0, lambda: status_var.set(f"❌ {e}"))
+                except Exception as e:
+                    self.events.put(("rb_text_import_error", f"Error inesperado: {e}"))
+                    dialog.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+
+            threading.Thread(target=_import, daemon=True).start()
+
+        ttk.Button(btn_frame, text="Importar", command=_do_import).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_frame, text="Cancelar", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        # Bind Enter key in text widget to import
+        text_widget.bind("<Control-Return>", lambda _e: _do_import())
 
     def _rb_refresh_rows(self) -> None:
         for row in self._rb_deck_rows:
@@ -275,17 +312,51 @@ class RBTabMixin:
                     ttk.Checkbutton(
                         row_f, variable=card_vars[card.variant_id], command=_sync_selection
                     ).pack(side=tk.LEFT, padx=(0, 2))
-                    ttk.Label(
+
+                    # Editable quantity spinner
+                    qty_var = tk.IntVar(value=card.quantity)
+
+                    def _make_qty_updater(c=card, var=qty_var):
+                        def _update(*_args):
+                            try:
+                                new_qty = var.get()
+                                if new_qty >= 1:
+                                    c.quantity = new_qty
+                                    self._refresh_generate_state()
+                            except tk.TclError:
+                                pass  # Invalid input, ignore
+                        return _update
+
+                    qty_spinbox = ttk.Spinbox(
                         row_f,
-                        text=f"x{card.quantity}",
-                        foreground="#444",
-                        font=("Segoe UI", 8),
+                        from_=1,
+                        to=99,
                         width=4,
-                        anchor="e",
-                    ).pack(side=tk.LEFT, padx=(0, 6))
-                    ttk.Label(row_f, text=ellipsize(card.name, 26), anchor="w", width=27).pack(
-                        side=tk.LEFT
+                        textvariable=qty_var,
+                        command=_make_qty_updater()
                     )
+                    qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
+                    qty_var.trace_add("write", _make_qty_updater())
+
+                    # Card name and code
+                    name_frame = ttk.Frame(row_f)
+                    name_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+                    ttk.Label(
+                        name_frame,
+                        text=ellipsize(card.name, 24),
+                        anchor="w",
+                        font=("Segoe UI", 8)
+                    ).pack(side=tk.LEFT)
+
+                    ttk.Label(
+                        name_frame,
+                        text=f"({card.card_id})",
+                        foreground="#666",
+                        font=("Consolas", 7),
+                        anchor="w"
+                    ).pack(side=tk.LEFT, padx=(4, 0))
+
                     ttk.Label(
                         row_f,
                         text=card.card_type,
@@ -336,8 +407,7 @@ class RBTabMixin:
         self._rb_url_var.set("")
         self._rb_status_var.set("")
         self._rb_load_btn.state(["!disabled"])
-        # Clear text import area
-        self._rb_text_import.delete("1.0", tk.END)
+        # Clear text import status
         self._rb_text_status_var.set("")
         self._rb_import_text_btn.state(["!disabled"])
         self._rb_refresh_rows()
