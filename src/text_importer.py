@@ -211,3 +211,290 @@ def build_riftbound_deck_from_text(
         name=deck_name,
         cards=cards,
     )
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MTG (Magic: The Gathering) Text Parser
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)"
+_MTG_LINE_RE = re.compile(
+    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$",
+    re.IGNORECASE
+)
+
+
+def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
+    """Parse MTG deck list from text.
+
+    Expected formats:
+        4 Lightning Bolt
+        1 Black Lotus (LEA)
+        2 Counterspell (MH2)  # with optional set code
+
+    Returns list of (quantity, name, set_code) tuples.
+    """
+    from src.deck_importer import DeckCard, FetchedDeck
+
+    cards: list[DeckCard] = []
+
+    for line_num, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+
+        # Skip empty lines and comments
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        # Check for sideboard marker
+        zone = "main"
+        if line.lower().startswith("sideboard:") or line.lower().startswith("sb:"):
+            continue  # TODO: Handle sideboard cards
+
+        match = _MTG_LINE_RE.match(line)
+        if not match:
+            raise TextImportError(
+                f"Formato no reconocido: '{line}'. "
+                "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (SET)'",
+                line_number=line_num
+            )
+
+        quantity = int(match.group(1))
+        name = match.group(2).strip()
+        set_code = match.group(3).upper() if match.group(3) else ""
+
+        if quantity < 1:
+            raise TextImportError(
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
+                line_number=line_num
+            )
+
+        cards.append(
+            DeckCard(
+                name=name,
+                set_code=set_code.lower(),
+                collector_number="",  # MTG doesn't use collector numbers in text format
+                quantity=quantity,
+                zone=zone,
+            )
+        )
+
+    if not cards:
+        raise TextImportError("No se encontraron cartas en el texto proporcionado.")
+
+    return FetchedDeck(name="Imported from text", cards=cards)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lorcana Text Parser
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Regex for Lorcana format: "4 Elsa - Snow Queen" or "2 Mickey Mouse (1)"
+_LORCANA_LINE_RE = re.compile(
+    r"^(\d+)\s+(.+?)(?:\s+\((\d+)\))?\s*$",
+    re.IGNORECASE
+)
+
+
+def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
+    """Parse Lorcana deck list from text.
+
+    Expected formats:
+        4 Elsa - Snow Queen
+        2 Mickey Mouse (1)
+
+    Returns list of (quantity, name, card_number) tuples.
+    """
+    from src.lorcana_scraper import LorcanaCard, LocanaDeck
+
+    cards: list[LorcanaCard] = []
+
+    for line_num, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        match = _LORCANA_LINE_RE.match(line)
+        if not match:
+            raise TextImportError(
+                f"Formato no reconocido: '{line}'. "
+                "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (Numero)'",
+                line_number=line_num
+            )
+
+        quantity = int(match.group(1))
+        name = match.group(2).strip()
+        card_number = match.group(3) if match.group(3) else ""
+
+        if quantity < 1:
+            raise TextImportError(
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
+                line_number=line_num
+            )
+
+        # For Lorcana, we'll use the card number as card_id if available
+        card_id = card_number if card_number else name
+
+        cards.append(
+            LorcanaCard(
+                card_id=card_id,
+                name=name,
+                quantity=quantity,
+                image_url="",  # Will need to be resolved from Lorcana API
+            )
+        )
+
+    if not cards:
+        raise TextImportError("No se encontraron cartas en el texto proporcionado.")
+
+    return LocanaDeck(
+        deck_id="text-import",
+        name="Imported from text",
+        cards=cards,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# One Piece Text Parser
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Regex for One Piece format: "4 Luffy (OP01-001)" or "1 Zoro (Leader)"
+_OP_LINE_RE = re.compile(
+    r"^(\d+)\s+(.+?)\s+\(([A-Z0-9-]+|Leader)\)\s*$",
+    re.IGNORECASE
+)
+
+
+def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
+    """Parse One Piece deck list from text.
+
+    Expected format:
+        1 Monkey D. Luffy (Leader)
+        4 Roronoa Zoro (OP01-001)
+
+    Returns OPDeck object.
+    """
+    from src.op_scraper import OPCard, OPDeck
+
+    cards: list[OPCard] = []
+
+    for line_num, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        match = _OP_LINE_RE.match(line)
+        if not match:
+            raise TextImportError(
+                f"Formato no reconocido: '{line}'. "
+                "Formato esperado: 'Cantidad Nombre (CODIGO)' o 'Cantidad Nombre (Leader)'",
+                line_number=line_num
+            )
+
+        quantity = int(match.group(1))
+        name = match.group(2).strip()
+        code_or_leader = match.group(3).upper()
+
+        if quantity < 1:
+            raise TextImportError(
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
+                line_number=line_num
+            )
+
+        is_leader = code_or_leader == "LEADER"
+        card_id = "" if is_leader else code_or_leader
+
+        cards.append(
+            OPCard(
+                card_id=card_id,
+                name=name,
+                quantity=quantity,
+                is_leader=is_leader,
+                colors=[],  # Will need to be resolved from OP API
+            )
+        )
+
+    if not cards:
+        raise TextImportError("No se encontraron cartas en el texto proporcionado.")
+
+    return OPDeck(
+        name="Imported from text",
+        slug="text-import",
+        cards=cards,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Yu-Gi-Oh Text Parser
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Regex for Yu-Gi-Oh format: "3 Blue-Eyes White Dragon" or "1 Dark Magician (LOB)"
+_YGO_LINE_RE = re.compile(
+    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$",
+    re.IGNORECASE
+)
+
+
+def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
+    """Parse Yu-Gi-Oh deck list from text.
+
+    Expected formats:
+        3 Blue-Eyes White Dragon
+        1 Dark Magician (LOB)
+
+    Returns YGODeck object.
+    """
+    from src.ygo_scraper import YGOCard, YGODeck
+
+    cards: list[YGOCard] = []
+
+    for line_num, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        # Check for side/extra deck markers
+        zone = "main"
+        if line.lower().startswith("side:") or line.lower().startswith("extra:"):
+            zone = "side" if line.lower().startswith("side:") else "extra"
+            continue  # TODO: Handle section headers
+
+        match = _YGO_LINE_RE.match(line)
+        if not match:
+            raise TextImportError(
+                f"Formato no reconocido: '{line}'. "
+                "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (SET)'",
+                line_number=line_num
+            )
+
+        quantity = int(match.group(1))
+        name = match.group(2).strip()
+
+        if quantity < 1:
+            raise TextImportError(
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
+                line_number=line_num
+            )
+
+        # For YGO, we need to resolve the card ID from the name
+        # This will require an API call to YGOPRODeck or similar
+        cards.append(
+            YGOCard(
+                card_id=0,  # Will need to be resolved
+                name=name,
+                quantity=quantity,
+                zone=zone,
+            )
+        )
+
+    if not cards:
+        raise TextImportError("No se encontraron cartas en el texto proporcionado.")
+
+    return YGODeck(
+        name="Imported from text",
+        deck_id="text-import",
+        cards=cards,
+    )

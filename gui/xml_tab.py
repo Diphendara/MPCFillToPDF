@@ -20,6 +20,7 @@ from gui.widgets import (
 from src.deck_importer import DeckImportError, fetch_deck
 from src.parser import parse
 from src.precheck import analyze
+from src.text_importer import parse_mtg_text, TextImportError
 from src.validator import validate
 
 
@@ -57,6 +58,9 @@ class XmlTabMixin:
             side=tk.LEFT
         )
         ttk.Button(xml_btn_row, text="Añadir desde URL", command=self._open_url_dialog).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(xml_btn_row, text="📋 Añadir desde texto", command=self._open_text_dialog).pack(
             side=tk.LEFT, padx=(6, 0)
         )
         ttk.Button(xml_btn_row, text="Vaciar", command=self._clear_xmls).pack(side=tk.LEFT, padx=6)
@@ -514,3 +518,87 @@ class XmlTabMixin:
         ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT)
         url_entry.bind("<Return>", lambda _e: _do_import())
         self._mtg_import_btn = import_btn
+
+    def _open_text_dialog(self) -> None:
+        """Show a dialog to import a deck from pasted text."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Añadir mazo desde texto")
+        dlg.geometry("600x500")
+        dlg.grab_set()
+        dlg.columnconfigure(0, weight=1)
+
+        main_frame = ttk.Frame(dlg, padding=12)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            main_frame,
+            text="Pega la lista de cartas (una por línea):",
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", pady=(0, 4))
+
+        ttk.Label(
+            main_frame,
+            text="Formato: Cantidad Nombre  ó  Cantidad Nombre (SET)",
+            foreground="#666",
+            font=("Segoe UI", 8)
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Text widget with scrollbar
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Consolas", 9))
+        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=text_scroll.set)
+
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Example text
+        example = "4 Lightning Bolt\n1 Black Lotus (LEA)\n2 Counterspell (MH2)"
+        text_widget.insert("1.0", example)
+        text_widget.config(foreground="#999")
+
+        def _on_focus_in(event):
+            if text_widget.get("1.0", tk.END).strip() == example:
+                text_widget.delete("1.0", tk.END)
+                text_widget.config(foreground="#000")
+
+        text_widget.bind("<FocusIn>", _on_focus_in)
+        text_widget.focus_set()
+
+        # Status label
+        status_var = tk.StringVar(value="")
+        status_label = ttk.Label(main_frame, textvariable=status_var, foreground="#d32f2f")
+        status_label.pack(anchor="w", pady=(0, 8))
+
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+
+        def _do_import():
+            text = text_widget.get("1.0", tk.END).strip()
+            if not text or text == example:
+                status_var.set("⚠️ Pega una lista de cartas primero")
+                return
+
+            status_var.set("Importando...")
+            dlg.update()
+
+            def _import():
+                try:
+                    result = parse_mtg_text(text)
+                    self.events.put(("mtg_url_loaded", "", result.cards, False, result.name))
+                    dlg.after(0, dlg.destroy)
+                except TextImportError as e:
+                    dlg.after(0, lambda: status_var.set(f"❌ {e}"))
+                except Exception as e:
+                    dlg.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+
+            threading.Thread(target=_import, daemon=True).start()
+
+        ttk.Button(btn_frame, text="Importar", command=_do_import).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_frame, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT)
+
+        # Bind Ctrl+Enter to import
+        text_widget.bind("<Control-Return>", lambda _e: _do_import())
