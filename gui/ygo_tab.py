@@ -55,7 +55,7 @@ class YGOTabMixin:
             text_import_row,
             text="📋 Añadir desde texto",
             command=self._ygo_show_text_import_dialog,
-            width=25
+            width=25,
         )
         self._ygo_import_text_btn.grid(row=1, column=0)
 
@@ -161,15 +161,11 @@ class YGOTabMixin:
                                 _sync_selection()
                         except tk.TclError:
                             pass  # Invalid input, ignore
+
                     return _update
 
                 qty_spinbox = ttk.Spinbox(
-                    row,
-                    from_=0,
-                    to=99,
-                    width=4,
-                    textvariable=qty_var,
-                    command=_make_qty_updater()
+                    row, from_=0, to=99, width=4, textvariable=qty_var, command=_make_qty_updater()
                 )
                 qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
                 qty_var.trace_add("write", _make_qty_updater())
@@ -230,14 +226,14 @@ class YGOTabMixin:
         ttk.Label(
             main_frame,
             text="Pega la lista de cartas (una por línea):",
-            font=("Segoe UI", 9, "bold")
+            font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(0, 4))
 
         ttk.Label(
             main_frame,
             text="Formato: Cantidad Nombre  ó  Cantidad Nombre (SET)",
             foreground="#666",
-            font=("Segoe UI", 8)
+            font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(0, 8))
 
         text_frame = ttk.Frame(main_frame)

@@ -168,7 +168,14 @@ class TestBuildRiftboundDeckFromText:
 
         # All cards should be assigned to a section
         for card in deck.cards:
-            assert card.section in ["legend", "champion", "battlefield", "rune", "maindeck", "sideboard"]
+            assert card.section in [
+                "legend",
+                "champion",
+                "battlefield",
+                "rune",
+                "maindeck",
+                "sideboard",
+            ]
 
     def test_build_deck_image_urls(self):
         """Verify image URLs are constructed correctly."""

@@ -39,10 +39,7 @@ class ParsedCardLine:
 
 # Regex for Riftbound format: "3 Sabotage (OGN-156)" or "1 Elder Dragon (UNL-118A)"
 # Captures: quantity, name, set_code, collector_number
-_RIFTBOUND_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)\s*\((([A-Z]+)-([0-9A-Z]+))\)\s*$",
-    re.IGNORECASE
-)
+_RIFTBOUND_LINE_RE = re.compile(r"^(\d+)\s+(.+?)\s*\((([A-Z]+)-([0-9A-Z]+))\)\s*$", re.IGNORECASE)
 
 _TRPC_BASE = "https://piltoverarchive.com/api/trpc"
 _HEADERS = {
@@ -80,18 +77,17 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
                 "Formato esperado: 'Cantidad Nombre (SET-NUMERO)'",
-                line_number=line_num
+                line_number=line_num,
             )
 
         quantity = int(match.group(1))
         name = match.group(2).strip()
-        set_code = match.group(4).upper()   # e.g., "OGN"
+        set_code = match.group(4).upper()  # e.g., "OGN"
         collector_number = match.group(5).upper()  # e.g., "156" or "118A" or "T01g"
 
         if quantity < 1:
             raise TextImportError(
-                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
-                line_number=line_num
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
         lines.append(
@@ -198,10 +194,7 @@ def _get_base_code(code: str) -> str:
     return re.sub(r"([A-Z]+-\d+)[A-Z]$", r"\1", code)
 
 
-def build_riftbound_deck_from_text(
-    text: str,
-    deck_name: str = "Imported Deck"
-) -> RBDeck:
+def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") -> RBDeck:
     """Build an RBDeck from pasted text.
 
     Parses the text and enriches each card with data from dotgg API.
@@ -231,7 +224,9 @@ def build_riftbound_deck_from_text(
         # For tokens, also try with lowercase 'g' suffix (e.g., UNL-T01g)
         if "-T" in code:
             # UNL-T01G -> UNL-T01g
-            code_variations.append(f"{line.set_code.upper()}-{line.collector_number[:-1]}{line.collector_number[-1].lower()}")
+            code_variations.append(
+                f"{line.set_code.upper()}-{line.collector_number[:-1]}{line.collector_number[-1].lower()}"
+            )
 
         for code_var in code_variations:
             card_data = cards_db.get(code_var)
@@ -246,7 +241,11 @@ def build_riftbound_deck_from_text(
         if card_data:
             # Use real data from API
             card_type_list = card_data.get("type", [])
-            card_type = card_type_list[0] if isinstance(card_type_list, list) and card_type_list else str(card_type_list)
+            card_type = (
+                card_type_list[0]
+                if isinstance(card_type_list, list) and card_type_list
+                else str(card_type_list)
+            )
             card_super = card_data.get("supertype") or None
             section = _type_to_section(card_type, card_super)
 
@@ -289,7 +288,6 @@ def build_riftbound_deck_from_text(
     )
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # MTG (Magic: The Gathering) Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -297,7 +295,7 @@ def build_riftbound_deck_from_text(
 # Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142" or "1 Mana Confluence (CMR) 721 *F*" or "1 Liesa, Shroud of Dusk (PLST) CMR-286"
 _MTG_LINE_RE = re.compile(
     r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+([A-Z0-9-]+))?)?(?:\s+\*[A-Z]+\*)?\s*$",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 
 
@@ -332,7 +330,7 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
                 "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (SET)'",
-                line_number=line_num
+                line_number=line_num,
             )
 
         quantity = int(match.group(1))
@@ -352,14 +350,14 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
 
         if quantity < 1:
             raise TextImportError(
-                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
-                line_number=line_num
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
         # If no set code provided, fetch from Scryfall
         if not set_code:
             try:
                 from src.scryfall import fetch_card_by_name
+
                 fetched_set, fetched_collector = fetch_card_by_name(name)
                 set_code = fetched_set.upper()
                 collector_number = fetched_collector
@@ -389,10 +387,7 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Regex for Lorcana format: "4 Elsa - Snow Queen" or "2 Mickey Mouse (1)"
-_LORCANA_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)(?:\s+\((\d+)\))?\s*$",
-    re.IGNORECASE
-)
+_LORCANA_LINE_RE = re.compile(r"^(\d+)\s+(.+?)(?:\s+\((\d+)\))?\s*$", re.IGNORECASE)
 
 
 def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
@@ -419,7 +414,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
                 "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (Numero)'",
-                line_number=line_num
+                line_number=line_num,
             )
 
         quantity = int(match.group(1))
@@ -428,8 +423,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
 
         if quantity < 1:
             raise TextImportError(
-                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
-                line_number=line_num
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
         # For Lorcana, we'll use the card number as card_id if available
@@ -463,7 +457,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
 #   "2xOP04-016_r1" or "1xOP13-004"
 _OP_LINE_RE = re.compile(
     r"^(?:(\d+)\s+(.+?)\s+\(([A-Z0-9-_]+|Leader)\)|(\d+)x([A-Z0-9-]+(?:_[a-z0-9]+)?))\s*$",
-    re.IGNORECASE
+    re.IGNORECASE,
 )
 
 
@@ -493,7 +487,7 @@ def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
                 "Formatos esperados: 'Cantidad Nombre (CODIGO)', 'Cantidad Nombre (Leader)', o 'CantidadxCODIGO'",
-                line_number=line_num
+                line_number=line_num,
             )
 
         # Check which format matched
@@ -511,8 +505,7 @@ def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
 
         if quantity < 1:
             raise TextImportError(
-                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
-                line_number=line_num
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
         cards.append(
@@ -540,10 +533,7 @@ def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Regex for Yu-Gi-Oh format: "3 Blue-Eyes White Dragon" or "1 Dark Magician (LOB)"
-_YGO_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$",
-    re.IGNORECASE
-)
+_YGO_LINE_RE = re.compile(r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$", re.IGNORECASE)
 
 
 def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
@@ -576,7 +566,7 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
                 "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (SET)'",
-                line_number=line_num
+                line_number=line_num,
             )
 
         quantity = int(match.group(1))
@@ -584,8 +574,7 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
 
         if quantity < 1:
             raise TextImportError(
-                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
-                line_number=line_num
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
         # For YGO, we need to resolve the card ID from the name

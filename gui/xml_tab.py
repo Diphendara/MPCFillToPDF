@@ -358,6 +358,7 @@ class XmlTabMixin:
                                     _sync_cards()
                             except tk.TclError:
                                 pass  # Invalid input, ignore
+
                         return _update
 
                     qty_spinbox = ttk.Spinbox(
@@ -366,7 +367,7 @@ class XmlTabMixin:
                         to=99,
                         width=4,
                         textvariable=qty_var,
-                        command=_make_qty_updater()
+                        command=_make_qty_updater(),
                     )
                     qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
                     qty_var.trace_add("write", _make_qty_updater())
@@ -561,14 +562,14 @@ class XmlTabMixin:
         ttk.Label(
             main_frame,
             text="Pega la lista de cartas (una por línea):",
-            font=("Segoe UI", 9, "bold")
+            font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", pady=(0, 4))
 
         ttk.Label(
             main_frame,
             text="Formato: Cantidad Nombre  ó  Cantidad Nombre (SET)",
             foreground="#666",
-            font=("Segoe UI", 8)
+            font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(0, 8))
 
         # Text widget with scrollbar
