@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 
 from gui.widgets import APP_TITLE, attach_context_menu, ellipsize
 from src.op_scraper import scrape_deck as op_scrape_deck
+from src.text_importer import parse_op_text, TextImportError
 
 
 class OPTabMixin:
@@ -15,7 +16,7 @@ class OPTabMixin:
 
     def _build_onepiece_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
+        parent.rowconfigure(2, weight=1)
 
         url_row = ttk.Frame(parent)
         url_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(10, 4))
@@ -42,8 +43,28 @@ class OPTabMixin:
             row=2, column=0, columnspan=3, sticky="ew", pady=(2, 0)
         )
 
+        # Text import button
+        text_import_row = ttk.Frame(parent)
+        text_import_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 4))
+        text_import_row.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            text_import_row,
+            text="ó",
+            foreground="#999",
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=0, pady=(0, 4))
+
+        self._op_import_text_btn = ttk.Button(
+            text_import_row,
+            text="📋 Añadir desde texto",
+            command=self._op_show_text_import_dialog,
+            width=25
+        )
+        self._op_import_text_btn.grid(row=1, column=0)
+
         op_list_frame = ttk.Frame(parent)
-        op_list_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 2))
+        op_list_frame.grid(row=2, column=0, sticky="nsew", padx=6, pady=(0, 2))
         op_list_frame.columnconfigure(0, weight=1)
         op_list_frame.rowconfigure(0, weight=1)
 
@@ -223,3 +244,87 @@ class OPTabMixin:
         self._op_load_btn.state(["!disabled"])
         self._op_refresh_rows()
         self._refresh_generate_state()
+
+    def _op_show_text_import_dialog(self) -> None:
+        """Show a dialog to import a One Piece deck from pasted text."""
+        dialog = tk.Toplevel()
+        dialog.title("Importar mazo One Piece desde texto")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        main_frame = ttk.Frame(dialog, padding=12)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            main_frame,
+            text="Pega la lista de cartas (una por línea):",
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", pady=(0, 4))
+
+        ttk.Label(
+            main_frame,
+            text="Formato: Cantidad Nombre (CODIGO)  ó  Cantidad Nombre (Leader)",
+            foreground="#666",
+            font=("Segoe UI", 8)
+        ).pack(anchor="w", pady=(0, 8))
+
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Consolas", 9))
+        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=text_scroll.set)
+
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        example = "1 Monkey D. Luffy (Leader)\n4 Roronoa Zoro (OP01-001)\n3 Nami (OP01-002)"
+        text_widget.insert("1.0", example)
+        text_widget.config(foreground="#999")
+
+        def _on_focus_in(event):
+            if text_widget.get("1.0", tk.END).strip() == example:
+                text_widget.delete("1.0", tk.END)
+                text_widget.config(foreground="#000")
+
+        text_widget.bind("<FocusIn>", _on_focus_in)
+        text_widget.focus_set()
+
+        status_var = tk.StringVar(value="")
+        status_label = ttk.Label(main_frame, textvariable=status_var, foreground="#d32f2f")
+        status_label.pack(anchor="w", pady=(0, 8))
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+
+        def _do_import():
+            text = text_widget.get("1.0", tk.END).strip()
+            if not text or text == example:
+                status_var.set("⚠️ Pega una lista de cartas primero")
+                return
+
+            status_var.set("Importando...")
+            dialog.update()
+
+            def _import():
+                try:
+                    deck = parse_op_text(text)
+                    self.events.put(("op_deck_loaded", deck))
+                    dialog.after(0, dialog.destroy)
+                except TextImportError as e:
+                    dialog.after(0, lambda: status_var.set(f"❌ {e}"))
+                except Exception as e:
+                    dialog.after(0, lambda: status_var.set(f"❌ Error: {e}"))
+
+            threading.Thread(target=_import, daemon=True).start()
+
+        ttk.Button(btn_frame, text="Importar", command=_do_import).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_frame, text="Cancelar", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        text_widget.bind("<Control-Return>", lambda _e: _do_import())
