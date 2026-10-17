@@ -144,51 +144,111 @@ def _search_card_by_code(code: str) -> dict | None:
         return None
 
 
+def _fetch_dotgg_cards_db() -> dict[str, dict]:
+    """Fetch all Riftbound cards from dotgg API and build a lookup dict by card code.
+
+    Returns a dict mapping card code (e.g., "UNL-118") to card metadata.
+    """
+    _RBGG_CARDS_API = "https://api.dotgg.gg/cgfw/getcards?game=riftbound&mode=indexed"
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+
+    try:
+        r = http_get(_RBGG_CARDS_API, headers=_HEADERS, timeout=30)
+        r.raise_for_status()
+        raw = r.json()
+        names = raw["names"]
+
+        cards_db: dict[str, dict] = {}
+        for row in raw["data"]:
+            card_dict = dict(zip(names, row))
+            card_id = card_dict.get("id", "")
+            if card_id:
+                cards_db[card_id] = card_dict
+
+        return cards_db
+    except Exception:
+        return {}
+
+
+def _get_base_code(code: str) -> str:
+    """Get the base card code without variant suffix.
+
+    Examples:
+        UNL-118A -> UNL-118
+        UNL-147A -> UNL-147
+        UNL-T01g -> UNL-T01
+        OGN-156 -> OGN-156
+    """
+    # Remove trailing letters that are variant indicators
+    # But keep the 'T' in tokens like T01g
+    import re
+
+    # For tokens like UNL-T01g, keep the T but remove the variant letter
+    if "-T" in code:
+        # UNL-T01g -> UNL-T01
+        return re.sub(r"([A-Z]+-T\d+)[a-z]$", r"\1", code, flags=re.IGNORECASE)
+
+    # For regular variants like UNL-118A -> UNL-118
+    return re.sub(r"([A-Z]+-\d+)[A-Z]$", r"\1", code)
+
+
 def build_riftbound_deck_from_text(
     text: str,
     deck_name: str = "Imported Deck"
 ) -> RBDeck:
     """Build an RBDeck from pasted text.
 
-    Parses the text and enriches each card with data from Piltover Archive API.
+    Parses the text and enriches each card with data from dotgg API.
     Returns an RBDeck ready to be used in the GUI and PDF generation pipeline.
     """
     parsed_lines = parse_riftbound_text(text)
+
+    # Fetch all cards from dotgg API
+    cards_db = _fetch_dotgg_cards_db()
 
     # Build RBCard objects
     cards: list[RBCard] = []
     for line in parsed_lines:
         code = f"{line.set_code}-{line.collector_number}"
 
-        # Try to fetch card metadata from API
-        metadata = _search_card_by_code(code)
+        # Try to find the card in the database
+        # First try the exact code, then try the base code (without variant suffix)
+        card_data = cards_db.get(code)
+        if not card_data:
+            base_code = _get_base_code(code)
+            card_data = cards_db.get(base_code)
 
-        if metadata:
+        if card_data:
             # Use real data from API
-            card_type = metadata.get("type", "")
-            card_super = metadata.get("super")
+            card_type_list = card_data.get("type", [])
+            card_type = card_type_list[0] if isinstance(card_type_list, list) and card_type_list else str(card_type_list)
+            card_super = card_data.get("supertype") or None
             section = _type_to_section(card_type, card_super)
 
-            # Get image URL from variants
-            image_url = ""
-            variants = metadata.get("cardVariants", [])
-            if variants:
-                # Use first variant's image
-                image_url = variants[0].get("imageUrl", "")
+            # Get image URL from dotgg
+            # If the exact code wasn't found, construct URL with the variant code
+            if code in cards_db:
+                image_url = card_data.get("image", "")
+            else:
+                # Variant not in DB, construct URL with variant code
+                image_url = f"https://static.dotgg.gg/riftbound/cards/{code}.webp"
 
-            # Fallback to CDN if no image URL
-            if not image_url:
-                image_url = f"https://cdn.piltoverarchive.com/cards/{code}.webp"
-
-            # Use real card ID and variant ID from API
-            card_id = metadata.get("id", code)
-            variant_id = variants[0].get("id", code) if variants else code
+            # Use the card ID from the database
+            card_id = card_data.get("id", code)
+            variant_id = code  # Keep the original code as variant_id for tracking
         else:
-            # Fallback: use minimal data
+            # Fallback: use minimal data and construct CDN URL
             card_type = ""
             card_super = None
             section = "maindeck"  # Default section
-            image_url = f"https://cdn.piltoverarchive.com/cards/{code}.webp"
+            # Use the full code for image (variants work on dotgg CDN)
+            image_url = f"https://static.dotgg.gg/riftbound/cards/{code}.webp"
             card_id = code
             variant_id = code
 
