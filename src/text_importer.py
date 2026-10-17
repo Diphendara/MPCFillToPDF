@@ -288,6 +288,146 @@ def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") 
     )
 
 
+def build_riftbound_deck_from_piltover_text(text: str, deck_name: str = "Imported Deck") -> RBDeck:
+    """Build an RBDeck from Piltover Archive text export format.
+
+    Expected format:
+        Legend:
+        1 LeBlanc, Deceiver
+
+        Champion:
+        1 LeBlanc, Fragmented
+
+        MainDeck:
+        3 Cull the Weak
+        ...
+
+    This format includes section headers and card names without set codes.
+    Cards are looked up in the dotgg database by name.
+    """
+    # Section mapping from Piltover format to internal sections
+    section_map = {
+        "legend": "legend",
+        "champion": "champion",
+        "maindeck": "maindeck",
+        "battlefields": "battlefield",
+        "runes": "rune",
+        "sideboard": "sideboard",
+    }
+
+    # Parse the text
+    current_section = None
+    parsed_cards: list[tuple[str, str, int]] = []  # (section, name, quantity)
+
+    for line_num, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+
+        # Skip empty lines
+        if not line:
+            continue
+
+        # Check if it's a section header
+        if line.endswith(":"):
+            section_name = line[:-1].strip().lower()
+            if section_name in section_map:
+                current_section = section_map[section_name]
+            else:
+                raise TextImportError(
+                    f"Sección desconocida: '{line}'. "
+                    f"Secciones válidas: {', '.join(section_map.keys())}",
+                    line_number=line_num,
+                )
+            continue
+
+        # Parse card line: "3 Card Name"
+        match = re.match(r"^(\d+)\s+(.+)$", line)
+        if not match:
+            raise TextImportError(
+                f"Formato no reconocido: '{line}'. "
+                "Formato esperado: 'Cantidad Nombre' o encabezado de sección 'Sección:'",
+                line_number=line_num,
+            )
+
+        if current_section is None:
+            raise TextImportError(
+                f"Carta sin sección: '{line}'. "
+                "Las cartas deben estar bajo una sección (Legend:, Champion:, MainDeck:, etc.)",
+                line_number=line_num,
+            )
+
+        quantity = int(match.group(1))
+        name = match.group(2).strip()
+
+        if quantity < 1:
+            raise TextImportError(
+                f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
+                line_number=line_num,
+            )
+
+        parsed_cards.append((current_section, name, quantity))
+
+    if not parsed_cards:
+        raise TextImportError("No se encontraron cartas en el texto proporcionado.")
+
+    # Fetch all cards from dotgg API to look up by name
+    cards_db = _fetch_dotgg_cards_db()
+
+    # Build a name lookup (case-insensitive)
+    name_lookup: dict[str, dict] = {}
+    for card_id, card_data in cards_db.items():
+        card_name = card_data.get("name", "")
+        if card_name:
+            name_lookup[card_name.lower()] = card_data
+
+    # Build RBCard objects
+    cards: list[RBCard] = []
+    for section, name, quantity in parsed_cards:
+        # Look up card by name
+        card_data = name_lookup.get(name.lower())
+
+        if card_data:
+            # Found in database
+            card_id = card_data.get("id", "")
+            image_url = card_data.get("image", "")
+            if not image_url and card_id:
+                image_url = f"https://static.dotgg.gg/riftbound/cards/{card_id}.webp"
+
+            card_type_list = card_data.get("type", [])
+            card_type = (
+                card_type_list[0]
+                if isinstance(card_type_list, list) and card_type_list
+                else str(card_type_list)
+            )
+            card_super = card_data.get("supertype") or None
+            variant_id = card_id
+        else:
+            # Not found - use placeholder data
+            card_id = name  # Use name as ID
+            image_url = ""  # No image available
+            card_type = ""
+            card_super = None
+            variant_id = name
+
+        cards.append(
+            RBCard(
+                card_id=card_id,
+                variant_id=variant_id,
+                name=name,
+                card_type=card_type,
+                card_super=card_super,
+                quantity=quantity,
+                image_url=image_url,
+                section=section,
+            )
+        )
+
+    return RBDeck(
+        deck_id="text-import-piltover",
+        name=deck_name,
+        cards=cards,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MTG (Magic: The Gathering) Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════

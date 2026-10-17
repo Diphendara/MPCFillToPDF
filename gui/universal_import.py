@@ -7,6 +7,7 @@ from tkinter import ttk
 from gui.widgets import load_tab_icon
 from src.text_importer import (
     TextImportError,
+    build_riftbound_deck_from_piltover_text,
     build_riftbound_deck_from_text,
     parse_lorcana_text,
     parse_mtg_text,
@@ -24,7 +25,7 @@ TCGS = [
 ]
 
 FORMAT_HINTS = {
-    "Riftbound": "Formato: Cantidad Nombre (SET-NUMERO)\nEjemplo: 3 Sabotage (OGN-156)",
+    "Riftbound": "Formatos aceptados:\n• Simple: Cantidad Nombre (SET-NUMERO)\n  Ejemplo: 3 Sabotage (OGN-156)\n• Piltover Archive: con secciones\n  Ejemplo:\n  Legend:\n  1 LeBlanc, Deceiver\n  MainDeck:\n  3 Cull the Weak",
     "MTG": "Formato: Cantidad Nombre [(SET) [NUMERO]] [*F*]\nEjemplo: 1 Lightning Bolt (LEA)",
     "Lorcana": "Formato: Cantidad Nombre [(Numero)]\nEjemplo: 4 Elsa - Snow Queen",
     "One Piece": "Formato: CantidadxCODIGO o Cantidad Nombre (CODIGO|Leader)\nEjemplo: 2xOP04-016_r1",
@@ -172,7 +173,22 @@ class UniversalImportDialog:
         def _import():
             try:
                 if tcg == "Riftbound":
-                    deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
+                    # Detect format: Piltover (with sections) or simple (with codes)
+                    has_sections = any(
+                        line.strip().endswith(":")
+                        and line.strip()[:-1].lower()
+                        in ["legend", "champion", "maindeck", "battlefields", "runes", "sideboard"]
+                        for line in text.splitlines()
+                    )
+
+                    if has_sections:
+                        # Piltover Archive format
+                        deck = build_riftbound_deck_from_piltover_text(
+                            text, deck_name="Imported from text"
+                        )
+                    else:
+                        # Simple format with codes
+                        deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
                     self.events.put(("rb_deck_loaded", deck))
                 elif tcg == "MTG":
                     result = parse_mtg_text(text)
