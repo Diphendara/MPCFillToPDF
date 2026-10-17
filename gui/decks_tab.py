@@ -110,7 +110,7 @@ class DecksTabMixin:
         """Universal URL import dialog with automatic TCG detection from domain."""
         dlg = tk.Toplevel(self.root)
         dlg.title("Añadir mazo desde URL")
-        dlg.geometry("520x280")
+        dlg.geometry("520x420")
         dlg.resizable(False, False)
         dlg.grab_set()
         self._mtg_url_dialog = dlg  # kept for the mtg_url_loaded handler
@@ -130,17 +130,74 @@ class DecksTabMixin:
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=10, pady=(0, 4))
 
+        # Accepted URLs organized by TCG
+        urls_frame = ttk.LabelFrame(dlg, text="Webs aceptadas", padding=8)
+        urls_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
+
         ttk.Label(
-            dlg,
-            text="Webs aceptadas: moxfield.com, archidekt.com, deckstats.net, tappedout.net, "
-            "manabox.app, onepiece.gg, egmanevents.com, cardkaizoku.com, piltoverarchive.com, "
-            "riftbound.gg, riftmana.com, riftbinder.com, riftdex.com, lorcana.gg, inkdecks.com, "
-            "ygoprodeck.com, yugiohmeta.com",
-            foreground="#999",
+            urls_frame,
+            text="🎴 Magic: The Gathering:",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#555",
+        ).pack(anchor="w")
+        ttk.Label(
+            urls_frame,
+            text="moxfield.com • archidekt.com • deckstats.net • tappedout.net • manabox.app",
+            foreground="#777",
             font=("Segoe UI", 8),
-            wraplength=490,
-            justify="left",
-        ).pack(anchor="w", padx=10, pady=(0, 4))
+        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
+
+        ttk.Label(
+            urls_frame,
+            text="🏴‍☠️ One Piece:",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#555",
+        ).pack(anchor="w")
+        ttk.Label(
+            urls_frame,
+            text="onepiece.gg • egmanevents.com • cardkaizoku.com",
+            foreground="#777",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
+
+        ttk.Label(
+            urls_frame,
+            text="⚔️ Riftbound:",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#555",
+        ).pack(anchor="w")
+        ttk.Label(
+            urls_frame,
+            text="piltoverarchive.com • riftbound.gg • riftmana.com • riftbinder.com • riftdex.com",
+            foreground="#777",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
+
+        ttk.Label(
+            urls_frame,
+            text="✨ Lorcana:",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#555",
+        ).pack(anchor="w")
+        ttk.Label(
+            urls_frame,
+            text="lorcana.gg • inkdecks.com",
+            foreground="#777",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
+
+        ttk.Label(
+            urls_frame,
+            text="🎲 Yu-Gi-Oh:",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#555",
+        ).pack(anchor="w")
+        ttk.Label(
+            urls_frame,
+            text="ygoprodeck.com • yugiohmeta.com • cadena YDKE",
+            foreground="#777",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=(16, 0))
 
         ttk.Label(
             dlg,
