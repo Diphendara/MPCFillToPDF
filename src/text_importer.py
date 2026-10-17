@@ -228,6 +228,11 @@ def build_riftbound_deck_from_text(
             f"{line.set_code.upper()}-{line.collector_number.lower()}",
         ]
 
+        # For tokens, also try with lowercase 'g' suffix (e.g., UNL-T01g)
+        if "-T" in code:
+            # UNL-T01G -> UNL-T01g
+            code_variations.append(f"{line.set_code.upper()}-{line.collector_number[:-1]}{line.collector_number[-1].lower()}")
+
         for code_var in code_variations:
             card_data = cards_db.get(code_var)
             if card_data:
