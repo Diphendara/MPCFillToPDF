@@ -345,11 +345,24 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
                 line_number=line_num
             )
 
+        # If no set code provided, fetch from Scryfall
+        collector_number = ""
+        if not set_code:
+            try:
+                from src.scryfall import fetch_card_by_name
+                fetched_set, fetched_collector = fetch_card_by_name(name)
+                set_code = fetched_set.upper()
+                collector_number = fetched_collector
+            except Exception:
+                # If fetch fails, continue without set/collector
+                # The download pipeline will try to fetch by name later
+                pass
+
         cards.append(
             DeckCard(
                 name=name,
-                set_code=set_code.lower(),
-                collector_number="",  # MTG doesn't use collector numbers in text format
+                set_code=set_code.lower() if set_code else "",
+                collector_number=collector_number,
                 quantity=quantity,
                 zone=zone,
             )

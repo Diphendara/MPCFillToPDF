@@ -190,14 +190,37 @@ class LorcanaTabMixin:
                     row_f, variable=card_vars[card.card_id], command=_sync_selection
                 ).pack(side=tk.LEFT, padx=(0, 2))
                 row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-                ttk.Label(
+
+                # Editable quantity spinbox
+                qty_var = tk.IntVar(value=card.quantity)
+
+                def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
+                    def _update(*_args):
+                        try:
+                            new_qty = var.get()
+                            if new_qty == 0:
+                                # Quantity 0 = deselect card
+                                checkvar.set(False)
+                                _sync_selection()
+                            elif new_qty >= 1:
+                                c.quantity = new_qty
+                                checkvar.set(True)
+                                _sync_selection()
+                        except tk.TclError:
+                            pass  # Invalid input, ignore
+                    return _update
+
+                qty_spinbox = ttk.Spinbox(
                     row_f,
-                    text=f"x{card.quantity}",
-                    foreground="#444",
-                    font=("Segoe UI", 8),
+                    from_=0,
+                    to=99,
                     width=4,
-                    anchor="e",
-                ).pack(side=tk.LEFT, padx=(0, 6))
+                    textvariable=qty_var,
+                    command=_make_qty_updater()
+                )
+                qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
+                qty_var.trace_add("write", _make_qty_updater())
+
                 ttk.Label(
                     row_f,
                     text=ellipsize(card.name, 30),
