@@ -294,9 +294,9 @@ def build_riftbound_deck_from_text(
 # MTG (Magic: The Gathering) Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)"
+# Regex for MTG format: "4 Lightning Bolt" or "1 Black Lotus (LEA)" or "1 Dark Leo & Shredder (TMT) 142"
 _MTG_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$",
+    r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\)(?:\s+(\d+))?)?\s*$",
     re.IGNORECASE
 )
 
@@ -338,6 +338,7 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
         quantity = int(match.group(1))
         name = match.group(2).strip()
         set_code = match.group(3).upper() if match.group(3) else ""
+        collector_number = match.group(4) if match.group(4) else ""
 
         if quantity < 1:
             raise TextImportError(
@@ -346,7 +347,6 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
             )
 
         # If no set code provided, fetch from Scryfall
-        collector_number = ""
         if not set_code:
             try:
                 from src.scryfall import fetch_card_by_name
@@ -448,9 +448,11 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
 # One Piece Text Parser
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Regex for One Piece format: "4 Luffy (OP01-001)" or "1 Zoro (Leader)"
+# Regex for One Piece formats:
+#   "4 Luffy (OP01-001)" or "1 Zoro (Leader)"
+#   "2xOP04-016_r1" or "1xOP13-004"
 _OP_LINE_RE = re.compile(
-    r"^(\d+)\s+(.+?)\s+\(([A-Z0-9-]+|Leader)\)\s*$",
+    r"^(?:(\d+)\s+(.+?)\s+\(([A-Z0-9-_]+|Leader)\)|(\d+)x([A-Z0-9-]+(?:_[a-z0-9]+)?))\s*$",
     re.IGNORECASE
 )
 
@@ -458,9 +460,11 @@ _OP_LINE_RE = re.compile(
 def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
     """Parse One Piece deck list from text.
 
-    Expected format:
+    Expected formats:
         1 Monkey D. Luffy (Leader)
         4 Roronoa Zoro (OP01-001)
+        2xOP04-016_r1
+        1xOP13-004
 
     Returns OPDeck object.
     """
@@ -478,22 +482,28 @@ def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
         if not match:
             raise TextImportError(
                 f"Formato no reconocido: '{line}'. "
-                "Formato esperado: 'Cantidad Nombre (CODIGO)' o 'Cantidad Nombre (Leader)'",
+                "Formatos esperados: 'Cantidad Nombre (CODIGO)', 'Cantidad Nombre (Leader)', o 'CantidadxCODIGO'",
                 line_number=line_num
             )
 
-        quantity = int(match.group(1))
-        name = match.group(2).strip()
-        code_or_leader = match.group(3).upper()
+        # Check which format matched
+        if match.group(1):  # Format: "4 Luffy (OP01-001)"
+            quantity = int(match.group(1))
+            name = match.group(2).strip()
+            code_or_leader = match.group(3).upper()
+            is_leader = code_or_leader == "LEADER"
+            card_id = "" if is_leader else code_or_leader
+        else:  # Format: "2xOP04-016_r1"
+            quantity = int(match.group(4))
+            card_id = match.group(5).upper()
+            name = card_id  # Use card_id as name for now
+            is_leader = False
 
         if quantity < 1:
             raise TextImportError(
                 f"Cantidad inválida: {quantity}. Debe ser al menos 1.",
                 line_number=line_num
             )
-
-        is_leader = code_or_leader == "LEADER"
-        card_id = "" if is_leader else code_or_leader
 
         cards.append(
             OPCard(
