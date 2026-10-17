@@ -145,7 +145,7 @@ class OnePieceBatchAdapter:
 
 @dataclass(frozen=True)
 class RiftboundBatchAdapter:
-    decks: tuple[tuple[RBDeck, bool], ...]
+    decks: tuple[tuple[RBDeck, bool, bool], ...]  # (deck, include_runes, include_sideboard)
     work_dir: Path
     cancel_event: Event | None
     report_progress: ProgressReporter
@@ -153,16 +153,21 @@ class RiftboundBatchAdapter:
     def prepare(self) -> PrintBatch:
         if not self.decks:
             return PrintBatch("Riftbound")
-        label = " + ".join(deck.name for deck, _ in self.decks)
-        total = sum(len({card.variant_id for card in deck.cards}) for deck, _ in self.decks)
+        label = " + ".join(deck.name for deck, _, _ in self.decks)
+        total = sum(len({card.variant_id for card in deck.cards}) for deck, _, _ in self.decks)
         self.report_progress("download", 0, total, f"Riftbound – {label}")
         image_map: dict[str, Path] = {}
         downloaded = 0
-        for deck, _ in self.decks:
+        for deck, _, include_sideboard in self.decks:
             selected = getattr(deck, "selected_card_ids", None)
             if selected is not None:
                 deck = replace(
                     deck, cards=[card for card in deck.cards if card.variant_id in selected]
+                )
+            # Filter out sideboard cards if not included
+            if not include_sideboard:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.section != "sideboard"]
                 )
             offset = downloaded
 
@@ -182,7 +187,12 @@ class RiftboundBatchAdapter:
         default_back = back_by_section.get("maindeck") or next(iter(back_by_section.values()))
         fronts: list[Path] = []
         backs: list[Path | None] = []
-        for deck, include_runes in self.decks:
+        for deck, include_runes, include_sideboard in self.decks:
+            # Filter sideboard again for expansion (in case it wasn't filtered before)
+            if not include_sideboard:
+                deck = replace(
+                    deck, cards=[card for card in deck.cards if card.section != "sideboard"]
+                )
             deck_fronts, deck_backs = rb_expand(
                 deck, image_map, back_by_section, include_runes=include_runes
             )

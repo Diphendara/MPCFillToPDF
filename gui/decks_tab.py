@@ -961,6 +961,19 @@ class DecksTabMixin:
                 runes_cb.state(["disabled"])
             runes_cb.grid(row=0, column=3, padx=(4, 8))
 
+            # Sideboard checkbox
+            include_sideboard_var = tk.BooleanVar(value=False)
+            has_sideboard = bool(by_sec.get("sideboard"))
+            sideboard_cb = ttk.Checkbutton(
+                summary,
+                text="incluir sideboard",
+                variable=include_sideboard_var,
+                command=self._refresh_generate_state,
+            )
+            if not has_sideboard:
+                sideboard_cb.state(["disabled"])
+            sideboard_cb.grid(row=0, column=4, padx=(4, 8))
+
             expanded_var = tk.BooleanVar(value=False)
             toggle_btn = ttk.Button(
                 summary,
@@ -968,14 +981,14 @@ class DecksTabMixin:
                 width=10,
                 command=lambda i=idx: self._rb_toggle_details(i),
             )
-            toggle_btn.grid(row=0, column=4, padx=(0, 4))
+            toggle_btn.grid(row=0, column=5, padx=(0, 4))
 
             ttk.Button(
                 summary,
                 text="✕",
                 width=2,
                 command=lambda i=idx: self._rb_remove_deck(i),
-            ).grid(row=0, column=5)
+            ).grid(row=0, column=6)
 
             detail = ttk.Frame(outer)
             selected_ids = getattr(
@@ -1060,6 +1073,7 @@ class DecksTabMixin:
                     "expanded": expanded_var,
                     "deck": deck,
                     "print_runes_var": print_runes_var,
+                    "include_sideboard_var": include_sideboard_var,
                 }
             )
 

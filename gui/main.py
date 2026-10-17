@@ -140,7 +140,7 @@ class ExecutionRequest:
     extra_backs: tuple[Path | None, ...]
     crop_map: dict[Path, bool]
     op_decks: tuple[OPDeck, ...]
-    rb_decks: tuple[tuple[RBDeck, bool], ...]
+    rb_decks: tuple[tuple[RBDeck, bool, bool], ...]  # (deck, print_runes, include_sideboard)
     lorcana_decks: tuple[LocanaDeck, ...]
     ygo_decks: tuple[tuple[YGODeck, bool], ...]
     mtg_decks: tuple[MtgUrlDeck, ...]
@@ -624,7 +624,11 @@ class App(
             crop_map=self._build_crop_map(),
             op_decks=tuple(self._op_decks),
             rb_decks=tuple(
-                (deck, bool(row["print_runes_var"].get()))
+                (
+                    deck,
+                    bool(row["print_runes_var"].get()),
+                    bool(row["include_sideboard_var"].get()),
+                )
                 for deck, row in zip(self._rb_decks, self._rb_deck_rows)
             ),
             lorcana_decks=tuple(self._lorcana_decks),
