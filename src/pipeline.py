@@ -1,3 +1,5 @@
+"""Pipeline for processing MPC XMLs into printable PDFs."""
+
 import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed

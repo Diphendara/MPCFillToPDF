@@ -113,24 +113,28 @@ class PdfJob:
 
     @property
     def is_merged(self) -> bool:
+        """Return True if this job merges multiple XMLs."""
         return len(self.xml_paths) > 1
 
     @property
     def total_cards(self) -> int:
+        """Return total cards including extra locals."""
         return self.cards + self.extra_locals
 
     @property
     def blanks(self) -> int:
+        """Return number of blank slots on the last page."""
         rem = self.total_cards % CARDS_PER_PAGE
         return (CARDS_PER_PAGE - rem) if rem else 0
 
     @property
     def has_blanks(self) -> bool:
-        """Return True if the XML has blank cards."""
+        """Return True if the job has blank cards."""
         return self.blanks > 0
 
     @property
     def display_name(self) -> str:
+        """Return display name for the job."""
         if self.is_merged:
             return self.base_name
         if self.xml_paths:
@@ -152,19 +156,24 @@ def analyze(xml_paths: list[str | Path]) -> list[XmlReport]:
 
 @dataclass
 class Plan:
+    """A plan for generating PDFs from XMLs."""
+
     jobs: list[PdfJob]
     merged_xmls: list[XmlReport]  # which XMLs got fused into a merge job
 
     @property
     def has_merge(self) -> bool:
+        """Return True if any job is a merge."""
         return any(j.is_merged for j in self.jobs)
 
     @property
     def residual_blanks(self) -> list[PdfJob]:
+        """Return jobs that have blank slots."""
         return [j for j in self.jobs if j.has_blanks]
 
     @property
     def has_blanks(self) -> bool:
+        """Return True if any job has blank slots."""
         return bool(self.residual_blanks)
 
 

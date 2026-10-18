@@ -31,31 +31,40 @@ class ProgressEvent(WorkerEvent):
 
 @dataclass(frozen=True)
 class FileEvent(WorkerEvent):
+    """Event for file processing progress."""
+
     current: int
     total: int
     label: str
 
     def as_legacy_tuple(self) -> tuple:
+        """Convert to legacy tuple format."""
         return "file", self.current, self.total, self.label
 
 
 @dataclass(frozen=True)
 class VerificationWarningEvent(WorkerEvent):
+    """Event for verification warnings (inaccessible images)."""
+
     inaccessible: list[tuple[str, str]]
     confirmation: Event
 
     def as_legacy_tuple(self) -> tuple:
+        """Convert to legacy tuple format."""
         return "verify_warning", self.inaccessible, self.confirmation
 
 
 @dataclass(frozen=True)
 class RunFinishedEvent(WorkerEvent):
+    """Event for when a print run finishes."""
+
     pdfs: list[Path]
     manifest: Path | None
     run_dir: Path
     timing: str
 
     def as_legacy_tuple(self) -> tuple:
+        """Convert to legacy tuple format."""
         return "done", self.pdfs, self.manifest, self.run_dir, self.timing
 
 

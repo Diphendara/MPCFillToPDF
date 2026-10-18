@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from src.precheck import (
     PdfJob,
     XmlReport,
@@ -355,7 +357,7 @@ def test_check_drive_access_detects_404():
 
 def test_check_drive_access_network_error_not_flagged():
     pairs = [("ID1", "a.jpg")]
-    with patch("src.precheck.requests.get", side_effect=Exception("network error")):
+    with patch("src.precheck.requests.get", side_effect=requests.ConnectionError("network error")):
         result = check_drive_access(pairs)
     assert result == []  # network errors are not treated as permission failures
 

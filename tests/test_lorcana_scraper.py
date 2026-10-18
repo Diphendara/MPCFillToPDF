@@ -474,7 +474,7 @@ class TestScrapeInkdecks:
 
         with patch(
             "src.lorcana_scraper.requests.get",
-            side_effect=[Exception("connection refused"), html_resp],
+            side_effect=[requests.ConnectionError("connection refused"), html_resp],
         ):
             deck = _scrape_inkdecks("https://inkdecks.com/lorcana-metagame/deck-test-515323")
 

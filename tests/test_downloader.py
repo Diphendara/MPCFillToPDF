@@ -107,7 +107,7 @@ def test_download_timeout_error(tmp_path):
 
 
 def test_download_rate_limit_exhausted(tmp_path):
-    with patch("requests.get", side_effect=Exception("429 Too Many Requests")):
+    with patch("requests.get", side_effect=requests.ConnectionError("429 Too Many Requests")):
         with patch("time.sleep"):
             with pytest.raises(DownloadRateLimitError):
                 download_image("ID001", tmp_path / "raw", "card.jpg")
@@ -119,7 +119,7 @@ def test_download_rate_limit_retries_then_succeeds(tmp_path):
     def _flaky(url, **kwargs):
         attempts["n"] += 1
         if attempts["n"] < 3:
-            raise Exception("503 Service Unavailable")
+            raise requests.ConnectionError("503 Service Unavailable")
         return _fake_requests_get(url, **kwargs)
 
     with patch("requests.get", side_effect=_flaky):

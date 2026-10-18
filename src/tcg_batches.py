@@ -95,12 +95,15 @@ class YugiohBatchAdapter:
 
 @dataclass(frozen=True)
 class OnePieceBatchAdapter:
+    """Adapter for One Piece TCG decks."""
+
     decks: tuple[OPDeck, ...]
     work_dir: Path
     cancel_event: Event | None
     report_progress: ProgressReporter
 
     def prepare(self) -> PrintBatch:
+        """Prepare One Piece decks for printing."""
         if not self.decks:
             return PrintBatch("One Piece")
         label = " + ".join(deck.name for deck in self.decks)
@@ -148,6 +151,8 @@ class OnePieceBatchAdapter:
 
 @dataclass(frozen=True)
 class RiftboundBatchAdapter:
+    """Adapter for Riftbound TCG decks."""
+
     decks: tuple[tuple[RBDeck, bool, bool], ...]  # (deck, include_runes, include_sideboard)
     work_dir: Path
     cancel_event: Event | None
