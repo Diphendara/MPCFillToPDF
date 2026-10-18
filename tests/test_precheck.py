@@ -330,7 +330,7 @@ def _mock_response(status_code: int):
 
 def test_check_drive_access_all_ok():
     pairs = [("ID1", "a.jpg"), ("ID2", "b.jpg")]
-    with patch("src.precheck.requests.get", return_value=_mock_response(200)):
+    with patch("src.precheck.http_get", return_value=_mock_response(200)):
         result = check_drive_access(pairs)
     assert result == []
 
@@ -341,7 +341,7 @@ def test_check_drive_access_detects_403():
     def _side_effect(url, **kw):
         return _mock_response(403 if "ID1" in url else 200)
 
-    with patch("src.precheck.requests.get", side_effect=_side_effect):
+    with patch("src.precheck.http_get", side_effect=_side_effect):
         result = check_drive_access(pairs)
 
     assert len(result) == 1
@@ -350,14 +350,14 @@ def test_check_drive_access_detects_403():
 
 def test_check_drive_access_detects_404():
     pairs = [("ID1", "a.jpg")]
-    with patch("src.precheck.requests.get", return_value=_mock_response(404)):
+    with patch("src.precheck.http_get", return_value=_mock_response(404)):
         result = check_drive_access(pairs)
     assert len(result) == 1
 
 
 def test_check_drive_access_network_error_not_flagged():
     pairs = [("ID1", "a.jpg")]
-    with patch("src.precheck.requests.get", side_effect=requests.ConnectionError("network error")):
+    with patch("src.precheck.http_get", side_effect=requests.ConnectionError("network error")):
         result = check_drive_access(pairs)
     assert result == []  # network errors are not treated as permission failures
 
@@ -365,7 +365,7 @@ def test_check_drive_access_network_error_not_flagged():
 def test_check_drive_access_progress_callback(tmp_path):
     calls = []
     pairs = [("ID1", "a.jpg"), ("ID2", "b.jpg"), ("ID3", "c.jpg")]
-    with patch("src.precheck.requests.get", return_value=_mock_response(200)):
+    with patch("src.precheck.http_get", return_value=_mock_response(200)):
         check_drive_access(pairs, progress_callback=lambda d, t: calls.append((d, t)))
     assert len(calls) == 3
     assert all(t == 3 for _, t in calls)

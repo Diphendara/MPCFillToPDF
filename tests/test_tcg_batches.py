@@ -55,7 +55,7 @@ class TestRiftboundBatchAdapter:
             report_progress=MagicMock(),
         )
         batch = adapter.prepare()
-        assert batch.label == "Riftbound"
+        assert batch.name == "Riftbound"
         assert batch.fronts == []
         assert batch.backs == []
 
@@ -201,7 +201,7 @@ class TestRiftboundBatchAdapter:
 
             batch = adapter.prepare()
 
-            assert batch.label == "Riftbound"
+            assert batch.name == "Riftbound"
             assert mock_download.call_count == 2
             assert mock_expand.call_count == 2
 
@@ -218,7 +218,7 @@ class TestYugiohBatchAdapter:
             report_progress=MagicMock(),
         )
         batch = adapter.prepare()
-        assert batch.label == "yugioh_proxies"
+        assert batch.name == "yugioh_proxies"
         assert batch.fronts == []
 
 
@@ -234,7 +234,7 @@ class TestOnePieceBatchAdapter:
             report_progress=MagicMock(),
         )
         batch = adapter.prepare()
-        assert batch.label == "One Piece"
+        assert batch.name == "One Piece"
         assert batch.fronts == []
 
 
@@ -250,5 +250,5 @@ class TestLorcanaBatchAdapter:
             report_progress=MagicMock(),
         )
         batch = adapter.prepare()
-        assert batch.label == "Lorcana"
+        assert batch.name == "Lorcana"
         assert batch.fronts == []

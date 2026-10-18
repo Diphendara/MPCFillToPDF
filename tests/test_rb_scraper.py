@@ -167,6 +167,7 @@ class TestFirestoreHelpers:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeRiftbinder:
     def _firestore_response(self) -> dict:
         return {
@@ -530,6 +531,7 @@ class TestDownloadImagesCancellation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestTrpcGet:
     def test_builds_url_and_parses_result(self):
         mock_r = MagicMock()
@@ -662,6 +664,7 @@ class TestPiltoverPagePayload:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeRiftboundGg:
     def _deck_json(self):
         return {
@@ -721,6 +724,7 @@ class TestScrapeRiftboundGg:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeRiftmana:
     def test_extracts_uuid_and_fetches_api(self):
         uuid = "aaaabbbb-1111-2222-3333-ccccddddeeee"
@@ -766,6 +770,7 @@ class TestScrapeRiftmana:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeRiftdex:
     DECK_UUID = "00000000-1111-2222-3333-444455556666"
     CARD_UUID = "aaaabbbb-0000-0000-0000-111122223333"
@@ -809,6 +814,7 @@ class TestScrapeRiftdex:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestRBDownloadImages:
     def _make_card(self, variant_id: str = "v001") -> RBCard:
         return RBCard(

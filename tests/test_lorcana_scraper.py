@@ -252,6 +252,7 @@ class TestDownloadImagesCancellation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeLorcanaGg:
     def _mock_deck_response(self) -> dict:
         return {
@@ -412,6 +413,7 @@ def _inkdecks_html(cards: list[tuple[int, str, str, str]], deck_name: str = "Tes
     return f"<html><h1>{deck_name}</h1><table>{rows}</table></html>"
 
 
+@pytest.mark.network
 class TestScrapeInkdecks:
     def _api_json(self) -> dict:
         return {
@@ -619,6 +621,7 @@ class TestParseInkdecksHtml:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestDownloadImagesSuccess:
     def test_downloads_and_returns_map(self, tmp_path):
         card = LorcanaCard(
@@ -703,6 +706,7 @@ class TestDownloadImagesSuccess:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestScrapeLorcanaGgEdgeCases:
     def test_non_json_response_raises_friendly_error(self):
         from src.lorcana_scraper import _scrape_lorcana_gg
@@ -721,6 +725,7 @@ class TestScrapeLorcanaGgEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.network
 class TestLoadDotggCardDb:
     def _reset_cache(self):
         import src.lorcana_scraper as mod

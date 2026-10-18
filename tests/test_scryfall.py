@@ -12,6 +12,17 @@ from src.scryfall import (
     fetch_related_tokens,
 )
 
+
+@pytest.fixture(autouse=True)
+def _isolate_disk_cache(tmp_path, monkeypatch):
+    """Redirect the Scryfall disk cache to a temp dir so tests don't share state."""
+    import src.scryfall as sf
+
+    monkeypatch.setattr(sf, "_DISK_CACHE_DIR", tmp_path / "scryfall_cache")
+    sf._cache.clear()
+    sf._name_cache.clear()
+
+
 _NORMAL_CARD_JSON = {
     "image_uris": {
         "large": "https://cards.scryfall.io/large/front/0/0/abc.jpg",

@@ -107,7 +107,9 @@ def test_download_timeout_error(tmp_path):
 
 
 def test_download_rate_limit_exhausted(tmp_path):
-    with patch("requests.Session.get", side_effect=requests.ConnectionError("429 Too Many Requests")):
+    with patch(
+        "requests.Session.get", side_effect=requests.ConnectionError("429 Too Many Requests")
+    ):
         with patch("time.sleep"):
             with pytest.raises(DownloadRateLimitError):
                 download_image("ID001", tmp_path / "raw", "card.jpg")

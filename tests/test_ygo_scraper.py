@@ -45,6 +45,7 @@ def test_url_adapters_classify_each_supported_builder():
     assert _adapter_for_host("unsupported.example") is None
 
 
+@pytest.mark.network
 class TestYdkeParsing:
     def test_decode_ydke_part_decodes_little_endian_card_ids(self):
         assert _decode_ydke_part(_encode(46986414, 89631139)) == [46986414, 89631139]
@@ -142,6 +143,7 @@ class TestPublicDeckPages:
         }
 
 
+@pytest.mark.network
 class TestEdisonFormat:
     def test_parse_ydk_keeps_main_extra_and_side_quantities(self):
         content = "#created by Edison\n#main\n1\n1\n#extra\n2\n!side\n3\n3\n"
