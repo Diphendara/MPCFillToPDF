@@ -544,35 +544,34 @@ class DecksTabMixin:
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, pady=1, padx=2)
 
-            # ── Row 1: name + count + back selector + buttons ──────────
-            frame = ttk.Frame(outer)
-            frame.pack(fill=tk.X)
-            frame.columnconfigure(0, weight=3)
-            frame.columnconfigure(2, weight=7)
+            # ── Row 1: name + buttons ──────────────────────────────────
+            row1 = ttk.Frame(outer)
+            row1.pack(fill=tk.X, padx=6, pady=(4, 0))
 
             ttk.Label(
-                frame,
-                text=ellipsize(deck.display_name, 32),
+                row1,
+                text=ellipsize(deck.display_name, 40),
                 anchor="w",
+                font=("Segoe UI", 9, "bold"),
                 image=self._mtg_icon_img,
                 compound=tk.LEFT,
-            ).grid(row=0, column=0, sticky="ew", padx=(4, 0))
+            ).pack(side=tk.LEFT)
 
-            ttk.Label(frame, text=" - ").grid(row=0, column=1)
-
-            right = ttk.Frame(frame)
-            right.grid(row=0, column=2, sticky="ew")
-
-            main_count = sum(c.quantity for c in deck.cards if c.zone == "main")
-            side_count = sum(c.quantity for c in deck.cards if c.zone == "side")
-            token_count = sum(c.quantity for c in deck.cards if c.zone == "token")
-            count_text = f"{main_count} cartas" + (f" +{side_count} side" if side_count else "")
-            count_text += f" +{token_count} tokens/extras" if token_count else ""
-            ttk.Label(right, text=count_text, foreground="#555", anchor="w").grid(
-                row=0, column=0, sticky="w", padx=(0, 6)
+            extras_btn = ttk.Button(
+                row1,
+                text="Cartas ▼",
+                width=10,
+                command=lambda idx=i: self._toggle_mtg_extras(idx),
             )
+            extras_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
-            col = 1
+            ttk.Button(
+                row1,
+                text="✕",
+                width=2,
+                command=lambda idx=i: self._remove_mtg_deck(idx),
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
             if deck.back_path is not None and deck.back_path not in self.state.local_backs:
                 deck.back_path = None
 
@@ -582,10 +581,8 @@ class DecksTabMixin:
             else:
                 back_var.set(str(self.state.local_backs.index(deck.back_path) + 1))
 
-            ttk.Label(right, text="Traseras:").grid(row=0, column=col, padx=(0, 2))
-            col += 1
             back_combo = ttk.Combobox(
-                right,
+                row1,
                 values=back_combo_values,
                 textvariable=back_var,
                 state="readonly" if numbered else "disabled",
@@ -595,26 +592,21 @@ class DecksTabMixin:
                 "<<ComboboxSelected>>",
                 lambda _e, idx=i, v=back_var: self._on_mtg_back_change(idx, v),
             )
-            back_combo.grid(row=0, column=col, padx=(0, 4))
-            col += 1
+            back_combo.pack(side=tk.RIGHT, padx=(0, 2))
+            ttk.Label(row1, text="Traseras:").pack(side=tk.RIGHT, padx=(0, 2))
 
-            ttk.Button(
-                right,
-                text="✕",
-                width=2,
-                command=lambda idx=i: self._remove_mtg_deck(idx),
-            ).grid(row=0, column=col, padx=(0, 2))
-            col += 1
+            # ── Row 2: card counts ──────────────────────────────────────
+            row2 = ttk.Frame(outer)
+            row2.pack(fill=tk.X, padx=(24, 6), pady=(0, 2))
 
-            extras_btn = ttk.Button(
-                right,
-                text="Cartas ▼",
-                width=10,
-                command=lambda idx=i: self._toggle_mtg_extras(idx),
-            )
-            extras_btn.grid(row=0, column=col)
+            main_count = sum(c.quantity for c in deck.cards if c.zone == "main")
+            side_count = sum(c.quantity for c in deck.cards if c.zone == "side")
+            token_count = sum(c.quantity for c in deck.cards if c.zone == "token")
+            count_text = f"{main_count} cartas" + (f" +{side_count} side" if side_count else "")
+            count_text += f" +{token_count} tokens/extras" if token_count else ""
+            ttk.Label(row2, text=count_text, foreground="#555", anchor="w").pack(side=tk.LEFT)
 
-            # ── Row 2: option checkboxes ────────────────────────────────
+            # ── Row 3: option checkboxes ────────────────────────────────
             opts = ttk.Frame(outer)
             opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
 
@@ -730,49 +722,51 @@ class DecksTabMixin:
 
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, pady=3, padx=2)
-            outer.columnconfigure(0, weight=1)
 
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
-            summary.columnconfigure(1, weight=1)
+            # ── Row 1: name + buttons ──────────────────────────────────
+            row1 = ttk.Frame(outer)
+            row1.pack(fill=tk.X, padx=6, pady=(4, 0))
 
             ttk.Label(
-                summary,
-                text=ellipsize(deck.name, 22),
+                row1,
+                text=ellipsize(deck.name, 40),
                 font=("Segoe UI", 9, "bold"),
                 anchor="w",
                 image=self._op_icon_img,
                 compound=tk.LEFT,
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+            ).pack(side=tk.LEFT)
+
+            expanded_var = tk.BooleanVar(value=False)
+            toggle_btn = ttk.Button(
+                row1,
+                text="Detalles ▼",
+                width=10,
+                command=lambda i=idx: self._op_toggle_details(i),
+            )
+            toggle_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+            ttk.Button(
+                row1,
+                text="✕",
+                width=2,
+                command=lambda i=idx: self._op_remove_deck(i),
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
+            # ── Row 2: leader + card counts ─────────────────────────────
+            row2 = ttk.Frame(outer)
+            row2.pack(fill=tk.X, padx=(24, 6), pady=(0, 2))
 
             if leader:
                 color_txt = " / ".join(leader.colors)
                 leader_txt = f"Líder: {ellipsize(leader.name, 18)}  ({color_txt})"
             else:
                 leader_txt = "(sin líder)"
-            ttk.Label(summary, text=leader_txt, foreground="#555", anchor="w").grid(
-                row=0, column=1, sticky="w"
+            ttk.Label(row2, text=leader_txt, foreground="#555", anchor="w").pack(
+                side=tk.LEFT, padx=(0, 12)
             )
-
-            ttk.Label(
-                summary, text=f"{deck.total_slots} cartas", foreground="#888", anchor="e"
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
-
-            expanded_var = tk.BooleanVar(value=False)
-            toggle_btn = ttk.Button(
-                summary,
-                text="Detalles ▼",
-                width=10,
-                command=lambda i=idx: self._op_toggle_details(i),
+            ttk.Label(row2, text=f"{deck.total_slots} cartas", foreground="#555", anchor="w").pack(
+                side=tk.LEFT
             )
-            toggle_btn.grid(row=0, column=3, padx=(0, 4))
-
-            ttk.Button(
-                summary,
-                text="✕",
-                width=2,
-                command=lambda i=idx: self._op_remove_deck(i),
-            ).grid(row=0, column=4)
 
             detail = ttk.Frame(outer)
             self._render_op_detail(detail, deck)
@@ -865,19 +859,38 @@ class DecksTabMixin:
             outer.pack(fill=tk.X, pady=3, padx=2)
             outer.columnconfigure(0, weight=1)
 
-            # ── Row 1: name + sections + count + buttons ──────────────
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=(4, 0))
-            summary.columnconfigure(1, weight=1)
+            # ── Row 1: name + buttons ──────────────────────────────────
+            row1 = ttk.Frame(outer)
+            row1.pack(fill=tk.X, padx=6, pady=(4, 0))
 
             ttk.Label(
-                summary,
-                text=ellipsize(deck.name, 28),
+                row1,
+                text=ellipsize(deck.name, 40),
                 font=("Segoe UI", 9, "bold"),
                 anchor="w",
                 image=self._rb_icon_img,
                 compound=tk.LEFT,
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+            ).pack(side=tk.LEFT)
+
+            expanded_var = tk.BooleanVar(value=False)
+            toggle_btn = ttk.Button(
+                row1,
+                text="Detalles ▼",
+                width=10,
+                command=lambda i=idx: self._rb_toggle_details(i),
+            )
+            toggle_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+            ttk.Button(
+                row1,
+                text="✕",
+                width=2,
+                command=lambda i=idx: self._rb_remove_deck(i),
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
+            # ── Row 2: card counts ──────────────────────────────────────
+            row2 = ttk.Frame(outer)
+            row2.pack(fill=tk.X, padx=(24, 6), pady=(0, 2))
 
             by_sec = deck.by_section()
             sec_parts = [
@@ -885,35 +898,16 @@ class DecksTabMixin:
                 for s, cards in by_sec.items()
                 if cards
             ]
+            sec_parts.append(f"Total: {deck.total_slots}")
             ttk.Label(
-                summary,
+                row2,
                 text="  |  ".join(sec_parts),
                 foreground="#555",
                 anchor="w",
                 font=("Segoe UI", 8),
-            ).grid(row=0, column=1, sticky="w")
+            ).pack(side=tk.LEFT)
 
-            ttk.Label(
-                summary, text=f"{deck.total_slots} cartas", foreground="#888", anchor="e"
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
-
-            expanded_var = tk.BooleanVar(value=False)
-            toggle_btn = ttk.Button(
-                summary,
-                text="Detalles ▼",
-                width=10,
-                command=lambda i=idx: self._rb_toggle_details(i),
-            )
-            toggle_btn.grid(row=0, column=3, padx=(0, 4))
-
-            ttk.Button(
-                summary,
-                text="✕",
-                width=2,
-                command=lambda i=idx: self._rb_remove_deck(i),
-            ).grid(row=0, column=4)
-
-            # ── Row 2: option checkboxes ────────────────────────────────
+            # ── Row 3: option checkboxes ────────────────────────────────
             opts = ttk.Frame(outer)
             opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
 
@@ -1040,52 +1034,48 @@ class DecksTabMixin:
         for idx, deck in enumerate(self._lorcana_decks):
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, pady=3, padx=2)
-            outer.columnconfigure(0, weight=1)
 
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
-            summary.columnconfigure(1, weight=1)
+            # ── Row 1: name + buttons ──────────────────────────────────
+            row1 = ttk.Frame(outer)
+            row1.pack(fill=tk.X, padx=6, pady=(4, 0))
 
             ttk.Label(
-                summary,
-                text=ellipsize(deck.name, 28),
+                row1,
+                text=ellipsize(deck.name, 40),
                 font=("Segoe UI", 9, "bold"),
                 anchor="w",
                 image=self._lorcana_icon_img,
                 compound=tk.LEFT,
-            ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-            source_txt = source_labels.get(deck.source, deck.source)
-            ttk.Label(
-                summary,
-                text=source_txt,
-                foreground="#555",
-                anchor="w",
-                font=("Segoe UI", 8),
-            ).grid(row=0, column=1, sticky="w")
-
-            ttk.Label(
-                summary,
-                text=f"{deck.total_slots} cartas",
-                foreground="#888",
-                anchor="e",
-            ).grid(row=0, column=2, sticky="e", padx=(8, 6))
+            ).pack(side=tk.LEFT)
 
             expanded_var = tk.BooleanVar(value=False)
             toggle_btn = ttk.Button(
-                summary,
+                row1,
                 text="Detalles ▼",
                 width=10,
                 command=lambda i=idx: self._lorcana_toggle_details(i),
             )
-            toggle_btn.grid(row=0, column=3, padx=(0, 4))
+            toggle_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
             ttk.Button(
-                summary,
+                row1,
                 text="✕",
                 width=2,
                 command=lambda i=idx: self._lorcana_remove_deck(i),
-            ).grid(row=0, column=4)
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
+            # ── Row 2: source + card counts ─────────────────────────────
+            row2 = ttk.Frame(outer)
+            row2.pack(fill=tk.X, padx=(24, 6), pady=(0, 2))
+
+            source_txt = source_labels.get(deck.source, deck.source)
+            ttk.Label(
+                row2,
+                text=f"{source_txt}  ·  {deck.total_slots} cartas",
+                foreground="#555",
+                anchor="w",
+                font=("Segoe UI", 8),
+            ).pack(side=tk.LEFT)
 
             detail = ttk.Frame(outer)
             selected_ids = getattr(deck, "selected_card_ids", {card.card_id for card in deck.cards})
@@ -1162,24 +1152,53 @@ class DecksTabMixin:
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, padx=2, pady=3)
 
-            # ── Row 1: name + count + buttons ──────────────────────────
-            summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=(4, 0))
+            # ── Row 1: name + buttons ──────────────────────────────────
+            row1 = ttk.Frame(outer)
+            row1.pack(fill=tk.X, padx=6, pady=(4, 0))
+
             ttk.Label(
-                summary,
-                text=ellipsize(deck.name, 28),
+                row1,
+                text=ellipsize(deck.name, 40),
                 font=("Segoe UI", 9, "bold"),
                 image=self._ygo_icon_img,
                 compound=tk.LEFT,
             ).pack(side=tk.LEFT)
-            ttk.Button(
-                summary, text="✕", width=2, command=lambda i=idx: self._ygo_remove_deck(i)
-            ).pack(side=tk.RIGHT, padx=(0, 5))
-            ttk.Label(summary, text=f"{deck.total_slots()} Main/Extra", foreground="#888").pack(
-                side=tk.RIGHT, padx=(0, 8)
-            )
 
-            # ── Row 2: option checkboxes ────────────────────────────────
+            detail = ttk.Frame(outer)
+            expanded = tk.BooleanVar(value=False)
+            self._render_ygo_detail(detail, deck)
+
+            def _toggle() -> None:
+                if expanded.get():
+                    detail.pack_forget()
+                    toggle_btn.configure(text="Cartas ▼")
+                    expanded.set(False)
+                else:
+                    detail.pack(fill=tk.X, padx=0, pady=(0, 4))
+                    toggle_btn.configure(text="Cartas ▲")
+                    expanded.set(True)
+                self._decks_inner.update_idletasks()
+                self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
+
+            toggle_btn = ttk.Button(row1, text="Cartas ▼", width=10, command=_toggle)
+            toggle_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+            ttk.Button(
+                row1, text="✕", width=2, command=lambda i=idx: self._ygo_remove_deck(i)
+            ).pack(side=tk.RIGHT, padx=(0, 4))
+
+            # ── Row 2: card counts ──────────────────────────────────────
+            row2 = ttk.Frame(outer)
+            row2.pack(fill=tk.X, padx=(24, 6), pady=(0, 2))
+
+            ttk.Label(
+                row2,
+                text=f"{deck.total_slots()} Main/Extra",
+                foreground="#555",
+                anchor="w",
+            ).pack(side=tk.LEFT)
+
+            # ── Row 3: option checkboxes ────────────────────────────────
             opts = ttk.Frame(outer)
             opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
 
@@ -1192,24 +1211,6 @@ class DecksTabMixin:
                 state=tk.NORMAL if deck.side_slots else tk.DISABLED,
             ).pack(side=tk.LEFT, padx=(0, 12))
 
-            detail = ttk.Frame(outer)
-            expanded = tk.BooleanVar(value=False)
-            self._render_ygo_detail(detail, deck)
-
-            def _toggle() -> None:
-                if expanded.get():
-                    detail.pack_forget()
-                    toggle_btn.configure(text="Cartas v")
-                    expanded.set(False)
-                else:
-                    detail.pack(fill=tk.X, padx=0, pady=(0, 4))
-                    toggle_btn.configure(text="Cartas ^")
-                    expanded.set(True)
-                self._decks_inner.update_idletasks()
-                self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
-
-            toggle_btn = ttk.Button(summary, text="Cartas v", width=10, command=_toggle)
-            toggle_btn.pack(side=tk.RIGHT, padx=(0, 5))
             self._ygo_deck_rows.append({"outer": outer, "include_side_var": include_side})
 
     def _render_ygo_detail(self, detail, deck) -> None:
