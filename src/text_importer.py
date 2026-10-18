@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -24,6 +25,7 @@ class TextImportError(Exception):
     """Raised when text cannot be parsed as a valid deck list."""
 
     def __init__(self, message: str, line_number: int | None = None) -> None:
+        """Initialize with error message and optional line number."""
         self.line_number = line_number
         if line_number is not None:
             message = f"Línea {line_number}: {message}"
@@ -40,6 +42,7 @@ class ParsedCardLine:
     collector_number: str
     raw_line: str
     line_number: int
+    is_sideboard: bool = False
 
 
 # Regex for Riftbound format: "3 Sabotage (OGN-156)" or "1 Elder Dragon (UNL-118A)"
@@ -65,16 +68,25 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
         1 Elder Dragon (UNL-118A)
         1 Baron Pit // Gold (UNL-T01g)
 
+    Supports optional "Side Board:" or "Sideboard:" section header.
+    Cards after that header are marked as sideboard.
+
     Returns a list of ParsedCardLine objects.
     Raises TextImportError if any line is invalid.
     """
     lines: list[ParsedCardLine] = []
+    in_sideboard = False
 
     for line_num, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
 
         # Skip empty lines and comments
         if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        # Detect sideboard section header
+        if line.lower() in ("side board:", "sideboard:", "side:"):
+            in_sideboard = True
             continue
 
         match = _RIFTBOUND_LINE_RE.match(line)
@@ -103,6 +115,7 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
                 collector_number=collector_number,
                 raw_line=raw_line,
                 line_number=line_num,
+                is_sideboard=in_sideboard,
             )
         )
 
@@ -278,6 +291,11 @@ def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") 
             card_id = code
             variant_id = code
 
+        # Override section if card is in sideboard
+        if line.is_sideboard:
+            section = "sideboard"
+            variant_id = f"{variant_id}_sb"
+
         cards.append(
             RBCard(
                 card_id=card_id,
@@ -292,7 +310,7 @@ def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") 
         )
 
     return RBDeck(
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         name=deck_name,
         cards=cards,
     )
@@ -432,7 +450,7 @@ def build_riftbound_deck_from_piltover_text(text: str, deck_name: str = "Importe
         )
 
     return RBDeck(
-        deck_id="text-import-piltover",
+        deck_id=f"text-import-piltover-{uuid.uuid4().hex[:8]}",
         name=deck_name,
         cards=cards,
     )
@@ -594,7 +612,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
         raise TextImportError("No se encontraron cartas en el texto proporcionado.")
 
     return LocanaDeck(
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         name="Imported from text",
         cards=cards,
     )
@@ -745,6 +763,6 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
 
     return YGODeck(
         name="Imported from text",
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         cards=cards,
     )

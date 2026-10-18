@@ -152,7 +152,7 @@ class TestBuildRiftboundDeckFromText:
         deck = build_riftbound_deck_from_text(text, deck_name="Test Deck")
 
         assert deck.name == "Test Deck"
-        assert deck.deck_id == "text-import"
+        assert deck.deck_id.startswith("text-import-")
         assert len(deck.cards) == 2
         assert deck.cards[0].name == "Sabotage"
         assert deck.cards[0].quantity == 3
