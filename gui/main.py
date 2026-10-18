@@ -181,6 +181,7 @@ class App(
     """Main application window, composed from the tab mixins."""
 
     def __init__(self, root: tk.Tk) -> None:
+        """Build the window contents and wire up the initial state."""
         self.root = root
         root.title(APP_TITLE)
         root.geometry("1200x760")
@@ -513,7 +514,9 @@ class App(
             for job in xml_plan.jobs:
                 if job.is_merged:
                     names = ", ".join(path.name for path in job.xml_paths)
-                    self._preflight_row([(f"  ↳ Fusión: {names} → {job.total_cards} cartas", "bold")])
+                    self._preflight_row(
+                        [(f"  ↳ Fusión: {names} → {job.total_cards} cartas", "bold")]
+                    )
                 elif job.extra_locals:
                     self._preflight_row(
                         [
@@ -525,7 +528,9 @@ class App(
                         ]
                     )
                 else:
-                    self._preflight_row([(f"  ↳ {job.display_name}: {job.total_cards} cartas", "normal")])
+                    self._preflight_row(
+                        [(f"  ↳ {job.display_name}: {job.total_cards} cartas", "normal")]
+                    )
                 if job.has_blanks:
                     gap = "hueco" if job.blanks == 1 else "huecos"
                     self._preflight_row([(f"     ⚠ {job.blanks} {gap} en blanco", "warn")])
@@ -1490,6 +1495,7 @@ def _setup_logging() -> None:
 
 
 def main() -> None:
+    """Entry point: configure logging and start the Tkinter main loop."""
     _setup_logging()
     root = tk.Tk()
     try:

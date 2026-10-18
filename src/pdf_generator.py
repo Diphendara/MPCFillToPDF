@@ -1,4 +1,5 @@
 """PDF generation: page layout, printer marks and chunked output."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory

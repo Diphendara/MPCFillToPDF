@@ -669,6 +669,7 @@ def download_images(
 
     Returns:
         {variant_id: local_path}.
+
     """
     unique = {c.variant_id: c for c in deck.cards}
 

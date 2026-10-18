@@ -42,6 +42,7 @@ class UniversalImportDialog:
     """Dialog for importing deck lists: paste text, pick TCG, import."""
 
     def __init__(self, parent, events_queue):
+        """Store references; the dialog widgets are created lazily in show()."""
         self.parent = parent
         self.events = events_queue
         self.dialog = None
@@ -169,9 +170,7 @@ class UniversalImportDialog:
         )
 
         if has_sections:
-            deck = build_riftbound_deck_from_piltover_text(
-                text, deck_name="Imported from text"
-            )
+            deck = build_riftbound_deck_from_piltover_text(text, deck_name="Imported from text")
         else:
             deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
         self.events.put(("rb_deck_loaded", deck))
@@ -260,8 +259,6 @@ class UniversalImportDialog:
 
         if has_sections:
             # Piltover Archive format
-            return build_riftbound_deck_from_piltover_text(
-                text, deck_name="Imported from text"
-            )
+            return build_riftbound_deck_from_piltover_text(text, deck_name="Imported from text")
         # Simple format with codes
         return build_riftbound_deck_from_text(text, deck_name="Imported from text")

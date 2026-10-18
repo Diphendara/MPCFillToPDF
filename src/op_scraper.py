@@ -411,6 +411,7 @@ def expand_deck(
 
     Returns:
         (fronts, per_slot_backs) where None means use the standard back.
+
     """
     fronts: list[Path] = []
     backs: list[Path | None] = []

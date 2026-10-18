@@ -1,4 +1,5 @@
 """Persistent application settings (load/save from disk)."""
+
 import json
 import logging
 from dataclasses import dataclass

@@ -1,4 +1,5 @@
 """Image cropping and mirror-bleed generation for print-ready cards."""
+
 import logging
 from pathlib import Path
 

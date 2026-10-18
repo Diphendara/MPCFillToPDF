@@ -44,6 +44,7 @@ _PB_CROP_COLOR = "#2e7d32"
 
 
 def ellipsize(name: str, width: int) -> str:
+    """Truncate a name to width characters, appending an ellipsis if cut."""
     if len(name) <= width:
         return name
     return name[: max(0, width - 1)] + "…"
@@ -94,6 +95,12 @@ def attach_context_menu(widget: tk.Widget) -> None:
 
 
 def load_tab_icon(name: str, size: tuple[int, int] = (20, 20)) -> ImageTk.PhotoImage | None:
+    """Load a tab icon from the icons directory, resized to size.
+
+    Returns:
+        PhotoImage, or None if the icon file does not exist or fails to load.
+
+    """
     if getattr(sys, "frozen", False):
         icons_dir = Path(getattr(sys, "_MEIPASS", "")) / "icons"
     else:
@@ -122,6 +129,7 @@ class XmlPb(tk.Canvas):
     _TEXT = "#f0f0f0"
 
     def __init__(self, parent, **kw):
+        """Create the canvas and draw the empty progress bar."""
         super().__init__(
             parent,
             width=self._W,
@@ -164,6 +172,7 @@ class ImageTooltip:
     _MAX_H = 336
 
     def __init__(self, widget: tk.Widget, image_path: Path) -> None:
+        """Bind hover events on the widget to show a preview of the image."""
         self._widget = widget
         self._path = image_path
         self._after_id: str | None = None
@@ -244,6 +253,7 @@ class PreviewWindow(tk.Toplevel):
     _SPINNER = ["◐", "◓", "◑", "◒"]
 
     def __init__(self, parent: tk.Misc, xml_path: Path, order: CardOrder) -> None:
+        """Open the preview window and start loading thumbnails."""
         super().__init__(parent)
         self.title(f"Vista previa — {xml_path.name}")
         self.geometry("700x520")

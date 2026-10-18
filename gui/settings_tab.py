@@ -190,7 +190,7 @@ class SettingsTabMixin:
             self._persist_settings()
 
     def _on_settings_width_changed(self) -> None:
-        """Called by Spinbox arrow buttons."""
+        """Handle Spinbox arrow button clicks."""
         self._apply_width_from_var()
 
     def _save_max_pdf_size_input(self) -> None:
@@ -205,7 +205,7 @@ class SettingsTabMixin:
         self._persist_settings()
 
     def _on_settings_width_trace(self, *_) -> None:
-        """Called on every keystroke in the Spinbox entry."""
+        """Handle every keystroke in the Spinbox entry."""
         self._apply_width_from_var()
 
     def _apply_width_from_var(self) -> None:

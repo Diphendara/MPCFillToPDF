@@ -538,6 +538,7 @@ def _build_job_data(
 
     Returns:
         (job_data, updated next_slot). Does not download or crop anything.
+
     """
     orders = [parse(p) for p in xml_paths]
     fallback_cardback_id = orders[0].cardback_id if orders else ""

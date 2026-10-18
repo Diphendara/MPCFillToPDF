@@ -26,8 +26,10 @@ def _mpc_dir() -> Path:
 
 
 def output_dir() -> Path:
+    """Return the directory where generated PDFs are written."""
     return _mpc_dir() / "archivos generados"
 
 
 def work_dir() -> Path:
+    """Return the scratch directory used for downloads and cropped images."""
     return _mpc_dir() / "procesamiento"

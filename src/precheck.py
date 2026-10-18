@@ -143,6 +143,15 @@ class PdfJob:
 
 
 def analyze(xml_paths: list[str | Path]) -> list[XmlReport]:
+    """Parse each XML and return a report with card and blank-slot counts.
+
+    Args:
+        xml_paths: List of paths to MPC order XML files.
+
+    Returns:
+        One XmlReport per input file, in the same order.
+
+    """
     reports: list[XmlReport] = []
     for p in xml_paths:
         pth = Path(p)

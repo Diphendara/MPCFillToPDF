@@ -1,4 +1,5 @@
 """Google Drive image downloader with retry and on-disk cache."""
+
 import logging
 import os
 import threading
@@ -52,6 +53,7 @@ class DownloadPartialError(Exception):
         permission_errors: list[tuple[str, str]],
         timeout_errors: list[tuple[str, str]],
     ) -> None:
+        """Initialize with the lists of failed downloads."""
         self.permission_errors = permission_errors
         self.timeout_errors = timeout_errors
         self.xml_context: dict[str, tuple[str, int]] = {}
@@ -63,6 +65,7 @@ class DownloadPermissionError(Exception):
     """Raised when a Drive file cannot be downloaded due to missing permissions."""
 
     def __init__(self, drive_id: str, card_name: str) -> None:
+        """Initialize with the Drive file ID and card name."""
         self.drive_id = drive_id
         self.card_name = card_name
         self.xml_name: str = ""
@@ -74,6 +77,7 @@ class DownloadTimeoutError(Exception):
     """Raised when a Drive download stalls and exceeds the read timeout."""
 
     def __init__(self, drive_id: str, card_name: str) -> None:
+        """Initialize with the Drive file ID and card name."""
         self.drive_id = drive_id
         self.card_name = card_name
         self.xml_name: str = ""
@@ -113,6 +117,17 @@ def _safe_unlink(path: Path) -> None:
 
 
 def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
+    """Download a Drive image to dest_dir, with cache and retry on failure.
+
+    Args:
+        drive_id: Google Drive file ID.
+        dest_dir: Directory where the image is saved.
+        filename: Original filename (used for the extension and logging).
+
+    Returns:
+        Path to the downloaded (or cached) image file.
+
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(filename).suffix or ".jpg"
     output_path = dest_dir / f"{drive_id}{suffix}"

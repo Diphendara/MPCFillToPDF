@@ -1,4 +1,5 @@
 """Parser for MPC (MakePlayingCards) order XML files."""
+
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -45,6 +46,18 @@ def _parse_slots(slots_text: str) -> list[int]:
 
 
 def parse(xml_path: str | Path) -> CardOrder:
+    """Parse an MPC order XML file into a CardOrder.
+
+    Args:
+        xml_path: Path to the XML file.
+
+    Returns:
+        The parsed card order.
+
+    Raises:
+        ValueError: If the XML is malformed or missing required fields.
+
+    """
     _log.debug("Parsing %s", xml_path)
     try:
         tree = ET.parse(xml_path)

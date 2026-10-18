@@ -1,4 +1,5 @@
 """Command-line interface for MPCFillToPDF."""
+
 import argparse
 import logging
 import shutil
@@ -353,8 +354,7 @@ def _run_plan_jobs(
         cancel_event=None,
         extra_fronts=local_fronts or None,
         extra_backs=local_backs or None,
-        local_crop_map={p: args.local_needs_crop for p in (*local_fronts, *local_backs)}
-        or None,
+        local_crop_map={p: args.local_needs_crop for p in (*local_fronts, *local_backs)} or None,
         on_job_pdf_start=on_job_pdf_start,
         fronts_only=args.fronts_only,
     )
@@ -437,6 +437,7 @@ def _execute_plan(
 
 
 def main() -> None:
+    """Entry point: parse arguments and run the requested command."""
     args = _build_parser().parse_args()
 
     if args.deck_url:
@@ -483,9 +484,7 @@ def main() -> None:
         return
     print()
 
-    _execute_plan(
-        plan_, reports, args, run_dir, workdir, local_fronts, local_backs, local_cardback
-    )
+    _execute_plan(plan_, reports, args, run_dir, workdir, local_fronts, local_backs, local_cardback)
 
 
 if __name__ == "__main__":
