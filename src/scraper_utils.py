@@ -66,6 +66,9 @@ def download_url_images(
             path.write_bytes(response.content)
         return key, path
 
+    # Skip entries with empty or blank URLs — they would raise MissingSchema.
+    urls = {k: v for k, v in urls.items() if v and v.strip()}
+
     result: dict[str, Path] = {}
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(_fetch, key, url): key for key, url in urls.items()}

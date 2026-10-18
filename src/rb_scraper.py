@@ -678,8 +678,15 @@ def download_images(
         safe_name = re.sub("[^\\w\\-.]", "_", key)
         return dest_dir / f"{safe_name}.{extension}"
 
+    # Filter out cards with empty/missing image URLs to avoid Invalid URL errors
+    urls = {
+        variant_id: card.image_url
+        for variant_id, card in unique.items()
+        if card.image_url and card.image_url.strip()
+    }
+
     return download_url_images(
-        {variant_id: card.image_url for variant_id, card in unique.items()},
+        urls,
         dest_dir,
         _path_for_key,
         _HEADERS,
