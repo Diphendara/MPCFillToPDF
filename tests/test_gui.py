@@ -470,6 +470,13 @@ class TestYugiohRows:
         app._ygo_refresh_rows()
 
         row = app._ygo_deck_rows[0]
-        controls = row["outer"].winfo_children()[0].winfo_children()
-        assert "Incluir Side (15)" in [control.cget("text") for control in controls]
+        # Checkboxes are now in the second row (options row), not the summary row
+        all_texts = []
+        for child in row["outer"].winfo_children():
+            for widget in child.winfo_children():
+                try:
+                    all_texts.append(widget.cget("text"))
+                except Exception:
+                    pass
+        assert "Incluir Side (15)" in all_texts
         assert row["include_side_var"].get() is False

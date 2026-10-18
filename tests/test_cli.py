@@ -146,7 +146,9 @@ def test_main_empty_xml_dir_returns_without_pdf(tmp_path, capsys):
         from cli import main as cli_module
 
         importlib.reload(cli_module)
-        cli_module.main()
+        with pytest.raises(SystemExit) as exc_info:
+            cli_module.main()
+        assert exc_info.value.code == 0
 
     out = capsys.readouterr().out
     assert "No hay archivos" in out

@@ -1262,6 +1262,14 @@ class DecksTabMixin:
             row["pb"].grid_remove()
             row["count_lbl"].grid_remove()
 
+    def _mark_xml_finished(self) -> None:
+        """Mark all XML progress bars as finished."""
+        for row in self._xml_rows:
+            row["pb"].set_progress(100, "Finalizado", color="#4CAF50")
+            row["count_var"].set("")
+            row["pb"].grid()
+            row["count_lbl"].grid_remove()
+
     def _show_preview(self, xml_path: Path) -> None:
         order = self._xml_orders.get(xml_path)
         if order is None:

@@ -106,6 +106,7 @@ _ARCHIDEKT_FIXTURE_WITH_TOKENS = {
 }
 
 
+@pytest.mark.network
 class TestMoxfieldFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -170,6 +171,7 @@ class TestMoxfieldFetch:
         assert [(c.name, c.quantity) for c in tokens] == [("Treasure", 1), ("Goblin", 1)]
 
 
+@pytest.mark.network
 class TestArchidektFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -214,6 +216,7 @@ class TestArchidektFetch:
         assert "Skipped" not in names
 
 
+@pytest.mark.network
 class TestArchidektTokens:
     def test_extracts_api_tokens(self):
         resp = MagicMock()
@@ -341,6 +344,7 @@ _MANABOX_HTML = (
 )
 
 
+@pytest.mark.network
 class TestDeckstatsFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -383,6 +387,7 @@ class TestDeckstatsFetch:
                 fetch_deck("https://deckstats.net/decks/12345/67890-burn")
 
 
+@pytest.mark.network
 class TestTappedoutFetch:
     def _mock_resp(self, text):
         resp = MagicMock()
@@ -423,6 +428,7 @@ class TestTappedoutFetch:
                 fetch_deck("https://tappedout.net/mtg-decks/empty-deck/")
 
 
+@pytest.mark.network
 class TestTappedoutTokens:
     def test_extracts_generated_tokens_from_deck_page(self):
         def response(text):
@@ -443,6 +449,7 @@ class TestTappedoutTokens:
         ]
 
 
+@pytest.mark.network
 class TestManaboxFetch:
     def _mock_resp(self, text):
         resp = MagicMock()
@@ -512,6 +519,7 @@ class TestManaboxHelpers:
         assert _manabox_extract_props("<html>no data</html>") == ""
 
 
+@pytest.mark.network
 class TestSideboardFiltering:
     def test_main_and_side_zones_returned(self):
         with patch(
