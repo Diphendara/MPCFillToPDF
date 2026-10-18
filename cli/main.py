@@ -1,3 +1,4 @@
+"""Command-line interface for MPCFillToPDF."""
 import argparse
 import logging
 import shutil

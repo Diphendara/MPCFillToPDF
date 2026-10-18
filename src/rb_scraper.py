@@ -89,9 +89,11 @@ class RBDeck:
 
     @property
     def total_slots(self) -> int:
+        """Return the total number of card slots occupied by the deck."""
         return sum(c.quantity for c in self.cards)
 
     def by_section(self) -> dict[str, list[RBCard]]:
+        """Group the deck cards by section, preserving SECTION_ORDER."""
         result: dict[str, list[RBCard]] = {s: [] for s in SECTION_ORDER}
         for c in self.cards:
             result.setdefault(c.section, []).append(c)
@@ -664,7 +666,9 @@ def download_images(
     progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
     """Download one image per unique (card_id, variant_id) pair.
-    Returns {variant_id: local_path}.
+
+    Returns:
+        {variant_id: local_path}.
     """
     unique = {c.variant_id: c for c in deck.cards}
 

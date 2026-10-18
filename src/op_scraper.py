@@ -68,6 +68,7 @@ _STANDARD_BACK_BORDER = "#B0B8C8"
 
 def get_op_backs() -> tuple[Path, Path]:
     """Return (default_back, leader_back) from resources/backs/op/.
+
     Falls back to generating simple colored images if the files are missing.
     """
     op_dir = _resources_dir() / "backs" / "op"
@@ -104,6 +105,16 @@ class OPCard:
 
 @dataclass
 class OPDeck:
+    """A One Piece TCG deck with cards and metadata.
+
+    Attributes:
+        name: Deck name.
+        slug: URL slug identifying the deck on the source site.
+        cards: List of cards contained in the deck.
+        source: Identifier of the source site ("dotgg", "egman" or "kaizoku").
+
+    """
+
     name: str
     slug: str
     cards: list[OPCard]
@@ -111,10 +122,12 @@ class OPDeck:
 
     @property
     def leader(self) -> OPCard | None:
+        """Return the leader card of the deck, or None if it has none."""
         return next((c for c in self.cards if c.is_leader), None)
 
     @property
     def total_slots(self) -> int:
+        """Return the total number of card slots occupied by the deck."""
         return sum(c.quantity for c in self.cards)
 
 
@@ -395,7 +408,9 @@ def expand_deck(
     standard_back: Path,
 ) -> tuple[list[Path], list[Path | None]]:
     """Expand each card by its quantity.
-    Returns (fronts, per_slot_backs) where None means use the standard back.
+
+    Returns:
+        (fronts, per_slot_backs) where None means use the standard back.
     """
     fronts: list[Path] = []
     backs: list[Path | None] = []

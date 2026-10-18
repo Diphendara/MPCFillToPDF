@@ -141,6 +141,14 @@ class XmlPb(tk.Canvas):
         )
 
     def set_progress(self, pct: float, text: str = "", color: str | None = None) -> None:
+        """Update the progress bar fill, label and optional bar color.
+
+        Args:
+            pct: Progress percentage in the range 0-100.
+            text: Label drawn in the center of the bar.
+            color: Optional new fill color for the bar.
+
+        """
         if color is not None:
             self.itemconfigure(self._bar, fill=color)
         filled = int(self._W * max(0.0, min(100.0, pct)) / 100)
@@ -227,6 +235,8 @@ class ImageTooltip:
 
 
 class PreviewWindow(tk.Toplevel):
+    """Modal window showing image thumbnails for visual verification."""
+
     _THUMB_W = 80
     _THUMB_H = 112
     _COLS = 4

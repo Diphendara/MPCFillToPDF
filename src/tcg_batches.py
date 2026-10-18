@@ -159,6 +159,12 @@ class RiftboundBatchAdapter:
     report_progress: ProgressReporter
 
     def prepare(self) -> PrintBatch:
+        """Download images and build the print batch for the Riftbound decks.
+
+        Returns:
+            PrintBatch with fronts, backs and crop map ready for PDF generation.
+
+        """
         if not self.decks:
             return PrintBatch("Riftbound")
         label = " + ".join(deck.name for deck, _, _ in self.decks)
@@ -212,12 +218,20 @@ class RiftboundBatchAdapter:
 
 @dataclass(frozen=True)
 class LorcanaBatchAdapter:
+    """Adapter for Disney Lorcana decks."""
+
     decks: tuple[LocanaDeck, ...]
     work_dir: Path
     cancel_event: Event | None
     report_progress: ProgressReporter
 
     def prepare(self) -> PrintBatch:
+        """Download images and build the print batch for the Lorcana decks.
+
+        Returns:
+            PrintBatch with fronts, backs and crop map ready for PDF generation.
+
+        """
         if not self.decks:
             return PrintBatch("Lorcana")
         label = " + ".join(deck.name for deck in self.decks)
@@ -258,6 +272,8 @@ class LorcanaBatchAdapter:
 
 @dataclass(frozen=True)
 class MagicBatchAdapter:
+    """Adapter for Magic: The Gathering decks imported from URLs."""
+
     decks: tuple[MtgDeck, ...]
     work_dir: Path
     default_back: Path
@@ -266,6 +282,12 @@ class MagicBatchAdapter:
     report_progress: ProgressReporter
 
     def prepare(self) -> PrintBatch:
+        """Download images and build the print batch for the Magic decks.
+
+        Returns:
+            PrintBatch with fronts, backs and crop map ready for PDF generation.
+
+        """
         if not self.decks:
             return PrintBatch("magic_url")
         cards_with_deck: list[tuple[DeckCard, MtgDeck]] = []

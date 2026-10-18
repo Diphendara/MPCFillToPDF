@@ -1,3 +1,4 @@
+"""Google Drive image downloader with retry and on-disk cache."""
 import logging
 import os
 import threading
@@ -43,6 +44,7 @@ class DownloadPartialError(Exception):
                            after a retry.
         xml_context:       drive_id → (xml_filename, 1-based position);
                            populated by the pipeline after enrichment.
+
     """
 
     def __init__(

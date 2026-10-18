@@ -68,6 +68,7 @@ class LocanaDeck:
 
     @property
     def total_slots(self) -> int:
+        """Return the total number of card slots occupied by the deck."""
         return sum(c.quantity for c in self.cards)
 
 

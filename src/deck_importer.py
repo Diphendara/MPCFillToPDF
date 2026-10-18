@@ -68,6 +68,14 @@ class DeckCard:
 
 @dataclass
 class FetchedDeck:
+    """A deck retrieved from an external deck-building site.
+
+    Attributes:
+        name: Deck name as reported by the source site.
+        cards: List of cards contained in the deck.
+
+    """
+
     name: str
     cards: list[DeckCard]
 

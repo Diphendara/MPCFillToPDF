@@ -1,3 +1,4 @@
+"""Image cropping and mirror-bleed generation for print-ready cards."""
 import logging
 from pathlib import Path
 
@@ -31,8 +32,10 @@ def _sample_border_color(
     corner: str,
     radius: int,
 ) -> tuple[int, int, int]:
-    """Sample the border color near a corner by taking the median of pixels
-    along the horizontal and vertical edges just outside the rounded zone."""
+    """Sample the border color near a corner by taking the median of pixels.
+
+    Samples along the horizontal and vertical edges just outside the rounded zone.
+    """
     w, h = img.size
     samples: list[tuple[int, int, int]] = []
     # Sample range: from radius to 2*radius along each edge
@@ -172,8 +175,9 @@ def process_for_pdf(
     card_w_mm: float = CARD_W_MM,
     card_h_mm: float = CARD_H_MM,
 ) -> Path:
-    """Optionally crop MPC bleed, then add mirror bleed. Result is what gets
-    placed in the PDF.
+    """Optionally crop MPC bleed, then add mirror bleed.
+
+    The result is what gets placed in the PDF.
 
     `crop_borders=False` skips the MPC-bleed crop — used for user-supplied
     local images that don't carry the MPC border.

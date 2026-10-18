@@ -16,6 +16,14 @@ _log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ValidationWarning:
+    """A single business-logic warning found while validating an order XML.
+
+    Attributes:
+        code: Machine-readable key identifying the warning kind.
+        message: Human-readable description (Spanish).
+
+    """
+
     code: str  # machine-readable key
     message: str  # human-readable description (Spanish)
 

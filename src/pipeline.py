@@ -144,9 +144,10 @@ def run_merged(
     fronts_only: bool = False,
     max_pdf_bytes: int = MAX_PDF_BYTES,
 ) -> list[Path]:
-    """Multi-XML pipeline: concatenate the XMLs' fronts in order and emit one
-    or more PDFs named `<base_name>.pdf` (or `<base_name>_1.pdf`, … when split).
-    Each card keeps its own back (from its own XML).
+    """Multi-XML pipeline: concatenate the XMLs' fronts in order.
+
+    Emits one or more PDFs named `<base_name>.pdf` (or `<base_name>_1.pdf`, …
+    when split). Each card keeps its own back (from its own XML).
 
     `extra_fronts` / `extra_backs` behave as in `run`; the first XML's
     cardback is the fallback when no paired back is supplied.
@@ -309,9 +310,11 @@ def _build_slot_maps(
 
 
 def _local_synthetic_id(path: Path) -> str:
-    """Stable synthetic 'drive ID' for a local file, derived from its absolute
-    path. The hash keeps it short, filesystem-safe, and cache-friendly across
-    re-runs of the same file."""
+    """Return a stable synthetic 'drive ID' for a local file.
+
+    Derived from its absolute path. The hash keeps it short, filesystem-safe,
+    and cache-friendly across re-runs of the same file.
+    """
     h = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
     return f"local_{h}"
 
@@ -532,7 +535,10 @@ def _build_job_data(
     extra_backs: list[Path | None],
 ) -> tuple[_JobData, int]:
     """Parse XMLs and build all slot maps for one job.
-    Returns (job_data, updated next_slot). Does not download or crop anything."""
+
+    Returns:
+        (job_data, updated next_slot). Does not download or crop anything.
+    """
     orders = [parse(p) for p in xml_paths]
     fallback_cardback_id = orders[0].cardback_id if orders else ""
 

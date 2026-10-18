@@ -203,6 +203,7 @@ def _get_base_code(code: str) -> str:
         UNL-147A -> UNL-147
         UNL-T01g -> UNL-T01
         OGN-156 -> OGN-156
+
     """
     # Remove trailing letters that are variant indicators
     # But keep the 'T' in tokens like T01g

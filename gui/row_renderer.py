@@ -35,6 +35,7 @@ class TCGRowRenderer:
 
         Returns:
             A function that updates the card quantity when called
+
         """
 
         def _update(*_args: Any) -> None:
@@ -73,6 +74,7 @@ class TCGRowRenderer:
 
         Returns:
             The created Spinbox widget
+
         """
         updater = self._make_qty_updater(card, qty_var, checkvar, sync_callback)
         spinbox = ttk.Spinbox(
@@ -102,6 +104,7 @@ class TCGRowRenderer:
 
         Returns:
             The created Checkbutton widget
+
         """
         checkbox = ttk.Checkbutton(parent_frame, variable=checkvar, command=sync_callback)
         checkbox.pack(side=tk.LEFT)

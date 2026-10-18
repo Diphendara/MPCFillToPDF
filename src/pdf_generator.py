@@ -1,3 +1,4 @@
+"""PDF generation: page layout, printer marks and chunked output."""
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -143,8 +144,10 @@ def _draw_crop_marks(
 
 
 def _draw_printer_marks(c: canvas.Canvas, page_label: str | None = None) -> None:
-    """Page-corner registration crosshairs plus the CMYK calibration bar
-    and (optional) page-pair label (e.g. "1", "1B")."""
+    """Draw page-corner registration crosshairs plus the CMYK calibration bar.
+
+    Also draws the optional page-pair label (e.g. "1", "1B").
+    """
     if CORNER_MARK_PATH.exists():
         s = CORNER_MARK_PT
         for x, y in [(0, 0), (PAGE_W - s, 0), (0, PAGE_H - s), (PAGE_W - s, PAGE_H - s)]:
@@ -325,10 +328,11 @@ def generate(
     layout: CardLayout = STANDARD_LAYOUT,
     fallback_base_name: str | None = None,
 ) -> list[Path]:
-    """Generate one or more PDFs in `output_dir`. A new chunk starts after
-    every front/back pair whose addition would push the cumulative image
-    bytes past `max_bytes` — i.e. we always cut on an even page so each
-    chunk is independently duplex-ready.
+    """Generate one or more PDFs in `output_dir`.
+
+    A new chunk starts after every front/back pair whose addition would push
+    the cumulative image bytes past `max_bytes` — i.e. we always cut on an
+    even page so each chunk is independently duplex-ready.
 
     When `fronts_only=True`, only front pages are emitted (no back pages).
 

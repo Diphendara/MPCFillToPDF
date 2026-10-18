@@ -41,6 +41,7 @@ class StandalonePrintRun:
 
         Returns:
             List of generated PDF paths.
+
         """
         if not self.batch.fronts or self.batch.default_back is None:
             return []

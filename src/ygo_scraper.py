@@ -44,6 +44,15 @@ class YGODeck:
     cards: list[YGOCard]
 
     def total_slots(self, include_side: bool = False) -> int:
+        """Return the number of card slots, optionally including the Side Deck.
+
+        Args:
+            include_side: When True, Side Deck cards are counted too.
+
+        Returns:
+            Total quantity of cards in the selected zones.
+
+        """
         return sum(c.quantity for c in self.cards if c.zone != "side" or include_side)
 
     @property

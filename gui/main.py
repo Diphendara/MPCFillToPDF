@@ -1,5 +1,7 @@
-"""MPCFillToPDF GUI — pick XML(s) and optional local images, run the pipeline,
-open the output folder."""
+"""MPCFillToPDF GUI — pick XML(s) and optional local images, run the pipeline.
+
+Opens the output folder when the run finishes.
+"""
 
 import logging
 import math
@@ -85,6 +87,19 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class MtgUrlDeck:
+    """A Magic deck imported from a URL, with per-deck print options.
+
+    Attributes:
+        url: Source URL of the deck.
+        cards: Cards contained in the deck.
+        include_side: Whether sideboard cards are printed.
+        include_tokens: Whether token cards are printed.
+        name: Display name override; derived from the URL when empty.
+        back_path: Optional custom card back image for this deck.
+        selected_card_ids: When set, only these cards are printed.
+
+    """
+
     url: str
     cards: list[DeckCard]
     include_side: bool = False
@@ -95,6 +110,7 @@ class MtgUrlDeck:
 
     @property
     def display_name(self) -> str:
+        """Return the deck name, or a name derived from the URL."""
         if self.name:
             return self.name
         try:
@@ -106,9 +122,11 @@ class MtgUrlDeck:
 
     @property
     def active_count(self) -> int:
+        """Return the number of cards that will actually be printed."""
         return sum(c.quantity for c in self.cards if self.includes(c))
 
     def includes(self, card: DeckCard) -> bool:
+        """Return True if the card is selected and its zone is enabled."""
         return (self.selected_card_ids is None or id(card) in self.selected_card_ids) and (
             card.zone == "main"
             or (card.zone == "side" and self.include_side)
@@ -118,6 +136,8 @@ class MtgUrlDeck:
 
 @dataclass
 class AppState:
+    """Mutable snapshot of everything the user has loaded in the GUI."""
+
     xml_paths: list[Path] = field(default_factory=list)
     local_fronts: list[Path] = field(default_factory=list)
     local_backs: list[Path] = field(default_factory=list)
@@ -158,6 +178,8 @@ class App(
     LocalsTabMixin,
     SettingsTabMixin,
 ):
+    """Main application window, composed from the tab mixins."""
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(APP_TITLE)
