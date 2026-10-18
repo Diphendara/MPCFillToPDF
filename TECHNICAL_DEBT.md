@@ -410,7 +410,7 @@ python3 -m ruff check --select ALL src/ gui/ cli/
 - [ ] Reducir complejidad de renderers en `decks_tab.py`
 - [ ] Reemplazar excepciones genéricas
 - [ ] Eliminar duplicación en `decks_tab.py`
-- [ ] Agregar docstrings faltantes
+- [x] Agregar docstrings faltantes
 - [ ] Extraer magic numbers a constantes
 - [x] Centralizar URLs de APIs
 - [ ] Completar type hints
