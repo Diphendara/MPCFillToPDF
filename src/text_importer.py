@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -298,7 +299,7 @@ def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") 
         )
 
     return RBDeck(
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         name=deck_name,
         cards=cards,
     )
@@ -438,7 +439,7 @@ def build_riftbound_deck_from_piltover_text(text: str, deck_name: str = "Importe
         )
 
     return RBDeck(
-        deck_id="text-import-piltover",
+        deck_id=f"text-import-piltover-{uuid.uuid4().hex[:8]}",
         name=deck_name,
         cards=cards,
     )
@@ -598,7 +599,7 @@ def parse_lorcana_text(text: str) -> list[tuple[int, str, str]]:
         raise TextImportError("No se encontraron cartas en el texto proporcionado.")
 
     return LocanaDeck(
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         name="Imported from text",
         cards=cards,
     )
@@ -749,6 +750,6 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
 
     return YGODeck(
         name="Imported from text",
-        deck_id="text-import",
+        deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
         cards=cards,
     )

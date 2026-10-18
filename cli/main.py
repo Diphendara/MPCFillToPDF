@@ -435,49 +435,6 @@ def _execute_plan(
         print("Imágenes temporales (workdir/raw y workdir/bled) eliminadas.")
 
 
-def _execute_plan(
-    plan_,
-    reports,
-    args: argparse.Namespace,
-    run_dir: Path,
-    workdir: Path,
-    local_fronts: list[Path],
-    local_backs: list[Path],
-    local_cardback: Path | None,
-) -> None:
-    """Execute the plan (or locals-only job) and handle errors/cleanup."""
-    overall_start = time.time()
-
-    try:
-        if plan_ is not None:
-            pdfs = _run_plan_jobs(plan_, args, run_dir, workdir, local_fronts, local_backs)
-        else:
-            pdfs = _run_locals_only_job(
-                args, run_dir, workdir, local_fronts, local_backs, local_cardback
-            )
-        _print_pdfs(pdfs)
-
-    except DownloadPermissionError as e:
-        _print_permission_error(e)
-        sys.exit(1)
-    except DownloadTimeoutError as e:
-        _print_timeout_error(e)
-        sys.exit(1)
-
-    manifest = write_manifest(plan_, reports, run_dir) if plan_ is not None else None
-    if manifest:
-        print(f"\nResumen de fusiones escrito en: {manifest}")
-
-    total_elapsed = time.time() - overall_start
-    print(f"\nTiempo total: {total_elapsed:.1f}s")
-
-    if args.test:
-        print("Modo --test: imágenes conservadas en workdir/ (raw y bled).")
-    else:
-        _cleanup(workdir)
-        print("Imágenes temporales (workdir/raw y workdir/bled) eliminadas.")
-
-
 def main() -> None:
     args = _build_parser().parse_args()
 

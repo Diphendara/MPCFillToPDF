@@ -130,74 +130,7 @@ class DecksTabMixin:
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=10, pady=(0, 4))
 
-        # Accepted URLs organized by TCG
-        urls_frame = ttk.LabelFrame(dlg, text="Webs aceptadas", padding=8)
-        urls_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
-
-        ttk.Label(
-            urls_frame,
-            text="🎴 Magic: The Gathering:",
-            font=("Segoe UI", 8, "bold"),
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(
-            urls_frame,
-            text="moxfield.com • archidekt.com • deckstats.net • tappedout.net • manabox.app",
-            foreground="#777",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
-
-        ttk.Label(
-            urls_frame,
-            text="🏴‍☠️ One Piece:",
-            font=("Segoe UI", 8, "bold"),
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(
-            urls_frame,
-            text="onepiece.gg • egmanevents.com • cardkaizoku.com",
-            foreground="#777",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
-
-        ttk.Label(
-            urls_frame,
-            text="⚔️ Riftbound:",
-            font=("Segoe UI", 8, "bold"),
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(
-            urls_frame,
-            text="piltoverarchive.com • riftbound.gg • riftmana.com • riftbinder.com • riftdex.com",
-            foreground="#777",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
-
-        ttk.Label(
-            urls_frame,
-            text="✨ Lorcana:",
-            font=("Segoe UI", 8, "bold"),
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(
-            urls_frame,
-            text="lorcana.gg • inkdecks.com",
-            foreground="#777",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=(16, 0), pady=(0, 4))
-
-        ttk.Label(
-            urls_frame,
-            text="🎲 Yu-Gi-Oh:",
-            font=("Segoe UI", 8, "bold"),
-            foreground="#555",
-        ).pack(anchor="w")
-        ttk.Label(
-            urls_frame,
-            text="ygoprodeck.com • yugiohmeta.com • cadena YDKE",
-            foreground="#777",
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", padx=(16, 0))
+        self._build_accepted_urls_frame(dlg)
 
         ttk.Label(
             dlg,
@@ -231,106 +164,170 @@ class DecksTabMixin:
         detected_tcg = [None]  # Use list to allow modification in nested function
 
         def _detect_tcg_from_url(*_args):
-            url = url_var.get().strip().lower()
-            if not url:
-                detection_var.set("")
-                detected_tcg[0] = None
-                return
-
-            # Detect by domain
-            if any(
-                domain in url
-                for domain in [
-                    "moxfield.com",
-                    "archidekt.com",
-                    "deckstats.net",
-                    "tappedout.net",
-                    "manabox.app",
-                ]
-            ):
-                detected_tcg[0] = "MTG"
-                detection_var.set("🎴 Detectado: Magic: The Gathering")
-            elif any(
-                domain in url for domain in ["onepiece.gg", "egmanevents.com", "cardkaizoku.com"]
-            ):
-                detected_tcg[0] = "One Piece"
-                detection_var.set("🏴‍☠️ Detectado: One Piece")
-            elif any(
-                domain in url
-                for domain in [
-                    "piltoverarchive.com",
-                    "riftbound.gg",
-                    "riftmana.com",
-                    "riftbinder.com",
-                    "riftdex.com",
-                ]
-            ):
-                detected_tcg[0] = "Riftbound"
-                detection_var.set("⚔️ Detectado: Riftbound")
-            elif any(domain in url for domain in ["lorcana.gg", "inkdecks.com"]):
-                detected_tcg[0] = "Lorcana"
-                detection_var.set("✨ Detectado: Lorcana")
-            elif any(
-                domain in url for domain in ["ygoprodeck.com", "yugiohmeta.com"]
-            ) or url.startswith("ydke://"):
-                detected_tcg[0] = "Yu-Gi-Oh"
-                detection_var.set("🎲 Detectado: Yu-Gi-Oh")
-            else:
-                detected_tcg[0] = None
-                detection_var.set("❌ URL no reconocida. Verifica que sea de una web aceptada.")
+            tcg, message = self._detect_tcg_for_url(url_var.get())
+            detected_tcg[0] = tcg
+            detection_var.set(message)
 
         url_var.trace_add("write", _detect_tcg_from_url)
 
-        def _do_import():
-            url = url_var.get().strip()
-            tcg = detected_tcg[0]
-            if not url:
-                status_var.set("⚠️ Introduce una URL")
-                return
-            if not tcg:
-                status_var.set("⚠️ URL no reconocida. Verifica que sea de una web aceptada.")
-                return
-            import_btn.state(["disabled"])
-            status_var.set("Cargando…")
-
-            def _run():
-                try:
-                    if tcg == "MTG":
-                        result = fetch_deck(url)
-                        self.events.put(("mtg_url_loaded", url, result.cards, False, result.name))
-                    elif tcg == "One Piece":
-                        from src.op_scraper import scrape_deck as op_scrape_deck
-
-                        self.events.put(("op_deck_loaded", op_scrape_deck(url)))
-                    elif tcg == "Riftbound":
-                        from src.rb_scraper import scrape_deck as rb_scrape_deck
-
-                        self.events.put(("rb_deck_loaded", rb_scrape_deck(url)))
-                    elif tcg == "Lorcana":
-                        from src.lorcana_scraper import scrape_deck as lorcana_scrape_deck
-
-                        self.events.put(("lorcana_deck_loaded", lorcana_scrape_deck(url)))
-                    elif tcg == "Yu-Gi-Oh":
-                        from src.ygo_scraper import scrape_deck as ygo_scrape_deck
-
-                        self.events.put(("ygo_deck_loaded", ygo_scrape_deck(url)))
-                    dlg.after(0, dlg.destroy)
-                except DeckImportError as exc:
-                    self.events.put(("mtg_url_error", str(exc)))
-                except Exception as exc:
-                    self.events.put(("deck_url_error", (tcg, str(exc))))
-
-            threading.Thread(target=_run, daemon=True).start()
-
-        import_btn = ttk.Button(btn_row, text="Importar", command=_do_import)
+        import_btn = ttk.Button(btn_row, text="Importar", command=lambda: _do_import())
         import_btn.pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT)
+
+        def _do_import():
+            self._do_url_import(dlg, url_var, status_var, detected_tcg[0], import_btn)
+
+        import_btn.configure(command=_do_import)
         url_entry.bind("<Return>", lambda _e: _do_import())
         self._mtg_import_btn = import_btn
+
+    @staticmethod
+    def _build_accepted_urls_frame(dlg) -> None:
+        urls_frame = ttk.LabelFrame(dlg, text="Webs aceptadas", padding=8)
+        urls_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
+
+        sections = [
+            (
+                "🎴 Magic: The Gathering:",
+                "moxfield.com • archidekt.com • deckstats.net • tappedout.net • manabox.app",
+            ),
+            ("🏴‍☠️ One Piece:", "onepiece.gg • egmanevents.com • cardkaizoku.com"),
+            (
+                "⚔️ Riftbound:",
+                "piltoverarchive.com • riftbound.gg • riftmana.com • riftbinder.com • riftdex.com",
+            ),
+            ("✨ Lorcana:", "lorcana.gg • inkdecks.com"),
+            ("🎲 Yu-Gi-Oh:", "ygoprodeck.com • yugiohmeta.com • cadena YDKE"),
+        ]
+        for i, (title, domains) in enumerate(sections):
+            ttk.Label(
+                urls_frame,
+                text=title,
+                font=("Segoe UI", 8, "bold"),
+                foreground="#555",
+            ).pack(anchor="w")
+            pady = (0, 4) if i < len(sections) - 1 else (0, 0)
+            ttk.Label(
+                urls_frame,
+                text=domains,
+                foreground="#777",
+                font=("Segoe UI", 8),
+            ).pack(anchor="w", padx=(16, 0), pady=pady)
+
+    @staticmethod
+    def _detect_tcg_for_url(url: str) -> tuple[str | None, str]:
+        """Detect TCG from URL; return (tcg_name_or_None, detection_message)."""
+        url = url.strip().lower()
+        if not url:
+            return None, ""
+
+        mtg_domains = [
+            "moxfield.com",
+            "archidekt.com",
+            "deckstats.net",
+            "tappedout.net",
+            "manabox.app",
+        ]
+        op_domains = ["onepiece.gg", "egmanevents.com", "cardkaizoku.com"]
+        rb_domains = [
+            "piltoverarchive.com",
+            "riftbound.gg",
+            "riftmana.com",
+            "riftbinder.com",
+            "riftdex.com",
+        ]
+        lorcana_domains = ["lorcana.gg", "inkdecks.com"]
+        ygo_domains = ["ygoprodeck.com", "yugiohmeta.com"]
+
+        if any(d in url for d in mtg_domains):
+            return "MTG", "🎴 Detectado: Magic: The Gathering"
+        if any(d in url for d in op_domains):
+            return "One Piece", "🏴‍☠️ Detectado: One Piece"
+        if any(d in url for d in rb_domains):
+            return "Riftbound", "⚔️ Detectado: Riftbound"
+        if any(d in url for d in lorcana_domains):
+            return "Lorcana", "✨ Detectado: Lorcana"
+        if any(d in url for d in ygo_domains) or url.startswith("ydke://"):
+            return "Yu-Gi-Oh", "🎲 Detectado: Yu-Gi-Oh"
+        return None, "❌ URL no reconocida. Verifica que sea de una web aceptada."
+
+    def _do_url_import(self, dlg, url_var, status_var, tcg, import_btn) -> None:
+        url = url_var.get().strip()
+        if not url:
+            status_var.set("⚠️ Introduce una URL")
+            return
+        if not tcg:
+            status_var.set("⚠️ URL no reconocida. Verifica que sea de una web aceptada.")
+            return
+        import_btn.state(["disabled"])
+        status_var.set("Cargando…")
+
+        def _run():
+            try:
+                self._dispatch_url_import(tcg, url)
+                dlg.after(0, dlg.destroy)
+            except DeckImportError as exc:
+                self.events.put(("mtg_url_error", str(exc)))
+            except Exception as exc:
+                self.events.put(("deck_url_error", (tcg, str(exc))))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _dispatch_url_import(self, tcg: str, url: str) -> None:
+        """Run the appropriate scraper for the detected TCG and push the event."""
+        if tcg == "MTG":
+            result = fetch_deck(url)
+            self.events.put(("mtg_url_loaded", url, result.cards, False, result.name))
+        elif tcg == "One Piece":
+            from src.op_scraper import scrape_deck as op_scrape_deck
+
+            self.events.put(("op_deck_loaded", op_scrape_deck(url)))
+        elif tcg == "Riftbound":
+            from src.rb_scraper import scrape_deck as rb_scrape_deck
+
+            self.events.put(("rb_deck_loaded", rb_scrape_deck(url)))
+        elif tcg == "Lorcana":
+            from src.lorcana_scraper import scrape_deck as lorcana_scrape_deck
+
+            self.events.put(("lorcana_deck_loaded", lorcana_scrape_deck(url)))
+        elif tcg == "Yu-Gi-Oh":
+            from src.ygo_scraper import scrape_deck as ygo_scrape_deck
+
+            self.events.put(("ygo_deck_loaded", ygo_scrape_deck(url)))
 
     # ─────────────────────────────────────────────────────────────────────
     # XML file management (unchanged logic, rows live in the unified list)
     # ─────────────────────────────────────────────────────────────────────
+
+    def _add_xml_path(self, pp: Path) -> bool:
+        """Add a single XML path and compute its metadata. Returns True if added."""
+        if pp in self.state.xml_paths:
+            return False
+        self.state.xml_paths.append(pp)
+        if pp not in self._xml_card_counts:
+            try:
+                rpts = analyze([pp])
+                if rpts:
+                    self._xml_card_counts[pp] = rpts[0].cards
+            except Exception:
+                pass
+        if pp not in self._xml_orders:
+            try:
+                self._xml_orders[pp] = parse(pp)
+            except Exception:
+                pass
+        if pp not in self._xml_validations:
+            try:
+                self._xml_validations[pp] = validate(pp)
+            except Exception:
+                self._xml_validations[pp] = []
+        return True
+
+    def _after_xmls_added(self, added: int) -> None:
+        if added:
+            self._refresh_xml_rows()
+            self.status_var.set(f"{len(self.state.xml_paths)} XML(s) en cola.")
+        self._refresh_generate_state()
 
     def _pick_xmls(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -339,31 +336,9 @@ class DecksTabMixin:
         )
         added = 0
         for p in paths:
-            pp = Path(p)
-            if pp not in self.state.xml_paths:
-                self.state.xml_paths.append(pp)
+            if self._add_xml_path(Path(p)):
                 added += 1
-                if pp not in self._xml_card_counts:
-                    try:
-                        rpts = analyze([pp])
-                        if rpts:
-                            self._xml_card_counts[pp] = rpts[0].cards
-                    except Exception:
-                        pass
-                if pp not in self._xml_orders:
-                    try:
-                        self._xml_orders[pp] = parse(pp)
-                    except Exception:
-                        pass
-                if pp not in self._xml_validations:
-                    try:
-                        self._xml_validations[pp] = validate(pp)
-                    except Exception:
-                        self._xml_validations[pp] = []
-        if added:
-            self._refresh_xml_rows()
-            self.status_var.set(f"{len(self.state.xml_paths)} XML(s) en cola.")
-        self._refresh_generate_state()
+        self._after_xmls_added(added)
 
     def _on_drop_xmls(self, files) -> None:
         paths = self._decode_drop(files)
@@ -371,30 +346,9 @@ class DecksTabMixin:
         for pp in paths:
             if pp.suffix.lower() != ".xml":
                 continue
-            if pp not in self.state.xml_paths:
-                self.state.xml_paths.append(pp)
+            if self._add_xml_path(pp):
                 added += 1
-                if pp not in self._xml_card_counts:
-                    try:
-                        rpts = analyze([pp])
-                        if rpts:
-                            self._xml_card_counts[pp] = rpts[0].cards
-                    except Exception:
-                        pass
-                if pp not in self._xml_orders:
-                    try:
-                        self._xml_orders[pp] = parse(pp)
-                    except Exception:
-                        pass
-                if pp not in self._xml_validations:
-                    try:
-                        self._xml_validations[pp] = validate(pp)
-                    except Exception:
-                        self._xml_validations[pp] = []
-        if added:
-            self._refresh_xml_rows()
-            self.status_var.set(f"{len(self.state.xml_paths)} XML(s) en cola.")
-        self._refresh_generate_state()
+        self._after_xmls_added(added)
 
     def _remove_xml(self, idx: int) -> None:
         if 0 <= idx < len(self.state.xml_paths):
@@ -467,6 +421,8 @@ class DecksTabMixin:
 
         self._decks_inner.update_idletasks()
         self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
+        # Reset scroll to top after refresh to avoid misalignment
+        self._decks_canvas.yview_moveto(0)
 
     # Compatibility shims: each TCG refresh just rebuilds the unified list
     def _op_refresh_rows(self) -> None:
@@ -553,6 +509,93 @@ class DecksTabMixin:
 
     # ── MTG deck rows ─────────────────────────────────────────────────────
 
+    def _render_mtg_card_row(self, detail, deck, card, selected_ids, card_vars) -> None:
+        """Render a single card row (checkbox + quantity + name + zone)."""
+        card_row = ttk.Frame(detail)
+        card_row.pack(fill=tk.X, padx=(12, 4))
+        card_vars[id(card)] = tk.BooleanVar(value=id(card) in selected_ids)
+
+        def _sync_cards(d=deck, vars=card_vars):
+            d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+            self._refresh_generate_state()
+
+        ttk.Checkbutton(card_row, variable=card_vars[id(card)], command=_sync_cards).pack(
+            side=tk.LEFT
+        )
+
+        qty_var = tk.IntVar(value=card.quantity)
+
+        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[id(card)]):
+            def _update(*_args):
+                try:
+                    new_qty = var.get()
+                    if new_qty == 0:
+                        checkvar.set(False)
+                        _sync_cards()
+                    elif new_qty >= 1:
+                        c.quantity = new_qty
+                        checkvar.set(True)
+                        _sync_cards()
+                except tk.TclError:
+                    pass  # Invalid input, ignore
+
+            return _update
+
+        qty_spinbox = ttk.Spinbox(
+            card_row,
+            from_=0,
+            to=99,
+            width=4,
+            textvariable=qty_var,
+            command=_make_qty_updater(),
+        )
+        qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
+        qty_var.trace_add("write", _make_qty_updater())
+
+        ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(side=tk.LEFT)
+        ttk.Label(card_row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+
+    def _render_mtg_detail(self, outer, i, deck, side_count) -> tuple:
+        """Build the detail frame with sideboard/tokens toggles and card rows."""
+        detail = ttk.Frame(outer)
+        controls = ttk.Frame(detail)
+        controls.pack(fill=tk.X, padx=(12, 4), pady=(0, 4))
+        expanded = tk.BooleanVar(value=False)
+
+        if side_count:
+            side_var = tk.BooleanVar(value=deck.include_side)
+
+            def _toggle_side(idx=i, var=side_var):
+                self.state.mtg_url_decks[idx].include_side = var.get()
+                self._refresh_generate_state()
+
+            ttk.Checkbutton(
+                controls, text="Incluir sideboard", variable=side_var, command=_toggle_side
+            ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
+
+        token_var = tk.BooleanVar(value=deck.include_tokens)
+
+        def _toggle_tokens(idx=i, var=token_var):
+            self.state.mtg_url_decks[idx].include_tokens = var.get()
+            self._refresh_generate_state()
+
+        ttk.Checkbutton(
+            controls,
+            text="Incluir tokens y extras",
+            variable=token_var,
+            command=_toggle_tokens,
+        ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
+
+        selected_ids = deck.selected_card_ids
+        if selected_ids is None:
+            selected_ids = {id(card) for card in deck.cards}
+        card_vars: dict[int, tk.BooleanVar] = {}
+
+        for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
+            self._render_mtg_card_row(detail, deck, card, selected_ids, card_vars)
+
+        return detail, expanded
+
     def _render_mtg_rows(self) -> None:
         numbered = [str(j + 1) for j in range(len(self.state.local_backs))]
         back_combo_values = ["default", *numbered]
@@ -621,85 +664,7 @@ class DecksTabMixin:
             ).grid(row=0, column=col, padx=(0, 2))
             col += 1
 
-            detail = ttk.Frame(outer)
-            controls = ttk.Frame(detail)
-            controls.pack(fill=tk.X, padx=(12, 4), pady=(0, 4))
-            expanded = tk.BooleanVar(value=False)
-
-            if side_count:
-                side_var = tk.BooleanVar(value=deck.include_side)
-
-                def _toggle_side(idx=i, var=side_var):
-                    self.state.mtg_url_decks[idx].include_side = var.get()
-                    self._refresh_generate_state()
-
-                ttk.Checkbutton(
-                    controls, text="Incluir sideboard", variable=side_var, command=_toggle_side
-                ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
-
-            token_var = tk.BooleanVar(value=deck.include_tokens)
-
-            def _toggle_tokens(idx=i, var=token_var):
-                self.state.mtg_url_decks[idx].include_tokens = var.get()
-                self._refresh_generate_state()
-
-            ttk.Checkbutton(
-                controls,
-                text="Incluir tokens y extras",
-                variable=token_var,
-                command=_toggle_tokens,
-            ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
-
-            selected_ids = deck.selected_card_ids
-            if selected_ids is None:
-                selected_ids = {id(card) for card in deck.cards}
-            card_vars: dict[int, tk.BooleanVar] = {}
-
-            def _sync_cards(d=deck, vars=card_vars):
-                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
-                self._refresh_generate_state()
-
-            for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
-                card_row = ttk.Frame(detail)
-                card_row.pack(fill=tk.X, padx=(12, 4))
-                card_vars[id(card)] = tk.BooleanVar(value=id(card) in selected_ids)
-                ttk.Checkbutton(card_row, variable=card_vars[id(card)], command=_sync_cards).pack(
-                    side=tk.LEFT
-                )
-
-                qty_var = tk.IntVar(value=card.quantity)
-
-                def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[id(card)]):
-                    def _update(*_args):
-                        try:
-                            new_qty = var.get()
-                            if new_qty == 0:
-                                checkvar.set(False)
-                                _sync_cards()
-                            elif new_qty >= 1:
-                                c.quantity = new_qty
-                                checkvar.set(True)
-                                _sync_cards()
-                        except tk.TclError:
-                            pass  # Invalid input, ignore
-
-                    return _update
-
-                qty_spinbox = ttk.Spinbox(
-                    card_row,
-                    from_=0,
-                    to=99,
-                    width=4,
-                    textvariable=qty_var,
-                    command=_make_qty_updater(),
-                )
-                qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
-                qty_var.trace_add("write", _make_qty_updater())
-
-                ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(
-                    side=tk.LEFT
-                )
-                ttk.Label(card_row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+            detail, expanded = self._render_mtg_detail(outer, i, deck, side_count)
 
             extras_btn = ttk.Button(
                 right,
@@ -808,76 +773,7 @@ class DecksTabMixin:
                 command=lambda i=idx: self._op_remove_deck(i),
             ).grid(row=0, column=4)
 
-            detail = ttk.Frame(outer)
-            selected_ids = getattr(deck, "selected_card_ids", {card.card_id for card in deck.cards})
-            card_vars: dict[str, tk.BooleanVar] = {}
-
-            def _sync_selection(d=deck, vars=card_vars) -> None:
-                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
-                self._refresh_generate_state()
-
-            for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
-                row_f = ttk.Frame(detail)
-                card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
-                ttk.Checkbutton(
-                    row_f, variable=card_vars[card.card_id], command=_sync_selection
-                ).pack(side=tk.LEFT, padx=(0, 2))
-                row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-
-                qty_var = tk.IntVar(value=card.quantity)
-
-                def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
-                    def _update(*_args):
-                        try:
-                            new_qty = var.get()
-                            if new_qty == 0:
-                                checkvar.set(False)
-                                _sync_selection()
-                            elif new_qty >= 1:
-                                c.quantity = new_qty
-                                checkvar.set(True)
-                                _sync_selection()
-                        except tk.TclError:
-                            pass  # Invalid input, ignore
-
-                    return _update
-
-                qty_spinbox = ttk.Spinbox(
-                    row_f,
-                    from_=0,
-                    to=99,
-                    width=4,
-                    textvariable=qty_var,
-                    command=_make_qty_updater(),
-                )
-                qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
-                qty_var.trace_add("write", _make_qty_updater())
-
-                if card.is_leader:
-                    ttk.Label(
-                        row_f,
-                        text="LÍDER",
-                        foreground="#1565C0",
-                        font=("Segoe UI", 8, "bold"),
-                        width=7,
-                        anchor="w",
-                    ).pack(side=tk.LEFT, padx=(0, 4))
-
-                ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", width=25).pack(
-                    side=tk.LEFT
-                )
-                ttk.Label(
-                    row_f,
-                    text=card.card_id,
-                    foreground="#888",
-                    font=("Segoe UI", 8),
-                    anchor="w",
-                    width=10,
-                ).pack(side=tk.LEFT, padx=(4, 0))
-                if card.colors:
-                    ttk.Label(
-                        row_f, text=" / ".join(card.colors), foreground="#555", font=("Segoe UI", 8)
-                    ).pack(side=tk.LEFT, padx=(6, 0))
+            detail = self._render_op_detail(outer, deck)
 
             self._op_deck_rows.append(
                 {
@@ -888,6 +784,83 @@ class DecksTabMixin:
                     "deck": deck,
                 }
             )
+
+    def _render_op_card_row(self, detail, card, selected_ids, card_vars, sync_fn) -> None:
+        """Render a single One Piece card row."""
+        row_f = ttk.Frame(detail)
+        card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
+        ttk.Checkbutton(row_f, variable=card_vars[card.card_id], command=sync_fn).pack(
+            side=tk.LEFT, padx=(0, 2)
+        )
+        row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
+
+        qty_var = tk.IntVar(value=card.quantity)
+
+        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
+            def _update(*_args):
+                try:
+                    new_qty = var.get()
+                    if new_qty == 0:
+                        checkvar.set(False)
+                        sync_fn()
+                    elif new_qty >= 1:
+                        c.quantity = new_qty
+                        checkvar.set(True)
+                        sync_fn()
+                except tk.TclError:
+                    pass  # Invalid input, ignore
+
+            return _update
+
+        qty_spinbox = ttk.Spinbox(
+            row_f,
+            from_=0,
+            to=99,
+            width=4,
+            textvariable=qty_var,
+            command=_make_qty_updater(),
+        )
+        qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
+        qty_var.trace_add("write", _make_qty_updater())
+
+        if card.is_leader:
+            ttk.Label(
+                row_f,
+                text="LÍDER",
+                foreground="#1565C0",
+                font=("Segoe UI", 8, "bold"),
+                width=7,
+                anchor="w",
+            ).pack(side=tk.LEFT, padx=(0, 4))
+
+        ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", width=25).pack(side=tk.LEFT)
+        ttk.Label(
+            row_f,
+            text=card.card_id,
+            foreground="#888",
+            font=("Segoe UI", 8),
+            anchor="w",
+            width=10,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        if card.colors:
+            ttk.Label(
+                row_f, text=" / ".join(card.colors), foreground="#555", font=("Segoe UI", 8)
+            ).pack(side=tk.LEFT, padx=(6, 0))
+
+    def _render_op_detail(self, outer, deck):
+        """Build the OP detail frame with per-card rows."""
+        detail = ttk.Frame(outer)
+        selected_ids = getattr(deck, "selected_card_ids", {card.card_id for card in deck.cards})
+        card_vars: dict[str, tk.BooleanVar] = {}
+
+        def _sync_selection(d=deck, vars=card_vars) -> None:
+            d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+            self._refresh_generate_state()
+
+        for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
+            self._render_op_card_row(detail, card, selected_ids, card_vars, _sync_selection)
+
+        return detail
 
     def _op_toggle_details(self, idx: int) -> None:
         if idx >= len(self._op_deck_rows):
@@ -912,6 +885,85 @@ class DecksTabMixin:
             self._refresh_generate_state()
 
     # ── Riftbound deck rows ───────────────────────────────────────────────
+
+    def _render_rb_card_row(self, detail, card, selected_ids, card_vars, sync_fn) -> None:
+        """Render a single Riftbound card row."""
+        row_f = ttk.Frame(detail)
+        row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
+        card_vars[card.variant_id] = tk.BooleanVar(value=card.variant_id in selected_ids)
+        ttk.Checkbutton(row_f, variable=card_vars[card.variant_id], command=sync_fn).pack(
+            side=tk.LEFT, padx=(0, 2)
+        )
+
+        qty_var = tk.IntVar(value=card.quantity)
+
+        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.variant_id]):
+            def _update(*_args):
+                try:
+                    new_qty = var.get()
+                    if new_qty == 0:
+                        checkvar.set(False)
+                        sync_fn()
+                    elif new_qty >= 1:
+                        c.quantity = new_qty
+                        checkvar.set(True)
+                        sync_fn()
+                except tk.TclError:
+                    pass  # Invalid input, ignore
+
+            return _update
+
+        qty_spinbox = ttk.Spinbox(
+            row_f,
+            from_=0,
+            to=99,
+            width=4,
+            textvariable=qty_var,
+            command=_make_qty_updater(),
+        )
+        qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
+        qty_var.trace_add("write", _make_qty_updater())
+
+        name_frame = ttk.Frame(row_f)
+        name_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", font=("Segoe UI", 8)).pack(
+            side=tk.LEFT
+        )
+
+        ttk.Label(
+            row_f,
+            text=f"({card.card_id})",
+            foreground="#666",
+            font=("Consolas", 7),
+            anchor="w",
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+    def _render_rb_detail(self, outer, deck, by_sec):
+        """Build the RB detail frame with per-section card rows."""
+        detail = ttk.Frame(outer)
+        selected_ids = getattr(deck, "selected_card_ids", {card.variant_id for card in deck.cards})
+        card_vars: dict[str, tk.BooleanVar] = {}
+
+        def _sync_selection(d=deck, vars=card_vars) -> None:
+            d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
+            self._refresh_generate_state()
+
+        for section, cards in by_sec.items():
+            if not cards:
+                continue
+            sec_lbl = _SECTION_LABELS.get(section, section)
+            ttk.Label(
+                detail,
+                text=f"── {sec_lbl} ──",
+                foreground="#888",
+                font=("Segoe UI", 8, "italic"),
+                padding=(12, 2, 0, 0),
+            ).pack(anchor="w")
+            for card in sorted(cards, key=lambda c: c.name.casefold()):
+                self._render_rb_card_row(detail, card, selected_ids, card_vars, _sync_selection)
+
+        return detail
 
     def _render_rb_rows(self) -> None:
         for idx, deck in enumerate(self._rb_decks):
@@ -990,80 +1042,7 @@ class DecksTabMixin:
                 command=lambda i=idx: self._rb_remove_deck(i),
             ).grid(row=0, column=6)
 
-            detail = ttk.Frame(outer)
-            selected_ids = getattr(
-                deck, "selected_card_ids", {card.variant_id for card in deck.cards}
-            )
-            card_vars: dict[str, tk.BooleanVar] = {}
-
-            def _sync_selection(d=deck, vars=card_vars) -> None:
-                d.selected_card_ids = {card_id for card_id, var in vars.items() if var.get()}
-                self._refresh_generate_state()
-
-            for section, cards in by_sec.items():
-                if not cards:
-                    continue
-                sec_lbl = _SECTION_LABELS.get(section, section)
-                ttk.Label(
-                    detail,
-                    text=f"── {sec_lbl} ──",
-                    foreground="#888",
-                    font=("Segoe UI", 8, "italic"),
-                    padding=(12, 2, 0, 0),
-                ).pack(anchor="w")
-                for card in sorted(cards, key=lambda c: c.name.casefold()):
-                    row_f = ttk.Frame(detail)
-                    row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-                    card_vars[card.variant_id] = tk.BooleanVar(
-                        value=card.variant_id in selected_ids
-                    )
-                    ttk.Checkbutton(
-                        row_f, variable=card_vars[card.variant_id], command=_sync_selection
-                    ).pack(side=tk.LEFT, padx=(0, 2))
-
-                    qty_var = tk.IntVar(value=card.quantity)
-
-                    def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.variant_id]):
-                        def _update(*_args):
-                            try:
-                                new_qty = var.get()
-                                if new_qty == 0:
-                                    checkvar.set(False)
-                                    _sync_selection()
-                                elif new_qty >= 1:
-                                    c.quantity = new_qty
-                                    checkvar.set(True)
-                                    _sync_selection()
-                            except tk.TclError:
-                                pass  # Invalid input, ignore
-
-                        return _update
-
-                    qty_spinbox = ttk.Spinbox(
-                        row_f,
-                        from_=0,
-                        to=99,
-                        width=4,
-                        textvariable=qty_var,
-                        command=_make_qty_updater(),
-                    )
-                    qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
-                    qty_var.trace_add("write", _make_qty_updater())
-
-                    name_frame = ttk.Frame(row_f)
-                    name_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-                    ttk.Label(
-                        row_f, text=ellipsize(card.name, 24), anchor="w", font=("Segoe UI", 8)
-                    ).pack(side=tk.LEFT)
-
-                    ttk.Label(
-                        row_f,
-                        text=f"({card.card_id})",
-                        foreground="#666",
-                        font=("Consolas", 7),
-                        anchor="w",
-                    ).pack(side=tk.LEFT, padx=(4, 0))
+            detail = self._render_rb_detail(outer, deck, by_sec)
 
             self._rb_deck_rows.append(
                 {
