@@ -403,7 +403,7 @@ python3 -m ruff check --select ALL src/ gui/ cli/
 
 ## ✅ **CHECKLIST DE IMPLEMENTACIÓN**
 
-- [ ] Tests para `tcg_batches.py`
+- [x] Tests para `tcg_batches.py`
 - [ ] Reducir complejidad de `main()` (cli)
 - [ ] Reducir complejidad de `_update_preflight()`
 - [ ] Reducir complejidad de `_open_url_dialog()`
@@ -412,7 +412,7 @@ python3 -m ruff check --select ALL src/ gui/ cli/
 - [ ] Eliminar duplicación en `decks_tab.py`
 - [ ] Agregar docstrings faltantes
 - [ ] Extraer magic numbers a constantes
-- [ ] Centralizar URLs de APIs
+- [x] Centralizar URLs de APIs
 - [ ] Completar type hints
 - [ ] Tests para `execution_plan.py`
 - [ ] Tests para `http_client.py`
