@@ -181,6 +181,7 @@ def _draw_page(
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
     cut_line_over_cards: bool = DEFAULT_CUT_LINE_OVER_CARDS,
+    _valid_paths: set[str] | None = None,
 ) -> None:
     color_rgb = _hex_to_rgb(cut_line_color)
 
@@ -193,14 +194,22 @@ def _draw_page(
         x, y = _trim_origin(col, row, layout)
         if slot is not None and slot in slot_to_id:
             img_path = id_to_path.get(slot_to_id[slot])
-            if img_path and img_path.exists():
-                c.drawImage(
-                    str(img_path),
-                    x - BLEED,
-                    y - BLEED,
-                    width=layout.card_w + 2 * BLEED,
-                    height=layout.card_h + 2 * BLEED,
-                )
+            if img_path is None:
+                continue
+            # Use the pre-validated set when available (avoids repeated
+            # exists() syscalls); fall back to a direct check otherwise.
+            if _valid_paths is not None:
+                if str(img_path) not in _valid_paths:
+                    continue
+            elif not img_path.exists():
+                continue
+            c.drawImage(
+                str(img_path),
+                x - BLEED,
+                y - BLEED,
+                width=layout.card_w + 2 * BLEED,
+                height=layout.card_h + 2 * BLEED,
+            )
 
     if cut_line_over_cards:
         _draw_crop_marks(c, layout, color_rgb, cut_line_style, cut_line_width)
@@ -259,6 +268,8 @@ def _render_chunk(
     layout: CardLayout = STANDARD_LAYOUT,
 ) -> None:
     """Write a duplex-safe chunk, preserving its original global page labels."""
+    # Pre-validate image paths once per chunk to avoid per-slot exists() syscalls.
+    _valid: set[str] = {str(p) for p in id_to_path.values() if p.exists()}
     c = canvas.Canvas(str(path), pagesize=A4)
     for page_index, page_slots in enumerate(chunk):
         if cancel_event is not None and cancel_event.is_set():
@@ -281,6 +292,7 @@ def _render_chunk(
             cut_line_style=front_style,
             cut_line_width=cut_line_width,
             cut_line_over_cards=front_over,
+            _valid_paths=_valid,
         )
         c.showPage()
 
@@ -304,6 +316,7 @@ def _render_chunk(
                 cut_line_style=back_style,
                 cut_line_width=cut_line_width,
                 cut_line_over_cards=back_over,
+                _valid_paths=_valid,
             )
             c.showPage()
     c.save()
@@ -372,32 +385,34 @@ def generate(
     if current:
         chunks.append(current)
 
+    def _estimate_chunk_bytes(chunk: list[list[int]]) -> int:
+        """Estimate the on-disk PDF size of a chunk without rendering it.
+
+        Uses the same _projected_pdf_bytes projection as the chunking phase,
+        summing only unique image IDs across the whole chunk.
+        """
+        seen_ids: set[str] = set()
+        total = 0
+        for page_slots in chunk:
+            for drive_id in _pair_drive_ids(page_slots, front_slot_to_id, back_slot_to_id):
+                if drive_id not in seen_ids:
+                    seen_ids.add(drive_id)
+                    total += id_bytes(drive_id)
+        return total
+
     def _fit_chunk(
         chunk: list[list[int]], temp_dir: Path, probe_number: list[int]
     ) -> list[list[list[int]]]:
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
-        probe = temp_dir / f"probe_{probe_number[0]}.pdf"
-        probe_number[0] += 1
-        _render_chunk(
-            probe,
-            chunk,
-            1,
-            id_to_path,
-            front_slot_to_id,
-            back_slot_to_id,
-            fronts_only,
-            cut_line_color,
-            cut_line_style,
-            cut_line_width,
-            cut_line_over_cards,
-            cut_line_over_fronts,
-            cut_line_over_backs,
-            cancel_event,
-            layout,
-        )
-        if probe.stat().st_size <= max_bytes or len(chunk) == 1:
+        # Fast path: if the byte projection says this chunk fits comfortably,
+        # skip the probe render entirely — the chunking phase already split
+        # on projected bytes, so this only triggers when projection was off.
+        if _estimate_chunk_bytes(chunk) <= max_bytes:
             return [chunk]
+        if len(chunk) == 1:
+            return [chunk]
+        # Projection says it won't fit — split without rendering a probe.
         midpoint = len(chunk) // 2
         return _fit_chunk(chunk[:midpoint], temp_dir, probe_number) + _fit_chunk(
             chunk[midpoint:], temp_dir, probe_number

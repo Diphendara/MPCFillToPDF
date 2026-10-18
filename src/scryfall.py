@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -42,6 +43,46 @@ _cache_lock = threading.Lock()
 
 _name_cache: dict[str, tuple[str, str]] = {}
 _name_cache_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Persistent disk cache for Scryfall API responses.
+# Stored as JSON under workdir/scryfall_cache/. Entries expire after 7 days.
+# ---------------------------------------------------------------------------
+_DISK_CACHE_DIR = Path("workdir") / "scryfall_cache"
+_DISK_CACHE_TTL = 7 * 24 * 3600  # 7 days in seconds
+_disk_cache_lock = threading.Lock()
+
+
+def _disk_cache_path(key: str) -> Path:
+    """Return the cache file path for a given key (already URL-safe)."""
+    safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", key)
+    return _DISK_CACHE_DIR / f"{safe}.json"
+
+
+def _disk_cache_get(key: str) -> dict | None:
+    """Read a cached API response from disk. Returns None if missing or expired."""
+    path = _disk_cache_path(key)
+    if not path.exists():
+        return None
+    try:
+        with _disk_cache_lock, path.open(encoding="utf-8") as fh:
+            entry = json.load(fh)
+        if time.time() - entry.get("ts", 0) > _DISK_CACHE_TTL:
+            return None
+        return entry.get("data")
+    except (OSError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def _disk_cache_put(key: str, data: dict) -> None:
+    """Write an API response to the disk cache."""
+    try:
+        _DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path = _disk_cache_path(key)
+        with _disk_cache_lock, path.open("w", encoding="utf-8") as fh:
+            json.dump({"ts": time.time(), "data": data}, fh)
+    except OSError:
+        pass  # Cache write failure is non-fatal
 
 
 class ScryfallError(Exception):
@@ -137,6 +178,15 @@ def fetch_card(set_code: str, collector_number: str) -> ScryfallCard:
         if key in _cache:
             return _cache[key]
 
+    # Check persistent disk cache before hitting the API.
+    disk_key = f"card_{set_code.lower()}_{collector_number}"
+    disk_data = _disk_cache_get(disk_key)
+    if disk_data is not None:
+        result = _card_from_response(disk_data, set_code, collector_number)
+        with _cache_lock:
+            _cache[key] = result
+        return result
+
     url = _SCRYFALL_API.format(set_code=set_code.lower(), number=collector_number)
     try:
         resp = _throttled_get(url)
@@ -151,9 +201,18 @@ def fetch_card(set_code: str, collector_number: str) -> ScryfallCard:
             f"Error de conexión con Scryfall ({set_code}/{collector_number}): {exc}"
         ) from exc
 
+    _disk_cache_put(disk_key, data)
+    result = _card_from_response(data, set_code, collector_number)
+    with _cache_lock:
+        _cache[key] = result
+    return result
+
+
+def _card_from_response(data: dict, set_code: str, collector_number: str) -> ScryfallCard:
+    """Build a ScryfallCard from a raw API response dict."""
     if "image_uris" in data:
-        result = ScryfallCard(data["image_uris"]["large"], None)
-    elif "card_faces" in data:
+        return ScryfallCard(data["image_uris"]["large"], None)
+    if "card_faces" in data:
         faces = data["card_faces"]
         front = faces[0].get("image_uris", {}).get("large", "")
         back = faces[1].get("image_uris", {}).get("large") if len(faces) > 1 else None
@@ -161,19 +220,19 @@ def fetch_card(set_code: str, collector_number: str) -> ScryfallCard:
             raise ScryfallError(
                 f"No se encontró imagen de frente para {set_code}/{collector_number}"
             )
-        result = ScryfallCard(front, back)
-    else:
-        raise ScryfallError(
-            f"Formato de respuesta inesperado de Scryfall para {set_code}/{collector_number}"
-        )
-
-    with _cache_lock:
-        _cache[key] = result
-    return result
+        return ScryfallCard(front, back)
+    raise ScryfallError(
+        f"Formato de respuesta inesperado de Scryfall para {set_code}/{collector_number}"
+    )
 
 
 def fetch_card_by_id(card_id: str) -> ScryfallCard:
     """Return front/back image URLs for a Scryfall card UUID."""
+    disk_key = f"id_{card_id}"
+    disk_data = _disk_cache_get(disk_key)
+    if disk_data is not None:
+        return _card_from_id_response(disk_data, card_id)
+
     try:
         resp = _throttled_get(_SCRYFALL_ID_API.format(card_id=card_id))
         resp.raise_for_status()
@@ -182,6 +241,13 @@ def fetch_card_by_id(card_id: str) -> ScryfallCard:
         raise ScryfallError(f"Carta no encontrada en Scryfall: {card_id} ({exc})") from exc
     except requests.RequestException as exc:
         raise ScryfallError(f"Error de conexión con Scryfall ({card_id}): {exc}") from exc
+
+    _disk_cache_put(disk_key, data)
+    return _card_from_id_response(data, card_id)
+
+
+def _card_from_id_response(data: dict, card_id: str) -> ScryfallCard:
+    """Build a ScryfallCard from a raw API response dict (by-ID variant)."""
     if "image_uris" in data:
         return ScryfallCard(data["image_uris"]["large"], None)
     if "card_faces" in data:
@@ -200,6 +266,15 @@ def fetch_card_by_name(name: str) -> tuple[str, str]:
         if key in _name_cache:
             return _name_cache[key]
 
+    # Check persistent disk cache before hitting the API.
+    disk_key = f"name_{key}"
+    disk_data = _disk_cache_get(disk_key)
+    if disk_data is not None:
+        result = (str(disk_data.get("set", "")).lower(), str(disk_data.get("collector_number", "")))
+        with _name_cache_lock:
+            _name_cache[key] = result
+        return result
+
     try:
         resp = _throttled_get(_SCRYFALL_NAMED_API, params={"exact": name})
         resp.raise_for_status()
@@ -209,6 +284,7 @@ def fetch_card_by_name(name: str) -> tuple[str, str]:
     except requests.RequestException as exc:
         raise ScryfallError(f"Error de conexión con Scryfall ({name}): {exc}") from exc
 
+    _disk_cache_put(disk_key, data)
     result = (str(data.get("set", "")).lower(), str(data.get("collector_number", "")))
     with _name_cache_lock:
         _name_cache[key] = result
