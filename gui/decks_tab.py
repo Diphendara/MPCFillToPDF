@@ -438,6 +438,18 @@ class DecksTabMixin:
 
         self._decks_inner.update_idletasks()
         self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
+        self._auto_resize_window()
+
+    def _auto_resize_window(self) -> None:
+        """Resize the window if the content requires more width than available."""
+        self.root.update_idletasks()
+        needed = self._decks_inner.winfo_reqwidth()
+        current = self.root.winfo_width()
+        # Add padding for the other panels (locals + summary) and margins
+        min_needed = needed + 500  # ~500px for locals pane + summary + margins
+        if min_needed > current:
+            new_width = min(min_needed, self.root.winfo_screenwidth() - 100)
+            self.root.geometry(f"{new_width}x{self.root.winfo_height()}")
 
     # Compatibility shims: each TCG refresh just rebuilds the unified list
     def _op_refresh_rows(self) -> None:
