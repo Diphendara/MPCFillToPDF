@@ -1,4 +1,4 @@
-"""Riftbound deck scraper — piltoverarchive.com, riftmana.com, riftbinder.com, riftdex.com, riftbound.gg"""
+"""Riftbound deck scraper — piltoverarchive.com, riftmana.com, riftbinder.com, riftdex.com, riftbound.gg."""
 
 from __future__ import annotations
 
@@ -67,6 +67,8 @@ _MAINDECK_SECTIONS = {"champion", "maindeck", "sideboard"}
 
 @dataclass
 class RBCard:
+    """A Riftbound card with ID, name, and image URL."""
+
     card_id: str
     variant_id: str
     name: str
@@ -79,6 +81,8 @@ class RBCard:
 
 @dataclass
 class RBDeck:
+    """A Riftbound deck with cards and metadata."""
+
     deck_id: str
     name: str
     cards: list[RBCard] = field(default_factory=list)

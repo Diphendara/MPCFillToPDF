@@ -27,6 +27,8 @@ _IMAGE_URL = "https://images.ygoprodeck.com/images/cards/{card_id}.jpg"
 
 @dataclass(frozen=True)
 class YGOCard:
+    """A Yu-Gi-Oh! card with ID, name, and image URL."""
+
     card_id: int
     name: str
     quantity: int
@@ -35,6 +37,8 @@ class YGOCard:
 
 @dataclass
 class YGODeck:
+    """A Yu-Gi-Oh! deck with cards and metadata."""
+
     name: str
     deck_id: str
     cards: list[YGOCard]

@@ -44,11 +44,15 @@ _name_cache_lock = threading.Lock()
 
 
 class ScryfallError(Exception):
+    """Raised when Scryfall API returns an error or unexpected response."""
+
     pass
 
 
 @dataclass
 class ScryfallCard:
+    """A card from Scryfall with front and optional back image URLs."""
+
     front_url: str
     back_url: str | None
 

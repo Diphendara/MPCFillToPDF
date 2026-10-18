@@ -12,7 +12,7 @@ from pathlib import Path
 
 import requests  # noqa: F401 - retained as the precheck test transport seam
 
-from src.constants import CARDS_PER_PAGE
+from src.constants import CARDS_PER_PAGE, ProgressCallback
 from src.http_client import get as http_get
 from src.parser import parse
 

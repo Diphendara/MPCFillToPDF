@@ -1,4 +1,4 @@
-"""Lorcana deck scraper — supports lorcana.gg, inkdecks.com"""
+"""Lorcana deck scraper — supports lorcana.gg, inkdecks.com."""
 
 from __future__ import annotations
 
@@ -49,6 +49,8 @@ _fallback_back_path: Path | None = None
 
 @dataclass
 class LorcanaCard:
+    """A Lorcana card with ID, name, and image URL."""
+
     card_id: str
     name: str
     quantity: int
@@ -57,6 +59,8 @@ class LorcanaCard:
 
 @dataclass
 class LocanaDeck:
+    """A Lorcana deck with cards and metadata."""
+
     deck_id: str
     name: str
     cards: list[LorcanaCard] = field(default_factory=list)

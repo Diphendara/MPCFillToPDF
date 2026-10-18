@@ -93,6 +93,8 @@ def _generate_fallback_backs() -> tuple[Path, Path]:
 
 @dataclass
 class OPCard:
+    """A One Piece card with ID, name, and image URL."""
+
     card_id: str
     name: str
     quantity: int

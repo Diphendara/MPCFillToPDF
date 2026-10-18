@@ -16,7 +16,7 @@ from src.app_settings import (
     DEFAULT_CUT_LINE_WIDTH,
 )
 from src.cancellation import Cancelled
-from src.constants import CARDS_PER_PAGE, COLS, ROWS
+from src.constants import CARDS_PER_PAGE, COLS, ROWS, ProgressCallback
 
 
 @dataclass(frozen=True)
