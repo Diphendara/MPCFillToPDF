@@ -282,19 +282,24 @@ class App(
             anchor=tk.W,
         ).pack(fill=tk.X)
 
-        self._preflight_frame = ttk.LabelFrame(bottom_controls, text="Resumen")
-        self._preflight_inner = ttk.Frame(self._preflight_frame)
-        self._preflight_inner.pack(fill=tk.X, padx=6, pady=4)
-        self._preflight_labels: list[ttk.Label] = []
-
         top = ttk.Frame(frm)
         top.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        top.columnconfigure(0, weight=1, uniform="cols")
-        top.columnconfigure(1, weight=1, uniform="cols")
+        top.columnconfigure(0, weight=2, uniform="cols")
+        top.columnconfigure(1, weight=2, uniform="cols")
+        top.columnconfigure(2, weight=1, uniform="cols")
         top.rowconfigure(0, weight=1)
 
         self._build_xml_pane(top)
         self._build_locals_pane(top)
+        self._build_summary_pane(top)
+
+    def _build_summary_pane(self, parent: ttk.Frame) -> None:
+        """Build the right side: summary/preflight panel."""
+        self._preflight_frame = ttk.LabelFrame(parent, text="Resumen")
+        self._preflight_frame.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+        self._preflight_inner = ttk.Frame(self._preflight_frame)
+        self._preflight_inner.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self._preflight_labels: list[ttk.Label] = []
 
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         """Build the left side: unified decks panel + Settings tab."""
@@ -573,7 +578,7 @@ class App(
             and not self._ygo_decks
             and not self.state.mtg_url_decks
         ):
-            self._preflight_frame.pack_forget()
+            self._preflight_frame.grid_remove()
             return
 
         xml_total = self._preflight_xml_rows()
@@ -602,7 +607,7 @@ class App(
             xml_plan = self._loaded_xml_plan() if self.state.xml_paths else None
             self._preflight_plan_summary(xml_plan, total_cards, cache_str)
 
-        self._preflight_frame.pack(fill=tk.X, pady=(8, 0))
+        self._preflight_frame.grid()
 
     def _refresh_generate_state(self) -> None:
         ready = (
