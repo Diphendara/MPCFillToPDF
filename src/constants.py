@@ -20,3 +20,17 @@ StageCallback = Callable[[str, int, int], None] | None
 JobPdfStartCallback = Callable[[int, int, str], None] | None
 SpeedCallback = Callable[[float, float], None] | None
 ImageDoneCallback = Callable[[str], None] | None
+
+
+class UIConstants:
+    """UI-related constants for the tkinter GUI."""
+
+    SPINBOX_WIDTH = 4
+    BUTTON_WIDTH = 10
+    LABEL_WIDTH = 25
+    ENTRY_WIDTH = 40
+    COMBOBOX_WIDTH = 20
+    ICON_SIZE = 16
+    PAD_SMALL = 2
+    PAD_MEDIUM = 4
+    PAD_LARGE = 8
