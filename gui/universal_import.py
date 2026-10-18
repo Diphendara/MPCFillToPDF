@@ -172,37 +172,7 @@ class UniversalImportDialog:
 
         def _import():
             try:
-                if tcg == "Riftbound":
-                    # Detect format: Piltover (with sections) or simple (with codes)
-                    has_sections = any(
-                        line.strip().endswith(":")
-                        and line.strip()[:-1].lower()
-                        in ["legend", "champion", "maindeck", "battlefields", "runes", "sideboard"]
-                        for line in text.splitlines()
-                    )
-
-                    if has_sections:
-                        # Piltover Archive format
-                        deck = build_riftbound_deck_from_piltover_text(
-                            text, deck_name="Imported from text"
-                        )
-                    else:
-                        # Simple format with codes
-                        deck = build_riftbound_deck_from_text(text, deck_name="Imported from text")
-                    self.events.put(("rb_deck_loaded", deck))
-                elif tcg == "MTG":
-                    result = parse_mtg_text(text)
-                    self.events.put(("mtg_url_loaded", "", result.cards, False, result.name))
-                elif tcg == "Lorcana":
-                    deck = parse_lorcana_text(text)
-                    self.events.put(("lorcana_deck_loaded", deck))
-                elif tcg == "One Piece":
-                    deck = parse_op_text(text)
-                    self.events.put(("op_deck_loaded", deck))
-                elif tcg == "Yu-Gi-Oh":
-                    deck = parse_ygo_text(text)
-                    self.events.put(("ygo_deck_loaded", deck))
-
+                self._dispatch_text_import(tcg, text)
                 self.dialog.after(0, self.dialog.destroy)
             except TextImportError as exc:
                 error_msg = str(exc)
@@ -212,3 +182,39 @@ class UniversalImportDialog:
                 self.dialog.after(0, lambda msg=error_msg: self.status_var.set(f"❌ Error: {msg}"))
 
         threading.Thread(target=_import, daemon=True).start()
+
+    def _dispatch_text_import(self, tcg: str, text: str) -> None:
+        """Parse the text with the parser matching the TCG and push the event."""
+        if tcg == "Riftbound":
+            deck = self._import_riftbound(text)
+            self.events.put(("rb_deck_loaded", deck))
+        elif tcg == "MTG":
+            result = parse_mtg_text(text)
+            self.events.put(("mtg_url_loaded", "", result.cards, False, result.name))
+        elif tcg == "Lorcana":
+            deck = parse_lorcana_text(text)
+            self.events.put(("lorcana_deck_loaded", deck))
+        elif tcg == "One Piece":
+            deck = parse_op_text(text)
+            self.events.put(("op_deck_loaded", deck))
+        elif tcg == "Yu-Gi-Oh":
+            deck = parse_ygo_text(text)
+            self.events.put(("ygo_deck_loaded", deck))
+
+    @staticmethod
+    def _import_riftbound(text: str):
+        """Parse Riftbound text, auto-detecting Piltover (sections) vs simple (codes) format."""
+        has_sections = any(
+            line.strip().endswith(":")
+            and line.strip()[:-1].lower()
+            in ["legend", "champion", "maindeck", "battlefields", "runes", "sideboard"]
+            for line in text.splitlines()
+        )
+
+        if has_sections:
+            # Piltover Archive format
+            return build_riftbound_deck_from_piltover_text(
+                text, deck_name="Imported from text"
+            )
+        # Simple format with codes
+        return build_riftbound_deck_from_text(text, deck_name="Imported from text")
