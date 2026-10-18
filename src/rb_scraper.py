@@ -141,10 +141,23 @@ def _generate_fallback_back(section: str) -> Path:
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 
-def _type_to_section(card_type: str, card_super: str | None = None) -> str:
+def _normalize_type(value) -> str:
+    """Normalize a card type/supertype value from any source to a plain string.
+
+    The dotgg API returns ``type`` as a *list* (e.g. ``["Spell"]``) while other
+    sources use plain strings. This helper flattens lists and coerces to str.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    return str(value)
+
+
+def _type_to_section(card_type, card_super: str | None = None) -> str:
     """Map Riftbound card type + super to a deck section name."""
-    t = (card_type or "").lower()
-    s = (card_super or "").lower()
+    t = _normalize_type(card_type).lower()
+    s = _normalize_type(card_super).lower()
     if t == "legend":
         return "legend"
     if t == "battlefield":
@@ -220,14 +233,16 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
 
     for code, qty_str in deck_data.get("deck", {}).items():
         meta = cards_db.get(code, {})
-        section = _type_to_section(meta.get("type", ""), meta.get("supertype"))
+        card_type = _normalize_type(meta.get("type"))
+        card_super = _normalize_type(meta.get("supertype")) or None
+        section = _type_to_section(card_type, card_super)
         cards.append(
             RBCard(
                 card_id=code,
                 variant_id=code,
                 name=meta.get("name", code),
-                card_type=meta.get("type", ""),
-                card_super=meta.get("supertype"),
+                card_type=card_type,
+                card_super=card_super,
                 quantity=int(qty_str),
                 image_url=_RBGG_IMG_URL.format(code=code),
                 section=section,
@@ -244,8 +259,8 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
                     card_id=code,
                     variant_id=f"{code}_sb",
                     name=meta.get("name", code),
-                    card_type=meta.get("type", ""),
-                    card_super=meta.get("supertype"),
+                    card_type=_normalize_type(meta.get("type")),
+                    card_super=_normalize_type(meta.get("supertype")) or None,
                     quantity=int(qty_str),
                     image_url=_RBGG_IMG_URL.format(code=code),
                     section="sideboard",
@@ -282,15 +297,17 @@ def _scrape_riftmana(url: str) -> RBDeck:
 
     cards: list[RBCard] = []
     for item in data.get("cards", []):
-        section = _type_to_section(item.get("type", ""), item.get("super"))
+        card_type = _normalize_type(item.get("type"))
+        card_super = _normalize_type(item.get("super")) or None
+        section = _type_to_section(card_type, card_super)
         code = item["code"].upper()
         cards.append(
             RBCard(
                 card_id=code,
                 variant_id=code,
                 name=item.get("name", code),
-                card_type=item.get("type", ""),
-                card_super=item.get("super"),
+                card_type=card_type,
+                card_super=card_super,
                 quantity=int(item.get("quantity", 1)),
                 image_url=item.get("image", ""),
                 section=section,
@@ -303,8 +320,8 @@ def _scrape_riftmana(url: str) -> RBDeck:
                 card_id=code,
                 variant_id=f"{code}_sb",
                 name=item.get("name", code),
-                card_type=item.get("type", ""),
-                card_super=item.get("super"),
+                card_type=_normalize_type(item.get("type")),
+                card_super=_normalize_type(item.get("super")) or None,
                 quantity=int(item.get("quantity", 1)),
                 image_url=item.get("image", ""),
                 section="sideboard",
@@ -443,14 +460,16 @@ def _scrape_riftdex(url: str) -> RBDeck:
         qty = int(slot.get("count", 1))
         meta = card_db.get(cid, {})
         card_number = meta.get("card_number", cid)
-        section = _type_to_section(meta.get("type", ""), meta.get("super"))
+        card_type = _normalize_type(meta.get("type"))
+        card_super = _normalize_type(meta.get("super")) or None
+        section = _type_to_section(card_type, card_super)
         cards.append(
             RBCard(
                 card_id=card_number,
                 variant_id=cid,
                 name=meta.get("card_name", card_number),
-                card_type=meta.get("type", ""),
-                card_super=meta.get("super"),
+                card_type=card_type,
+                card_super=card_super,
                 quantity=qty,
                 image_url=meta.get("image_url", ""),
                 section=section,
@@ -560,8 +579,8 @@ def _fetch_deck(deck_id: str) -> RBDeck:
                 card_id=item["cardId"],
                 variant_id=item["variantId"],
                 name=item["card"]["name"],
-                card_type=item["card"]["type"],
-                card_super=item["card"].get("super"),
+                card_type=_normalize_type(item["card"].get("type")),
+                card_super=_normalize_type(item["card"].get("super")) or None,
                 quantity=item["quantity"],
                 image_url=_resolve_image(item),
                 section="champion",
@@ -575,8 +594,8 @@ def _fetch_deck(deck_id: str) -> RBDeck:
                 card_id=item["cardId"],
                 variant_id=item["variantId"],
                 name=item["card"]["name"],
-                card_type=item["card"]["type"],
-                card_super=item["card"].get("super"),
+                card_type=_normalize_type(item["card"].get("type")),
+                card_super=_normalize_type(item["card"].get("super")) or None,
                 quantity=item["quantity"],
                 image_url=_resolve_image(item),
                 section="battlefield",
@@ -590,8 +609,8 @@ def _fetch_deck(deck_id: str) -> RBDeck:
                 card_id=item["cardId"],
                 variant_id=item["variantId"],
                 name=item["card"]["name"],
-                card_type=item["card"]["type"],
-                card_super=item["card"].get("super"),
+                card_type=_normalize_type(item["card"].get("type")),
+                card_super=_normalize_type(item["card"].get("super")) or None,
                 quantity=item["quantity"],
                 image_url=_resolve_image(item),
                 section="rune",
@@ -605,8 +624,8 @@ def _fetch_deck(deck_id: str) -> RBDeck:
                 card_id=item["cardId"],
                 variant_id=item["variantId"],
                 name=item["card"]["name"],
-                card_type=item["card"]["type"],
-                card_super=item["card"].get("super"),
+                card_type=_normalize_type(item["card"].get("type")),
+                card_super=_normalize_type(item["card"].get("super")) or None,
                 quantity=item["quantity"],
                 image_url=_resolve_image(item),
                 section="maindeck",
@@ -620,8 +639,8 @@ def _fetch_deck(deck_id: str) -> RBDeck:
                 card_id=item["cardId"],
                 variant_id=item["variantId"],
                 name=item["card"]["name"],
-                card_type=item["card"]["type"],
-                card_super=item["card"].get("super"),
+                card_type=_normalize_type(item["card"].get("type")),
+                card_super=_normalize_type(item["card"].get("super")) or None,
                 quantity=item["quantity"],
                 image_url=_resolve_image(item),
                 section="sideboard",
