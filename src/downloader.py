@@ -25,7 +25,7 @@ _TIMEOUT_RETRY_DELAY = 5.0  # seconds to wait before retrying timed-out images
 # received* for that many seconds — it does not limit total download time, so
 # large files on a slow connection will still work.
 _CONNECT_TIMEOUT = 10  # seconds to establish the TCP connection
-_READ_TIMEOUT = 30  # seconds without receiving any data
+_READ_TIMEOUT = 60  # seconds without receiving any data
 
 
 class DownloadRateLimitError(Exception):
@@ -157,7 +157,25 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
         except requests.exceptions.Timeout:
             _safe_unlink(tmp_path)
             _log.error("Timeout downloading %s (%s)", filename, drive_id)
-            raise DownloadTimeoutError(drive_id, filename)
+            raise DownloadTimeoutError(drive_id, filename) from None
+        except requests.exceptions.ConnectionError as exc:
+            _safe_unlink(tmp_path)
+            # Read timeouts during streaming surface as ConnectionError, not
+            # Timeout — retry them like rate limits since they're transient.
+            if attempt < _MAX_RETRIES:
+                _log.warning(
+                    "Connection error on %s, retry %d/%d in %.0fs: %s",
+                    drive_id,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+                delay *= 2
+                continue
+            _log.error("Connection error exhausted for %s", drive_id)
+            raise DownloadTimeoutError(drive_id, filename) from exc
         except requests.HTTPError as exc:
             _safe_unlink(tmp_path)
             status = getattr(getattr(exc, "response", None), "status_code", None)
