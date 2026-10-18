@@ -436,24 +436,46 @@ def _execute_plan(
         print("Imágenes temporales (workdir/raw y workdir/bled) eliminadas.")
 
 
-def main() -> None:
-    """Entry point: parse arguments and run the requested command."""
-    args = _build_parser().parse_args()
+def _parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    return _build_parser().parse_args()
 
-    if args.deck_url:
-        _handle_deck_url(args)
-        return
 
+def _load_config(args: argparse.Namespace) -> dict:
+    """Load and validate configuration from parsed args.
+
+    Returns a dict with keys: xml_dir, out_dir, workdir, local_fronts,
+    local_backs, local_cardback.
+    """
     local_fronts, local_backs, local_cardback = _validate_locals_args(args)
+    return {
+        "xml_dir": Path(args.xml_dir),
+        "out_dir": Path(args.out_dir),
+        "workdir": Path(args.workdir),
+        "local_fronts": local_fronts,
+        "local_backs": local_backs,
+        "local_cardback": local_cardback,
+    }
 
-    xml_dir = Path(args.xml_dir)
-    out_dir = Path(args.out_dir)
-    workdir = Path(args.workdir)
+
+def _build_execution_plan(
+    args: argparse.Namespace,
+    config: dict,
+) -> tuple:
+    """Build execution plan from config.
+
+    Returns (plan_, reports, xmls, run_dir). Exits early if there is
+    nothing to do or the user cancels a confirmation prompt.
+    """
+    xml_dir = config["xml_dir"]
+    local_fronts = config["local_fronts"]
+    local_cardback = config["local_cardback"]
+    workdir = config["workdir"]
 
     xmls = _collect_xmls(xml_dir, local_fronts)
     if not xmls and not local_fronts:
         print(f"No hay archivos .xml en '{xml_dir}'.")
-        return
+        sys.exit(0)
     if not xmls and local_fronts and local_cardback is None:
         print(
             "Error: sin XMLs, --local-cardback es obligatorio para definir el reverso por defecto.",
@@ -461,11 +483,11 @@ def main() -> None:
         )
         sys.exit(1)
 
-    run_dir = out_dir / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
+    run_dir = config["out_dir"] / datetime.now().strftime("%d_%m_%Y_%H-%M-%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     _setup_logging(run_dir / "run.log", args.verbose)
 
-    _print_run_summary(xmls, xml_dir, local_fronts, local_backs, local_cardback, run_dir)
+    _print_run_summary(xmls, xml_dir, local_fronts, config["local_backs"], local_cardback, run_dir)
 
     reports = analyze(xmls) if xmls else []
     for r in reports:
@@ -476,15 +498,37 @@ def main() -> None:
 
     # --- Verify Drive access before downloading ----------------------------
     if xmls and not _verify_drive_access(xmls, workdir, args.yes):
-        return
+        sys.exit(0)
 
     plan_ = plan(reports, local_count=len(local_fronts)) if reports else None
 
     if plan_ is not None and not _confirm_plan_warning(plan_, args.yes):
-        return
+        sys.exit(0)
     print()
 
-    _execute_plan(plan_, reports, args, run_dir, workdir, local_fronts, local_backs, local_cardback)
+    return plan_, reports, xmls, run_dir
+
+
+def main() -> None:
+    """CLI entry point."""
+    args = _parse_args()
+
+    if args.deck_url:
+        _handle_deck_url(args)
+        return
+
+    config = _load_config(args)
+    plan_, reports, _xmls, run_dir = _build_execution_plan(args, config)
+    _execute_plan(
+        plan_,
+        reports,
+        args,
+        run_dir,
+        config["workdir"],
+        config["local_fronts"],
+        config["local_backs"],
+        config["local_cardback"],
+    )
 
 
 if __name__ == "__main__":

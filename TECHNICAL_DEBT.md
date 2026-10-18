@@ -404,7 +404,7 @@ python3 -m ruff check --select ALL src/ gui/ cli/
 ## ✅ **CHECKLIST DE IMPLEMENTACIÓN**
 
 - [x] Tests para `tcg_batches.py`
-- [ ] Reducir complejidad de `main()` (cli)
+- [x] Reducir complejidad de `main()` (cli)
 - [ ] Reducir complejidad de `_update_preflight()`
 - [ ] Reducir complejidad de `_open_url_dialog()`
 - [ ] Reducir complejidad de renderers en `decks_tab.py`
