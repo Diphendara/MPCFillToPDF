@@ -405,6 +405,132 @@ class App(
             reports.append(XmlReport(path, cards, (CARDS_PER_PAGE - remainder) if remainder else 0))
         return plan(reports, local_count=self._extra_card_count())
 
+    def _preflight_row(self, parts: list[tuple[str, str]]) -> None:
+        frame = ttk.Frame(self._preflight_inner)
+        frame.pack(fill=tk.X)
+        self._preflight_labels.append(frame)
+        for text, style in parts:
+            if style == "warn":
+                kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 10, "bold")}
+            elif style == "bold":
+                kw = {"foreground": "#444", "font": ("Segoe UI", 10, "bold")}
+            else:
+                kw = {"foreground": "#444"}
+            ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
+
+    def _preflight_xml_rows(self) -> int:
+        """Render rows for XML paths; return total card count."""
+        total = 0
+        for p in self.state.xml_paths:
+            order = self._xml_orders.get(p)
+            if order is None:
+                self._preflight_row([(f"• {p.name}: (no se pudo leer)", "normal")])
+                continue
+            n = sum(len(card.slots) for card in order.fronts)
+            total += n
+            self._preflight_row(
+                [
+                    (f"• {p.name}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas", "normal"),
+                ]
+            )
+        return total
+
+    def _preflight_named_deck_rows(self, decks, label: str) -> int:
+        """Render rows for named decks (OP/RB/Lorcana); return total card count."""
+        total = 0
+        for deck in decks:
+            n = deck.total_slots
+            total += n
+            self._preflight_row(
+                [
+                    (f"• {label} – {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas", "normal"),
+                ]
+            )
+        return total
+
+    def _preflight_ygo_rows(self) -> None:
+        for deck, row in zip(self._ygo_decks, self._ygo_deck_rows):
+            n = deck.total_slots(row["include_side_var"].get())
+            self._preflight_row(
+                [
+                    (f"• Yu-Gi-Oh! – {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas (PDF separado)", "normal"),
+                ]
+            )
+
+    def _preflight_mtg_url_rows(self) -> int:
+        total = 0
+        for deck in self.state.mtg_url_decks:
+            n = deck.active_count
+            total += n
+            self._preflight_row(
+                [
+                    (f"• Magic – {ellipsize(deck.display_name, 28)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (" cartas", "normal"),
+                ]
+            )
+        return total
+
+    def _preflight_plan_summary(self, xml_plan, total_cards: int, cache_str: str) -> None:
+        """Render the plan summary rows (jobs breakdown + totals)."""
+        if xml_plan is not None:
+            self._preflight_row(
+                [
+                    ("Plan XML: ", "normal"),
+                    (f"{len(xml_plan.jobs)} PDF(s)", "bold"),
+                    ("; las cartas adicionales se añaden al último PDF.", "normal"),
+                ]
+            )
+            for job in xml_plan.jobs:
+                if job.is_merged:
+                    names = ", ".join(path.name for path in job.xml_paths)
+                    self._preflight_row([(f"  ↳ Fusión: {names} → {job.total_cards} cartas", "bold")])
+                elif job.extra_locals:
+                    self._preflight_row(
+                        [
+                            (
+                                f"  ↳ {job.display_name}: {job.cards} XML + "
+                                f"{job.extra_locals} adicionales → {job.total_cards} cartas",
+                                "normal",
+                            )
+                        ]
+                    )
+                else:
+                    self._preflight_row([(f"  ↳ {job.display_name}: {job.total_cards} cartas", "normal")])
+                if job.has_blanks:
+                    gap = "hueco" if job.blanks == 1 else "huecos"
+                    self._preflight_row([(f"     ⚠ {job.blanks} {gap} en blanco", "warn")])
+            blanks = sum(job.blanks for job in xml_plan.jobs)
+            pairs = sum(math.ceil(job.total_cards / CARDS_PER_PAGE) for job in xml_plan.jobs)
+        else:
+            pairs = math.ceil(total_cards / CARDS_PER_PAGE)
+            rem = total_cards % CARDS_PER_PAGE
+            blanks = (CARDS_PER_PAGE - rem) if rem else 0
+
+        if blanks:
+            self._preflight_row(
+                [
+                    ("Total: ", "normal"),
+                    (f"{total_cards}", "bold"),
+                    (f" cartas · {pairs} par(es) de páginas{cache_str} · ", "normal"),
+                    (f"⚠ {blanks} huecos en la última página", "warn"),
+                ]
+            )
+        else:
+            self._preflight_row(
+                [
+                    ("Total: ", "normal"),
+                    (f"{total_cards}", "bold"),
+                    (f" cartas · {pairs} par(es) de páginas{cache_str}", "normal"),
+                ]
+            )
+
     def _update_preflight(self) -> None:
         for widget in self._preflight_labels:
             widget.destroy()
@@ -422,93 +548,16 @@ class App(
             self._preflight_frame.pack_forget()
             return
 
-        def _row(parts: list[tuple[str, str]]) -> None:
-            frame = ttk.Frame(self._preflight_inner)
-            frame.pack(fill=tk.X)
-            self._preflight_labels.append(frame)
-            for text, style in parts:
-                if style == "warn":
-                    kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 10, "bold")}
-                elif style == "bold":
-                    kw = {"foreground": "#444", "font": ("Segoe UI", 10, "bold")}
-                else:
-                    kw = {"foreground": "#444"}
-                ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
-
-        xml_total = 0
-
-        for p in self.state.xml_paths:
-            order = self._xml_orders.get(p)
-            if order is None:
-                _row([(f"• {p.name}: (no se pudo leer)", "normal")])
-                continue
-            n = sum(len(card.slots) for card in order.fronts)
-            xml_total += n
-            _row(
-                [
-                    (f"• {p.name}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas", "normal"),
-                ]
-            )
-
-        for deck in self._op_decks:
-            n = deck.total_slots
-            xml_total += n
-            _row(
-                [
-                    (f"• One Piece – {ellipsize(deck.name, 22)}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas", "normal"),
-                ]
-            )
-
-        for deck in self._rb_decks:
-            n = deck.total_slots
-            xml_total += n
-            _row(
-                [
-                    (f"• Riftbound – {ellipsize(deck.name, 22)}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas", "normal"),
-                ]
-            )
-
-        for deck in self._lorcana_decks:
-            n = deck.total_slots
-            xml_total += n
-            _row(
-                [
-                    (f"• Lorcana – {ellipsize(deck.name, 22)}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas", "normal"),
-                ]
-            )
-
-        for deck, row in zip(self._ygo_decks, self._ygo_deck_rows):
-            n = deck.total_slots(row["include_side_var"].get())
-            _row(
-                [
-                    (f"• Yu-Gi-Oh! – {ellipsize(deck.name, 22)}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas (PDF separado)", "normal"),
-                ]
-            )
-
-        for deck in self.state.mtg_url_decks:
-            n = deck.active_count
-            xml_total += n
-            _row(
-                [
-                    (f"• Magic – {ellipsize(deck.display_name, 28)}: ", "normal"),
-                    (f"{n}", "bold"),
-                    (" cartas", "normal"),
-                ]
-            )
+        xml_total = self._preflight_xml_rows()
+        xml_total += self._preflight_named_deck_rows(self._op_decks, "One Piece")
+        xml_total += self._preflight_named_deck_rows(self._rb_decks, "Riftbound")
+        xml_total += self._preflight_named_deck_rows(self._lorcana_decks, "Lorcana")
+        self._preflight_ygo_rows()
+        xml_total += self._preflight_mtg_url_rows()
 
         local_count = len(self.state.local_fronts)
         if local_count:
-            _row(
+            self._preflight_row(
                 [
                     ("• Locales: ", "normal"),
                     (f"{local_count}", "bold"),
@@ -523,57 +572,7 @@ class App(
             cache_str = f" · {cached} imagen(es) en caché" if cached else ""
 
             xml_plan = self._loaded_xml_plan() if self.state.xml_paths else None
-            if xml_plan is not None:
-                _row(
-                    [
-                        ("Plan XML: ", "normal"),
-                        (f"{len(xml_plan.jobs)} PDF(s)", "bold"),
-                        ("; las cartas adicionales se añaden al último PDF.", "normal"),
-                    ]
-                )
-                for job in xml_plan.jobs:
-                    if job.is_merged:
-                        names = ", ".join(path.name for path in job.xml_paths)
-                        _row([(f"  ↳ Fusión: {names} → {job.total_cards} cartas", "bold")])
-                    elif job.extra_locals:
-                        _row(
-                            [
-                                (
-                                    f"  ↳ {job.display_name}: {job.cards} XML + "
-                                    f"{job.extra_locals} adicionales → {job.total_cards} cartas",
-                                    "normal",
-                                )
-                            ]
-                        )
-                    else:
-                        _row([(f"  ↳ {job.display_name}: {job.total_cards} cartas", "normal")])
-                    if job.has_blanks:
-                        gap = "hueco" if job.blanks == 1 else "huecos"
-                        _row([(f"     ⚠ {job.blanks} {gap} en blanco", "warn")])
-                blanks = sum(job.blanks for job in xml_plan.jobs)
-                pairs = sum(math.ceil(job.total_cards / CARDS_PER_PAGE) for job in xml_plan.jobs)
-            else:
-                pairs = math.ceil(total_cards / CARDS_PER_PAGE)
-                rem = total_cards % CARDS_PER_PAGE
-                blanks = (CARDS_PER_PAGE - rem) if rem else 0
-
-            if blanks:
-                _row(
-                    [
-                        ("Total: ", "normal"),
-                        (f"{total_cards}", "bold"),
-                        (f" cartas · {pairs} par(es) de páginas{cache_str} · ", "normal"),
-                        (f"⚠ {blanks} huecos en la última página", "warn"),
-                    ]
-                )
-            else:
-                _row(
-                    [
-                        ("Total: ", "normal"),
-                        (f"{total_cards}", "bold"),
-                        (f" cartas · {pairs} par(es) de páginas{cache_str}", "normal"),
-                    ]
-                )
+            self._preflight_plan_summary(xml_plan, total_cards, cache_str)
 
         self._preflight_frame.pack(fill=tk.X, pady=(8, 0))
 
