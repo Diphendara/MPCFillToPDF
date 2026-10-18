@@ -35,6 +35,7 @@ class ParsedCardLine:
     collector_number: str
     raw_line: str
     line_number: int
+    is_sideboard: bool = False
 
 
 # Regex for Riftbound format: "3 Sabotage (OGN-156)" or "1 Elder Dragon (UNL-118A)"
@@ -60,16 +61,25 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
         1 Elder Dragon (UNL-118A)
         1 Baron Pit // Gold (UNL-T01g)
 
+    Supports optional "Side Board:" or "Sideboard:" section header.
+    Cards after that header are marked as sideboard.
+
     Returns a list of ParsedCardLine objects.
     Raises TextImportError if any line is invalid.
     """
     lines: list[ParsedCardLine] = []
+    in_sideboard = False
 
     for line_num, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
 
         # Skip empty lines and comments
         if not line or line.startswith("#") or line.startswith("//"):
+            continue
+
+        # Detect sideboard section header
+        if line.lower() in ("side board:", "sideboard:", "side:"):
+            in_sideboard = True
             continue
 
         match = _RIFTBOUND_LINE_RE.match(line)
@@ -98,6 +108,7 @@ def parse_riftbound_text(text: str) -> list[ParsedCardLine]:
                 collector_number=collector_number,
                 raw_line=raw_line,
                 line_number=line_num,
+                is_sideboard=in_sideboard,
             )
         )
 
@@ -267,6 +278,11 @@ def build_riftbound_deck_from_text(text: str, deck_name: str = "Imported Deck") 
             image_url = f"https://static.dotgg.gg/riftbound/cards/{code}.webp"
             card_id = code
             variant_id = code
+
+        # Override section if card is in sideboard
+        if line.is_sideboard:
+            section = "sideboard"
+            variant_id = f"{variant_id}_sb"
 
         cards.append(
             RBCard(
