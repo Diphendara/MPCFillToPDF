@@ -25,6 +25,7 @@ class TextImportError(Exception):
     """Raised when text cannot be parsed as a valid deck list."""
 
     def __init__(self, message: str, line_number: int | None = None) -> None:
+        """Initialize with error message and optional line number."""
         self.line_number = line_number
         if line_number is not None:
             message = f"Línea {line_number}: {message}"

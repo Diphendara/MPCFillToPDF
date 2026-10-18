@@ -46,13 +46,18 @@ _TAPPEDOUT_TOKENS_RE = re.compile(r"\bTokens\s*\|\s*([^\n<]+)", re.IGNORECASE)
 
 
 class DeckImportError(Exception):
+    """Raised when a deck cannot be imported from a platform."""
+
     def __init__(self, message: str, platform: str = "") -> None:
+        """Initialize with error message and platform name."""
         self.platform = platform
         super().__init__(message)
 
 
 @dataclass
 class DeckCard:
+    """A single card in a deck with name, set, and quantity."""
+
     name: str
     set_code: str
     collector_number: str
