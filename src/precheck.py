@@ -89,17 +89,22 @@ def check_drive_access(
 
 @dataclass
 class XmlReport:
+    """Report for a single XML file with card counts and issues."""
+
     path: Path
     cards: int
     blanks: int  # empty slots on the last page (0 if the deck fills the page)
 
     @property
     def has_blanks(self) -> bool:
+        """Return True if the XML has blank cards."""
         return self.blanks > 0
 
 
 @dataclass
 class PdfJob:
+    """A PDF generation job with XMLs and output settings."""
+
     xml_paths: list[Path]
     base_name: str
     cards: int
@@ -121,6 +126,7 @@ class PdfJob:
 
     @property
     def has_blanks(self) -> bool:
+        """Return True if the XML has blank cards."""
         return self.blanks > 0
 
     @property

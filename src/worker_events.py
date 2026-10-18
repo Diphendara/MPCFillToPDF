@@ -11,17 +11,21 @@ class WorkerEvent:
     """Convert a typed worker event to the GUI's temporary compatibility tuple."""
 
     def as_legacy_tuple(self) -> tuple:
+        """Convert to legacy tuple format for GUI compatibility."""
         raise NotImplementedError
 
 
 @dataclass(frozen=True)
 class ProgressEvent(WorkerEvent):
+    """Event for progress updates during processing."""
+
     stage: str
     done: int
     total: int
     label: str
 
     def as_legacy_tuple(self) -> tuple:
+        """Convert to legacy tuple format."""
         return "progress", self.stage, self.done, self.total, self.label
 
 

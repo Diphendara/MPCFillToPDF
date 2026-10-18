@@ -34,13 +34,15 @@ class MtgDeck(Protocol):
     cards: list[DeckCard]
     back_path: Path | None
 
-    def includes(self, card: DeckCard) -> bool: ...
+    def includes(self, card: DeckCard) -> bool:
+        """Return True if the card is included in the selection."""
 
 
 class TcgBatchAdapter(Protocol):
     """Adapter interface for a TCG that can join the standard print run."""
 
-    def prepare(self) -> PrintBatch: ...
+    def prepare(self) -> PrintBatch:
+        """Prepare the batch for printing."""
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ class YugiohBatchAdapter:
     report_progress: ProgressReporter
 
     def prepare(self) -> PrintBatch:
+        """Prepare Yu-Gi-Oh! decks for printing."""
         if not self.decks:
             return PrintBatch("yugioh_proxies")
         total = sum(len({card.card_id for card in deck.cards}) for deck, _ in self.decks)

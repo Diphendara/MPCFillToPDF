@@ -15,7 +15,7 @@ from src.app_settings import (
 )
 from src.cache_key import crop_cache_path
 from src.cancellation import Cancelled
-from src.constants import JobPdfStartCallback, Stage, StageCallback
+from src.constants import JobPdfStartCallback, SpeedCallback, Stage, StageCallback
 from src.cropper import process_for_pdf
 from src.deck_importer import fetch_deck
 from src.downloader import (

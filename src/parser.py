@@ -8,6 +8,8 @@ _log = logging.getLogger(__name__)
 
 @dataclass
 class CardImage:
+    """A card image with Google Drive ID and metadata."""
+
     drive_id: str
     name: str
     slots: list[int]
@@ -15,6 +17,8 @@ class CardImage:
 
 @dataclass
 class CardOrder:
+    """A card order with front/back images and quantity."""
+
     quantity: int
     fronts: list[CardImage]
     backs: list[CardImage]
