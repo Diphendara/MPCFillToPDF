@@ -1465,6 +1465,7 @@ class App(
         self.worker = None
         self.stop_btn.pack_forget()
         self.stop_btn.state(["!disabled"])
+        self._mark_xml_finished()
         self._refresh_generate_state()
 
     def _open_output_folder(self, path: Path) -> None:
