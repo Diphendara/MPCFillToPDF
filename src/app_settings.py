@@ -18,6 +18,8 @@ MAX_MAX_PDF_SIZE_MB = 2_500
 
 @dataclass
 class AppSettings:
+    """Application settings with sensible defaults."""
+
     output_dir: Path | None = None
     cut_line_color: str = DEFAULT_CUT_LINE_COLOR
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE

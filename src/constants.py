@@ -1,3 +1,5 @@
+"""Constants and type aliases for the application."""
+
 from collections.abc import Callable
 from enum import Enum
 
@@ -9,6 +11,8 @@ SUPPORTED_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".ti
 
 
 class Stage(str, Enum):
+    """Processing stages for progress tracking."""
+
     VERIFY = "verify"
     DOWNLOAD = "download"
     CROP = "crop"
@@ -23,7 +27,7 @@ ImageDoneCallback = Callable[[str], None] | None
 
 
 class UIConstants:
-    """UI-related constants for the tkinter GUI."""
+    """UI-related constants for the tkinter GUI (widget sizes, padding, etc.)."""
 
     SPINBOX_WIDTH = 4
     BUTTON_WIDTH = 10

@@ -29,6 +29,19 @@ class StandalonePrintRun:
         fronts_only: bool,
         **pdf_options: object,
     ) -> list[Path]:
+        """Render the batch to PDF files.
+
+        Args:
+            output_dir: Directory to save PDFs.
+            work_dir: Working directory for temp files.
+            progress_callback: Function to report progress.
+            cancel_event: Event to check for cancellation.
+            fronts_only: If True, only render fronts.
+            **pdf_options: Additional PDF generation options.
+
+        Returns:
+            List of generated PDF paths.
+        """
         if not self.batch.fronts or self.batch.default_back is None:
             return []
         if self.layout is not None:
