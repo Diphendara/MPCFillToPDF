@@ -1,8 +1,11 @@
 """Universal text import dialog with TCG selection."""
 
+import logging
 import threading
 import tkinter as tk
 from tkinter import ttk
+
+import requests
 
 from gui.widgets import load_tab_icon
 from src.text_importer import (
@@ -14,6 +17,8 @@ from src.text_importer import (
     parse_op_text,
     parse_ygo_text,
 )
+
+_log = logging.getLogger(__name__)
 
 # TCG definitions: key, display name, icon name, example format
 TCGS = [
@@ -177,7 +182,15 @@ class UniversalImportDialog:
             except TextImportError as exc:
                 error_msg = str(exc)
                 self.dialog.after(0, lambda msg=error_msg: self.status_var.set(f"❌ {msg}"))
+            except (ValueError, requests.RequestException) as exc:
+                # Parser/network failure with a meaningful message.
+                _log.warning("Text import failed (%s): %s", tcg, exc)
+                error_msg = str(exc)
+                self.dialog.after(0, lambda msg=error_msg: self.status_var.set(f"❌ Error: {msg}"))
             except Exception as exc:
+                # Unexpected bug in a parser: log with traceback and still
+                # show a generic error to the user.
+                _log.exception("Unexpected error importing text (%s)", tcg)
                 error_msg = str(exc)
                 self.dialog.after(0, lambda msg=error_msg: self.status_var.set(f"❌ Error: {msg}"))
 

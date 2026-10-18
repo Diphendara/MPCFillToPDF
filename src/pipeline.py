@@ -221,7 +221,7 @@ def run_print_batch(
     work_dir: str | Path = "workdir",
     progress_callback: StageCallback = None,
     cancel_event: Event | None = None,
-    **pdf_options,
+    **pdf_options: object,
 ) -> list[Path]:
     """Render any fully prepared batch through the shared local-image pipeline."""
     if batch.default_back is None:
@@ -392,8 +392,8 @@ def _run_xmls(
     raw_dir = work_dir / "raw"
     bled_dir = work_dir / "bled"
 
-    def _cb(stage):
-        def _inner(done, total):
+    def _cb(stage: str) -> StageCallback:
+        def _inner(done: int, total: int) -> None:
             if progress_callback:
                 progress_callback(stage, done, total)
 
@@ -579,7 +579,7 @@ def run_plan(
     on_xml_download_progress: StageCallback = None,
     on_xml_crop_progress: StageCallback = None,
     fronts_only: bool = False,
-    on_speed_update=None,
+    on_speed_update: SpeedCallback = None,
     cut_line_color: str = DEFAULT_CUT_LINE_COLOR,
     cut_line_style: str = DEFAULT_CUT_LINE_STYLE,
     cut_line_width: float = DEFAULT_CUT_LINE_WIDTH,
@@ -606,8 +606,8 @@ def run_plan(
     extra_backs_p = [Path(p) if p is not None else None for p in (extra_backs or [])]
     crop_map: dict[Path, bool] = {Path(k): bool(v) for k, v in (local_crop_map or {}).items()}
 
-    def _cb(stage):
-        def _inner(done, total):
+    def _cb(stage: str) -> StageCallback:
+        def _inner(done: int, total: int) -> None:
             if progress_callback:
                 progress_callback(stage, done, total)
 

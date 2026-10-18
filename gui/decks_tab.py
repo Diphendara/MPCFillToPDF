@@ -7,10 +7,13 @@ tagged with its TCG icon.
 
 from __future__ import annotations
 
+import logging
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+import requests
 
 from gui.widgets import (
     _PB_CROP_COLOR,
@@ -27,6 +30,8 @@ from src.deck_importer import DeckImportError, fetch_deck
 from src.parser import parse
 from src.precheck import analyze
 from src.validator import validate
+
+_log = logging.getLogger(__name__)
 
 _SECTION_LABELS = {
     "legend": "Leyenda",
@@ -249,7 +254,16 @@ class DecksTabMixin:
                 dlg.after(0, dlg.destroy)
             except DeckImportError as exc:
                 self.events.put(("mtg_url_error", str(exc)))
+            except (ValueError, requests.RequestException) as exc:
+                # Scrapers raise ValueError for bad URLs/payloads and
+                # RequestException for network failures — both are
+                # user-facing import errors.
+                _log.warning("Deck URL import failed (%s): %s", tcg, exc)
+                self.events.put(("deck_url_error", (tcg, str(exc))))
             except Exception as exc:
+                # Unexpected bug in a scraper: log with traceback and still
+                # surface a generic error to the user.
+                _log.exception("Unexpected error importing deck (%s)", tcg)
                 self.events.put(("deck_url_error", (tcg, str(exc))))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -290,17 +304,20 @@ class DecksTabMixin:
                 rpts = analyze([pp])
                 if rpts:
                     self._xml_card_counts[pp] = rpts[0].cards
-            except Exception:
-                pass
+            except (ValueError, OSError) as exc:
+                # Invalid/unreadable XML — metadata stays empty; the user
+                # gets the parse error from the validation flow instead.
+                _log.debug("Could not analyze %s: %s", pp, exc)
         if pp not in self._xml_orders:
             try:
                 self._xml_orders[pp] = parse(pp)
-            except Exception:
-                pass
+            except (ValueError, OSError) as exc:
+                _log.debug("Could not parse %s: %s", pp, exc)
         if pp not in self._xml_validations:
             try:
                 self._xml_validations[pp] = validate(pp)
-            except Exception:
+            except (ValueError, OSError) as exc:
+                _log.debug("Could not validate %s: %s", pp, exc)
                 self._xml_validations[pp] = []
         return True
 

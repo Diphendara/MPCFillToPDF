@@ -42,7 +42,7 @@ def collect_drive_ids(xml_paths: list[Path]) -> list[tuple[str, str]]:
 
 def check_drive_access(
     id_name_pairs: list[tuple[str, str]],
-    progress_callback=None,
+    progress_callback: ProgressCallback = None,
 ) -> list[tuple[str, str]]:
     """Check which Drive IDs are publicly accessible via thumbnail URL.
 

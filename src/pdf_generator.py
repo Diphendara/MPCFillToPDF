@@ -313,7 +313,7 @@ def generate(
     back_slot_to_id: dict[int, str],
     id_to_path: dict[str, Path],
     max_bytes: int = MAX_PDF_BYTES,
-    progress_callback=None,
+    progress_callback: ProgressCallback = None,
     cancel_event: Event | None = None,
     fronts_only: bool = False,
     cut_line_color: str = DEFAULT_CUT_LINE_COLOR,

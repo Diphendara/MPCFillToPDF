@@ -8,7 +8,6 @@ should use this module instead of calling ``requests`` directly.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
 
 import requests
 
@@ -39,11 +38,11 @@ def request(
     return response
 
 
-def get(url: str, **kwargs: Any) -> requests.Response:
+def get(url: str, **kwargs: object) -> requests.Response:
     """GET through the shared external-adapter transport seam."""
     return request("GET", url, **kwargs)
 
 
-def post(url: str, **kwargs: Any) -> requests.Response:
+def post(url: str, **kwargs: object) -> requests.Response:
     """POST through the shared external-adapter transport seam."""
     return request("POST", url, **kwargs)
