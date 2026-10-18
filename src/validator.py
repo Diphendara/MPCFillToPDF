@@ -32,7 +32,8 @@ def validate(xml_path: str | Path) -> list[ValidationWarning]:
 
     try:
         order = parse(xml_path)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
+        # ValueError: malformed XML/content; OSError: unreadable file.
         return [ValidationWarning("parse_error", f"Error al parsear el XML: {exc}")]
 
     if not order.fronts:

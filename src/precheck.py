@@ -5,6 +5,7 @@ either merge small XMLs into bigger ones (when the global total is a multiple
 of 9) or warn the user before generating any PDF with paid empty slots.
 """
 
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,8 @@ import requests  # noqa: F401 - retained as the precheck test transport seam
 from src.constants import CARDS_PER_PAGE
 from src.http_client import get as http_get
 from src.parser import parse
+
+_log = logging.getLogger(__name__)
 
 _THUMB_CHECK_URL = "https://lh4.googleusercontent.com/d/{}=d"
 _CHECK_THREADS = 5
@@ -26,7 +29,10 @@ def collect_drive_ids(xml_paths: list[Path]) -> list[tuple[str, str]]:
     for p in xml_paths:
         try:
             order = parse(p)
-        except Exception:
+        except (ValueError, OSError) as exc:
+            # Invalid or unreadable XML — skip it; the user gets the parse
+            # error from the main validation flow instead.
+            _log.warning("Skipping unparseable XML %s: %s", p, exc)
             continue
         name_map = {c.drive_id: c.name for c in order.fronts + order.backs}
         for drive_id in order.all_drive_ids():
@@ -61,8 +67,10 @@ def check_drive_access(
             )
             r.close()
             ok = r.status_code < 400
-        except Exception:
-            ok = True  # network/timeout error → assume accessible, don't false-positive
+        except requests.RequestException as exc:
+            # Network/timeout error → assume accessible, don't false-positive.
+            _log.debug("Thumbnail check failed for %s: %s", drive_id, exc)
+            ok = True
         return drive_id, name, ok
 
     done = 0

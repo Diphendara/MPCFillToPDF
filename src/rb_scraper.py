@@ -141,7 +141,7 @@ def _generate_fallback_back(section: str) -> Path:
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 
-def _normalize_type(value) -> str:
+def _normalize_type(value: str | list[str] | None) -> str:
     """Normalize a card type/supertype value from any source to a plain string.
 
     The dotgg API returns ``type`` as a *list* (e.g. ``["Spell"]``) while other
@@ -154,7 +154,7 @@ def _normalize_type(value) -> str:
     return str(value)
 
 
-def _type_to_section(card_type, card_super: str | None = None) -> str:
+def _type_to_section(card_type: str | list[str], card_super: str | None = None) -> str:
     """Map Riftbound card type + super to a deck section name."""
     t = _normalize_type(card_type).lower()
     s = _normalize_type(card_super).lower()

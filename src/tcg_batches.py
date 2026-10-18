@@ -67,7 +67,7 @@ class YugiohBatchAdapter:
                 )
             offset = downloaded
 
-            def _progress(done: int, _total: int, *, _offset=offset) -> None:
+            def _progress(done: int, _total: int, *, _offset: int = offset) -> None:
                 self.report_progress("download", _offset + done, total, "Yu-Gi-Oh!")
 
             image_map = ygo_download(
@@ -113,7 +113,7 @@ class OnePieceBatchAdapter:
                 )
             offset = downloaded
 
-            def _progress(done: int, _total: int, *, _offset=offset) -> None:
+            def _progress(done: int, _total: int, *, _offset: int = offset) -> None:
                 self.report_progress("download", _offset + done, total, f"One Piece – {label}")
 
             image_map.update(
@@ -171,7 +171,7 @@ class RiftboundBatchAdapter:
                 )
             offset = downloaded
 
-            def _progress(done: int, _total: int, *, _offset=offset) -> None:
+            def _progress(done: int, _total: int, *, _offset: int = offset) -> None:
                 self.report_progress("download", _offset + done, total, f"Riftbound – {label}")
 
             image_map.update(
@@ -225,7 +225,7 @@ class LorcanaBatchAdapter:
                 )
             offset = downloaded
 
-            def _progress(done: int, _total: int, *, _offset=offset) -> None:
+            def _progress(done: int, _total: int, *, _offset: int = offset) -> None:
                 self.report_progress("download", _offset + done, total, f"Lorcana – {label}")
 
             image_map.update(

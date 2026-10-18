@@ -74,7 +74,9 @@ def load_settings(base_dir: Path) -> AppSettings:
             cut_line_over_backs=over_backs,
             max_pdf_size_mb=max_pdf_size_mb,
         )
-    except Exception as exc:
+    except (OSError, ValueError, TypeError) as exc:
+        # OSError: unreadable file; ValueError: invalid JSON; TypeError:
+        # unexpected field types. Fall back to defaults in any case.
         _log.warning("Could not load settings.json: %s", exc)
         return AppSettings()
 
@@ -97,5 +99,6 @@ def save_settings(settings: AppSettings, base_dir: Path) -> None:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
-    except Exception as exc:
+    except (OSError, TypeError, ValueError) as exc:
+        # OSError: unwritable path; TypeError/ValueError: serialization issue.
         _log.warning("Could not save settings.json: %s", exc)

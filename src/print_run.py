@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
+from src.constants import ProgressCallback
 from src.pdf_generator import CardLayout
 from src.pipeline import run_print_batch
 from src.print_batch import PrintBatch
@@ -22,11 +23,11 @@ class StandalonePrintRun:
         self,
         output_dir: Path,
         work_dir: Path,
-        progress_callback,
+        progress_callback: ProgressCallback,
         cancel_event: Event | None,
         *,
         fronts_only: bool,
-        **pdf_options,
+        **pdf_options: object,
     ) -> list[Path]:
         if not self.batch.fronts or self.batch.default_back is None:
             return []

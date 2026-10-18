@@ -189,7 +189,8 @@ def process_for_pdf(
     _log.debug("Cropping: %s (crop_borders=%s)", input_path.name, crop_borders)
     try:
         img = Image.open(input_path).convert("RGB")
-    except Exception as exc:
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        # OSError covers FileNotFoundError and PIL.UnidentifiedImageError.
         raise RuntimeError(f"No se puede abrir la imagen '{input_path}': {exc}") from exc
     trimmed = _crop_to_trim(img) if crop_borders else img
     if not crop_borders:

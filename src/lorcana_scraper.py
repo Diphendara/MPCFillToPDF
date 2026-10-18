@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import urllib.parse
@@ -14,6 +15,8 @@ from src.constants import ProgressCallback
 from src.http_client import get as http_get
 from src.scraper_utils import download_url_images, generate_fallback_back
 from src.scraper_utils import resources_dir as _resources_dir
+
+_log = logging.getLogger(__name__)
 
 _HEADERS = {
     "User-Agent": (
@@ -132,8 +135,8 @@ def _image_url_for_name(name: str) -> str:
         cid = name_to_id.get(name.lower(), "")
         if cid:
             return _image_url_for_id(cid)
-    except Exception:
-        pass
+    except (requests.RequestException, ValueError) as exc:
+        _log.debug("dotgg card DB lookup failed for %r: %s", name, exc)
     return ""
 
 
@@ -233,8 +236,9 @@ def _scrape_inkdecks(url: str) -> LocanaDeck:
         r = http_get(api_url, headers=_HEADERS, timeout=20)
         if r.status_code == 200:
             return _parse_inkdecks_api(r.json(), deck_id)
-    except Exception:
-        pass
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        # API unavailable or unexpected payload — fall back to HTML scraping.
+        _log.debug("inkdecks API fallback to HTML for deck %s: %s", deck_id, exc)
 
     # Fall back to HTML page scraping (__NEXT_DATA__ JSON embedded in the page)
     html_headers = {**_HEADERS, "Accept": "text/html,application/xhtml+xml,*/*"}

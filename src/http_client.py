@@ -20,9 +20,9 @@ def request(
     url: str,
     *,
     headers: Mapping[str, str] | None = None,
-    timeout: Any = DEFAULT_TIMEOUT,
+    timeout: float | tuple[float, float] | tuple[float, None] = DEFAULT_TIMEOUT,
     raise_for_status: bool = True,
-    **kwargs: Any,
+    **kwargs: object,
 ) -> requests.Response:
     """Send an external-adapter request with the project's common timeout policy."""
     method = method.upper()
