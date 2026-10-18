@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import html
 import json
 import re
@@ -74,7 +75,7 @@ def _decode_ydke_part(value: str) -> list[int]:
         return []
     try:
         raw = base64.b64decode(value)
-    except Exception as exc:
+    except (binascii.Error, ValueError) as exc:
         raise ValueError("La cadena YDKE contiene datos inválidos.") from exc
     if len(raw) % 4:
         raise ValueError("La cadena YDKE contiene IDs de carta incompletos.")

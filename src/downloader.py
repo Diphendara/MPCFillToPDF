@@ -161,7 +161,7 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
                 _log.error("Rate limit exhausted for %s", drive_id)
                 raise DownloadRateLimitError() from exc
             raise
-        except Exception as exc:
+        except (requests.RequestException, OSError) as exc:
             _safe_unlink(tmp_path)
             if _is_rate_limit_error(exc):
                 if attempt < _MAX_RETRIES:
@@ -255,6 +255,8 @@ def download_all(
                 if progress_callback:
                     progress_callback(i, total)
         except Exception:
+            # Cleanup guard: cancel pending downloads before propagating the
+            # original failure. Catching broadly is intentional here.
             for f in futures:
                 f.cancel()
             raise
@@ -277,7 +279,10 @@ def download_all(
             try:
                 results[drive_id] = download_image(drive_id, dest_dir, card_name)
                 _log.info("Retry succeeded: %s", card_name)
-            except Exception as exc:
+            except (DownloadPermissionError, DownloadTimeoutError, DownloadRateLimitError) as exc:
+                still_failed.append((drive_id, card_name))
+                _log.error("Retry failed for %s: %s", card_name, exc)
+            except (requests.RequestException, OSError) as exc:
                 still_failed.append((drive_id, card_name))
                 _log.error("Retry failed for %s: %s", card_name, exc)
         _timeout_errors = still_failed

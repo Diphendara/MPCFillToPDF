@@ -287,6 +287,9 @@ def download_deck_images(
                 if progress_cb:
                     progress_cb(done, total)
         except Exception:
+            # Cleanup guard: cancel any pending downloads before propagating
+            # the original failure (ScryfallError, RequestException, OSError,
+            # Cancelled, ...). Catching broadly is intentional here.
             for f in futures:
                 f.cancel()
             raise

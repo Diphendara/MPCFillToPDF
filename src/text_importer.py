@@ -7,13 +7,18 @@ to the same data structures used by URL-based importers.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
 from urllib.parse import quote
 
+import requests
+
 from src.http_client import get as http_get
 from src.rb_scraper import RBCard, RBDeck, _type_to_section
+
+_log = logging.getLogger(__name__)
 
 
 class TextImportError(Exception):
@@ -147,8 +152,10 @@ def _search_card_by_code(code: str) -> dict | None:
                 return cards[0]
 
         return None
-    except Exception:
-        # If search fails, return None
+    except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        # Network error, malformed JSON payload, or unexpected shape — the
+        # card simply cannot be resolved by code, so report "not found".
+        _log.warning("Card search by code %r failed: %s", code, exc)
         return None
 
 
@@ -180,7 +187,10 @@ def _fetch_dotgg_cards_db() -> dict[str, dict]:
                 cards_db[card_id] = card_dict
 
         return cards_db
-    except Exception:
+    except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        # Network error or unexpected payload shape — without the card DB the
+        # caller falls back to per-card lookups, so return an empty mapping.
+        _log.warning("Could not fetch dotgg cards DB: %s", exc)
         return {}
 
 
@@ -513,15 +523,17 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
         # If no set code provided, fetch from Scryfall
         if not set_code:
             try:
-                from src.scryfall import fetch_card_by_name
+                from src.scryfall import ScryfallError, fetch_card_by_name
 
                 fetched_set, fetched_collector = fetch_card_by_name(name)
                 set_code = fetched_set.upper()
                 collector_number = fetched_collector
-            except Exception:
-                # If fetch fails, continue without set/collector
-                # The download pipeline will try to fetch by name later
-                pass
+            except ScryfallError as exc:
+                # If the lookup fails, continue without set/collector —
+                # the download pipeline will try to fetch by name later.
+                _log.debug("Scryfall lookup failed for %r: %s", name, exc)
+            except (requests.RequestException, ValueError) as exc:
+                _log.debug("Scryfall lookup failed for %r: %s", name, exc)
 
         cards.append(
             DeckCard(

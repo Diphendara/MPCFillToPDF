@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import queue
 import sys
 import threading
@@ -22,6 +23,8 @@ from PIL import Image, ImageTk
 
 from src.constants import Stage
 from src.parser import CardImage, CardOrder
+
+_log = logging.getLogger(__name__)
 
 APP_TITLE = "MPCFillToPDF"
 STAGE_LABELS = {
@@ -62,15 +65,19 @@ def notify(title: str, message: str) -> None:
                 capture_output=True,
                 check=False,
             )
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            # Notification is best-effort: osascript missing/failing is fine.
+            _log.debug("macOS notification failed: %s", exc)
     else:
         try:
             from plyer import notification as _n
 
             _n.notify(title=title, message=message, app_name=APP_TITLE, timeout=8)
-        except Exception:
-            pass
+        except Exception as exc:
+            # plyer backends raise their own heterogeneous error types
+            # (ImportError, OSError, NotImplementedError, ...); notification
+            # is best-effort, so swallow them all but keep a trace.
+            _log.debug("Desktop notification failed: %s", exc)
 
 
 def attach_context_menu(widget: tk.Widget) -> None:
@@ -98,7 +105,10 @@ def load_tab_icon(name: str, size: tuple[int, int] = (20, 20)) -> ImageTk.PhotoI
         img = Image.open(path).convert("RGBA")
         img = img.resize(size, Image.LANCZOS)
         return ImageTk.PhotoImage(img)
-    except Exception:
+    except (OSError, ValueError, tk.TclError) as exc:
+        # OSError covers PIL.UnidentifiedImageError; TclError covers a
+        # destroyed Tk root. Missing/broken icon → no icon.
+        _log.debug("Could not load tab icon %s: %s", path, exc)
         return None
 
 
@@ -172,7 +182,9 @@ class ImageTooltip:
             return
         try:
             img = Image.open(self._path).convert("RGB")
-        except Exception:
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            # Unreadable/invalid image → no tooltip preview.
+            _log.debug("Tooltip image failed for %s: %s", self._path, exc)
             return
         img.thumbnail((self._MAX_W, self._MAX_H), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(img)
@@ -205,7 +217,8 @@ class ImageTooltip:
         if self._after_id is not None:
             try:
                 self._widget.after_cancel(self._after_id)
-            except Exception:
+            except tk.TclError:
+                # Widget already destroyed — nothing to cancel.
                 pass
             self._after_id = None
         if self._tip and self._tip.winfo_exists():
@@ -319,6 +332,8 @@ class PreviewWindow(tk.Toplevel):
         return resp.content
 
     def _load_all(self, cards: list[CardImage]) -> None:
+        import requests as _req
+
         futs = {
             self._executor.submit(self._fetch, card.drive_id): idx for idx, card in enumerate(cards)
         }
@@ -328,7 +343,9 @@ class PreviewWindow(tk.Toplevel):
             idx = futs[fut]
             try:
                 self._pending.put((idx, fut.result()))
-            except Exception:
+            except _req.RequestException as exc:
+                # Thumbnail download failed → show the placeholder instead.
+                _log.debug("Thumbnail fetch failed: %s", exc)
                 self._pending.put((idx, None))
 
     def _drain(self) -> None:
@@ -362,8 +379,10 @@ class PreviewWindow(tk.Toplevel):
             photo = ImageTk.PhotoImage(padded)
             self._photo_refs.append(photo)
             self._img_labels[idx].configure(image=photo)
-        except Exception:
-            pass
+        except (OSError, ValueError, tk.TclError) as exc:
+            # OSError covers PIL.UnidentifiedImageError (bad bytes); TclError
+            # covers a label destroyed while the preview was loading.
+            _log.debug("Could not render thumbnail %d: %s", idx, exc)
 
     def _on_close(self) -> None:
         self._cancel.set()

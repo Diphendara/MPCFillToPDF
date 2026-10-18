@@ -12,6 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from gui.row_renderer import TCGRowRenderer
 from gui.widgets import (
     _PB_CROP_COLOR,
     _PB_DOWNLOAD_COLOR,
@@ -186,9 +187,15 @@ class DecksTabMixin:
         urls_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
 
         sections = [
-            ("🎴 Magic: The Gathering:", "moxfield.com • archidekt.com • deckstats.net • tappedout.net • manabox.app"),
+            (
+                "🎴 Magic: The Gathering:",
+                "moxfield.com • archidekt.com • deckstats.net • tappedout.net • manabox.app",
+            ),
             ("🏴‍☠️ One Piece:", "onepiece.gg • egmanevents.com • cardkaizoku.com"),
-            ("⚔️ Riftbound:", "piltoverarchive.com • riftbound.gg • riftmana.com • riftbinder.com • riftdex.com"),
+            (
+                "⚔️ Riftbound:",
+                "piltoverarchive.com • riftbound.gg • riftmana.com • riftbinder.com • riftdex.com",
+            ),
             ("✨ Lorcana:", "lorcana.gg • inkdecks.com"),
             ("🎲 Yu-Gi-Oh:", "ygoprodeck.com • yugiohmeta.com • cadena YDKE"),
         ]
@@ -214,9 +221,21 @@ class DecksTabMixin:
         if not url:
             return None, ""
 
-        mtg_domains = ["moxfield.com", "archidekt.com", "deckstats.net", "tappedout.net", "manabox.app"]
+        mtg_domains = [
+            "moxfield.com",
+            "archidekt.com",
+            "deckstats.net",
+            "tappedout.net",
+            "manabox.app",
+        ]
         op_domains = ["onepiece.gg", "egmanevents.com", "cardkaizoku.com"]
-        rb_domains = ["piltoverarchive.com", "riftbound.gg", "riftmana.com", "riftbinder.com", "riftdex.com"]
+        rb_domains = [
+            "piltoverarchive.com",
+            "riftbound.gg",
+            "riftmana.com",
+            "riftbinder.com",
+            "riftdex.com",
+        ]
         lorcana_domains = ["lorcana.gg", "inkdecks.com"]
         ygo_domains = ["ygoprodeck.com", "yugiohmeta.com"]
 
@@ -623,42 +642,14 @@ class DecksTabMixin:
         card_row = ttk.Frame(detail)
         card_row.pack(fill=tk.X, padx=(12, 4))
         card_vars[id(card)] = tk.BooleanVar(value=id(card) in selected_ids)
-        ttk.Checkbutton(card_row, variable=card_vars[id(card)], command=sync_cards).pack(
-            side=tk.LEFT
-        )
+
+        renderer = TCGRowRenderer(self)
+        renderer._create_card_checkbox(card_row, card_vars[id(card)], sync_cards)
 
         qty_var = tk.IntVar(value=card.quantity)
+        renderer._create_qty_spinbox(card_row, card, qty_var, card_vars[id(card)], sync_cards)
 
-        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[id(card)]):
-            def _update(*_args):
-                try:
-                    new_qty = var.get()
-                    if new_qty == 0:
-                        checkvar.set(False)
-                        sync_cards()
-                    elif new_qty >= 1:
-                        c.quantity = new_qty
-                        checkvar.set(True)
-                        sync_cards()
-                except tk.TclError:
-                    pass  # Invalid input, ignore
-
-            return _update
-
-        qty_spinbox = ttk.Spinbox(
-            card_row,
-            from_=0,
-            to=99,
-            width=4,
-            textvariable=qty_var,
-            command=_make_qty_updater(),
-        )
-        qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
-        qty_var.trace_add("write", _make_qty_updater())
-
-        ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(
-            side=tk.LEFT
-        )
+        ttk.Label(card_row, text=ellipsize(card.name, 28), width=29, anchor="w").pack(side=tk.LEFT)
         ttk.Label(card_row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
 
     def _toggle_mtg_extras(self, idx: int) -> None:
@@ -780,39 +771,13 @@ class DecksTabMixin:
         """Render a single card row inside a One Piece deck detail."""
         row_f = ttk.Frame(detail)
         card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
-        ttk.Checkbutton(
-            row_f, variable=card_vars[card.card_id], command=sync_selection
-        ).pack(side=tk.LEFT, padx=(0, 2))
+
+        renderer = TCGRowRenderer(self)
+        renderer._create_card_checkbox(row_f, card_vars[card.card_id], sync_selection)
         row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
 
         qty_var = tk.IntVar(value=card.quantity)
-
-        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
-            def _update(*_args):
-                try:
-                    new_qty = var.get()
-                    if new_qty == 0:
-                        checkvar.set(False)
-                        sync_selection()
-                    elif new_qty >= 1:
-                        c.quantity = new_qty
-                        checkvar.set(True)
-                        sync_selection()
-                except tk.TclError:
-                    pass  # Invalid input, ignore
-
-            return _update
-
-        qty_spinbox = ttk.Spinbox(
-            row_f,
-            from_=0,
-            to=99,
-            width=4,
-            textvariable=qty_var,
-            command=_make_qty_updater(),
-        )
-        qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
-        qty_var.trace_add("write", _make_qty_updater())
+        renderer._create_qty_spinbox(row_f, card, qty_var, card_vars[card.card_id], sync_selection)
 
         if card.is_leader:
             ttk.Label(
@@ -824,9 +789,7 @@ class DecksTabMixin:
                 anchor="w",
             ).pack(side=tk.LEFT, padx=(0, 4))
 
-        ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", width=25).pack(
-            side=tk.LEFT
-        )
+        ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", width=25).pack(side=tk.LEFT)
         ttk.Label(
             row_f,
             text=card.card_id,
@@ -958,9 +921,7 @@ class DecksTabMixin:
 
     def _render_rb_detail(self, detail, deck, by_sec) -> None:
         """Render the collapsible sections + card rows of a Riftbound deck."""
-        selected_ids = getattr(
-            deck, "selected_card_ids", {card.variant_id for card in deck.cards}
-        )
+        selected_ids = getattr(deck, "selected_card_ids", {card.variant_id for card in deck.cards})
         card_vars: dict[str, tk.BooleanVar] = {}
 
         def _sync_selection(d=deck, vars=card_vars) -> None:
@@ -985,48 +946,22 @@ class DecksTabMixin:
         """Render a single card row inside a Riftbound deck detail."""
         row_f = ttk.Frame(detail)
         row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
-        card_vars[card.variant_id] = tk.BooleanVar(
-            value=card.variant_id in selected_ids
-        )
-        ttk.Checkbutton(
-            row_f, variable=card_vars[card.variant_id], command=sync_selection
-        ).pack(side=tk.LEFT, padx=(0, 2))
+        card_vars[card.variant_id] = tk.BooleanVar(value=card.variant_id in selected_ids)
+
+        renderer = TCGRowRenderer(self)
+        renderer._create_card_checkbox(row_f, card_vars[card.variant_id], sync_selection)
 
         qty_var = tk.IntVar(value=card.quantity)
-
-        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.variant_id]):
-            def _update(*_args):
-                try:
-                    new_qty = var.get()
-                    if new_qty == 0:
-                        checkvar.set(False)
-                        sync_selection()
-                    elif new_qty >= 1:
-                        c.quantity = new_qty
-                        checkvar.set(True)
-                        sync_selection()
-                except tk.TclError:
-                    pass  # Invalid input, ignore
-
-            return _update
-
-        qty_spinbox = ttk.Spinbox(
-            row_f,
-            from_=0,
-            to=99,
-            width=4,
-            textvariable=qty_var,
-            command=_make_qty_updater(),
+        renderer._create_qty_spinbox(
+            row_f, card, qty_var, card_vars[card.variant_id], sync_selection
         )
-        qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
-        qty_var.trace_add("write", _make_qty_updater())
 
         name_frame = ttk.Frame(row_f)
         name_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        ttk.Label(
-            row_f, text=ellipsize(card.name, 24), anchor="w", font=("Segoe UI", 8)
-        ).pack(side=tk.LEFT)
+        ttk.Label(row_f, text=ellipsize(card.name, 24), anchor="w", font=("Segoe UI", 8)).pack(
+            side=tk.LEFT
+        )
 
         ttk.Label(
             row_f,
@@ -1127,39 +1062,15 @@ class DecksTabMixin:
             for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
                 row_f = ttk.Frame(detail)
                 card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
-                ttk.Checkbutton(
-                    row_f, variable=card_vars[card.card_id], command=_sync_selection
-                ).pack(side=tk.LEFT, padx=(0, 2))
+
+                renderer = TCGRowRenderer(self)
+                renderer._create_card_checkbox(row_f, card_vars[card.card_id], _sync_selection)
                 row_f.pack(fill=tk.X, pady=0, padx=(12, 4))
 
                 qty_var = tk.IntVar(value=card.quantity)
-
-                def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
-                    def _update(*_args):
-                        try:
-                            new_qty = var.get()
-                            if new_qty == 0:
-                                checkvar.set(False)
-                                _sync_selection()
-                            elif new_qty >= 1:
-                                c.quantity = new_qty
-                                checkvar.set(True)
-                                _sync_selection()
-                        except tk.TclError:
-                            pass  # Invalid input, ignore
-
-                    return _update
-
-                qty_spinbox = ttk.Spinbox(
-                    row_f,
-                    from_=0,
-                    to=99,
-                    width=4,
-                    textvariable=qty_var,
-                    command=_make_qty_updater(),
+                renderer._create_qty_spinbox(
+                    row_f, card, qty_var, card_vars[card.card_id], _sync_selection
                 )
-                qty_spinbox.pack(side=tk.LEFT, padx=(0, 6))
-                qty_var.trace_add("write", _make_qty_updater())
 
                 ttk.Label(
                     row_f,
@@ -1274,37 +1185,14 @@ class DecksTabMixin:
         row = ttk.Frame(detail)
         row.pack(fill=tk.X, padx=(12, 4))
         card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
-        ttk.Checkbutton(
-            row, variable=card_vars[card.card_id], command=sync_selection
-        ).pack(side=tk.LEFT)
+
+        renderer = TCGRowRenderer(self)
+        renderer._create_card_checkbox(row, card_vars[card.card_id], sync_selection)
 
         qty_var = tk.IntVar(value=card.quantity)
+        renderer._create_qty_spinbox(row, card, qty_var, card_vars[card.card_id], sync_selection)
 
-        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
-            def _update(*_args):
-                try:
-                    new_qty = var.get()
-                    if new_qty == 0:
-                        checkvar.set(False)
-                        sync_selection()
-                    elif new_qty >= 1:
-                        c.quantity = new_qty
-                        checkvar.set(True)
-                        sync_selection()
-                except tk.TclError:
-                    pass  # Invalid input, ignore
-
-            return _update
-
-        qty_spinbox = ttk.Spinbox(
-            row, from_=0, to=99, width=4, textvariable=qty_var, command=_make_qty_updater()
-        )
-        qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
-        qty_var.trace_add("write", _make_qty_updater())
-
-        ttk.Label(row, text=ellipsize(card.name, 28), width=29, anchor=tk.W).pack(
-            side=tk.LEFT
-        )
+        ttk.Label(row, text=ellipsize(card.name, 28), width=29, anchor=tk.W).pack(side=tk.LEFT)
         ttk.Label(row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
 
     def _ygo_remove_deck(self, idx: int) -> None:

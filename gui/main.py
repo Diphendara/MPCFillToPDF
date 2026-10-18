@@ -352,8 +352,9 @@ class App(
                 windnd.hook_dropfiles(w, func=self._on_drop_backs)
             for w in (self.fronts_canvas, self.fronts_inner):
                 windnd.hook_dropfiles(w, func=self._on_drop_fronts)
-        except Exception:
-            pass
+        except tk.TclError as exc:
+            # Drag-and-drop is optional: a destroyed widget just disables it.
+            _log.debug("Drag-and-drop hook failed: %s", exc)
 
     def _bind_mousewheel(self, canvas: tk.Canvas, on: bool) -> None:
         if on:
@@ -800,7 +801,8 @@ class App(
 
             try:
                 reports = analyze(self.state.xml_paths)
-            except Exception as e:
+            except (ValueError, OSError) as e:
+                # ValueError: malformed XML; OSError: unreadable file.
                 self._show_error_dialog(f"No se pudo analizar el XML:\n{e}")
                 return
 
@@ -1150,6 +1152,10 @@ class App(
         except Cancelled:
             self.events.put(("cancelled", run_dir))
         except Exception as e:
+            # Last-resort boundary of the worker thread: any unexpected
+            # failure must surface to the user as an error event instead of
+            # dying silently on a background thread. Broad on purpose.
+            _log.error("Worker failed: %s", e)
             self.events.put(("error", f"{e}\n\n{traceback.format_exc()}", run_dir))
 
     @staticmethod
@@ -1371,7 +1377,8 @@ class App(
             if import_btn:
                 try:
                     import_btn.state(["!disabled"])
-                except Exception:
+                except tk.TclError:
+                    # Dialog already closed — nothing to re-enable.
                     pass
         elif kind == "error":
             _, msg, run_dir = ev
