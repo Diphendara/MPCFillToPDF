@@ -160,6 +160,21 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
             raise DownloadTimeoutError(drive_id, filename) from None
         except requests.exceptions.ConnectionError as exc:
             _safe_unlink(tmp_path)
+            # Check if it's actually a rate limit error disguised as ConnectionError
+            if _is_rate_limit_error(exc):
+                if attempt < _MAX_RETRIES:
+                    _log.warning(
+                        "Rate limited on %s, retry %d/%d in %.0fs",
+                        drive_id,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                _log.error("Rate limit exhausted for %s", drive_id)
+                raise DownloadRateLimitError() from exc
             # Read timeouts during streaming surface as ConnectionError, not
             # Timeout — retry them like rate limits since they're transient.
             if attempt < _MAX_RETRIES:
