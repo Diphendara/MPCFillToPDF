@@ -402,48 +402,33 @@ def generate(
 
     def _fit_chunk(
         chunk: list[list[int]], temp_dir: Path, probe_number: list[int]
-    ) -> list[list[list[int]]]:
+    ) -> list[tuple[list[list[int]], Path]]:
+        """Render a chunk once and return (chunk, rendered_path) pairs.
+
+        Fast path: if the byte projection says this chunk fits, render it
+        exactly once to a temp file and trust the projection (the chunking
+        phase already split on projected bytes). If the projection says it
+        won't fit, split without rendering.
+
+        Safety net: after rendering, the actual on-disk size is checked. If
+        the projection underestimated and the file exceeds max_bytes, the
+        chunk is split and each half re-rendered — so a bad projection can
+        never produce an oversized PDF.
+        """
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
-        # Fast path: if the byte projection says this chunk fits comfortably,
-        # skip the probe render entirely — the chunking phase already split
-        # on projected bytes, so this only triggers when projection was off.
-        if _estimate_chunk_bytes(chunk) <= max_bytes:
-            return [chunk]
-        if len(chunk) == 1:
-            return [chunk]
-        # Projection says it won't fit — split without rendering a probe.
-        midpoint = len(chunk) // 2
-        return _fit_chunk(chunk[:midpoint], temp_dir, probe_number) + _fit_chunk(
-            chunk[midpoint:], temp_dir, probe_number
-        )
-
-    with TemporaryDirectory(prefix=".mpcfill_pdf_", dir=output_dir) as temp:
-        probe_number = [0]
-        fitted_chunks = [
-            fitted for chunk in chunks for fitted in _fit_chunk(chunk, Path(temp), probe_number)
-        ]
-
-    multiple = len(fitted_chunks) > 1
-    suffixes = [f"_{idx}" if multiple else "" for idx in range(1, len(fitted_chunks) + 1)]
-    use_fallback = fallback_base_name is not None and any(
-        _is_windows_invalid_output_path(output_dir / f"{base_name}{suffix}.pdf")
-        for suffix in suffixes
-    )
-    effective_base_name = fallback_base_name if use_fallback else base_name
-    outputs: list[Path] = []
-    total_pairs = sum(len(chunk) for chunk in fitted_chunks)
-    done_pairs = 0
-    pair_no = 0
-    for idx, chunk in enumerate(fitted_chunks, start=1):
-        if cancel_event is not None and cancel_event.is_set():
-            raise Cancelled()
-        suffix = f"_{idx}" if multiple or use_fallback else ""
-        path = output_dir / f"{effective_base_name}{suffix}.pdf"
+        if len(chunk) > 1 and _estimate_chunk_bytes(chunk) > max_bytes:
+            # Projection says it won't fit — split without rendering.
+            midpoint = len(chunk) // 2
+            return _fit_chunk(chunk[:midpoint], temp_dir, probe_number) + _fit_chunk(
+                chunk[midpoint:], temp_dir, probe_number
+            )
+        rendered = temp_dir / f"chunk_{probe_number[0]}.pdf"
+        probe_number[0] += 1
         _render_chunk(
-            path,
+            rendered,
             chunk,
-            pair_no + 1,
+            1,
             id_to_path,
             front_slot_to_id,
             back_slot_to_id,
@@ -457,12 +442,43 @@ def generate(
             cancel_event,
             layout,
         )
-        for _ in chunk:
-            pair_no += 1
-            done_pairs += 1
-            if progress_callback:
-                progress_callback(done_pairs, total_pairs)
-        outputs.append(path)
+        if rendered.stat().st_size <= max_bytes or len(chunk) == 1:
+            return [(chunk, rendered)]
+        # Projection underestimated: split and re-render each half.
+        rendered.unlink()
+        midpoint = len(chunk) // 2
+        return _fit_chunk(chunk[:midpoint], temp_dir, probe_number) + _fit_chunk(
+            chunk[midpoint:], temp_dir, probe_number
+        )
+
+    with TemporaryDirectory(prefix=".mpcfill_pdf_", dir=output_dir) as temp:
+        probe_number = [0]
+        fitted = [pair for chunk in chunks for pair in _fit_chunk(chunk, Path(temp), probe_number)]
+
+        fitted_chunks = [chunk for chunk, _ in fitted]
+        multiple = len(fitted_chunks) > 1
+        suffixes = [f"_{idx}" if multiple else "" for idx in range(1, len(fitted_chunks) + 1)]
+        use_fallback = fallback_base_name is not None and any(
+            _is_windows_invalid_output_path(output_dir / f"{base_name}{suffix}.pdf")
+            for suffix in suffixes
+        )
+        effective_base_name = fallback_base_name if use_fallback else base_name
+        outputs: list[Path] = []
+        total_pairs = sum(len(chunk) for chunk in fitted_chunks)
+        done_pairs = 0
+        for idx, (chunk, rendered) in enumerate(fitted, start=1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise Cancelled()
+            suffix = f"_{idx}" if multiple or use_fallback else ""
+            path = output_dir / f"{effective_base_name}{suffix}.pdf"
+            # The chunk was already rendered exactly once in _fit_chunk;
+            # just move the finished file to its final name.
+            rendered.replace(path)
+            for _ in chunk:
+                done_pairs += 1
+                if progress_callback:
+                    progress_callback(done_pairs, total_pairs)
+            outputs.append(path)
 
     return outputs
 
