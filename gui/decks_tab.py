@@ -1230,6 +1230,44 @@ class DecksTabMixin:
 
     # ── Yu-Gi-Oh deck rows ────────────────────────────────────────────────
 
+    def _render_ygo_card_row(self, detail, card, selected_ids, card_vars, sync_fn) -> None:
+        """Render a single Yu-Gi-Oh card row."""
+        row = ttk.Frame(detail)
+        row.pack(fill=tk.X, padx=(12, 4))
+        card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
+        ttk.Checkbutton(
+            row, variable=card_vars[card.card_id], command=sync_fn
+        ).pack(side=tk.LEFT)
+
+        qty_var = tk.IntVar(value=card.quantity)
+
+        def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
+            def _update(*_args):
+                try:
+                    new_qty = var.get()
+                    if new_qty == 0:
+                        checkvar.set(False)
+                        sync_fn()
+                    elif new_qty >= 1:
+                        c.quantity = new_qty
+                        checkvar.set(True)
+                        sync_fn()
+                except tk.TclError:
+                    pass  # Invalid input, ignore
+
+            return _update
+
+        qty_spinbox = ttk.Spinbox(
+            row, from_=0, to=99, width=4, textvariable=qty_var, command=_make_qty_updater()
+        )
+        qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
+        qty_var.trace_add("write", _make_qty_updater())
+
+        ttk.Label(row, text=ellipsize(card.name, 28), width=29, anchor=tk.W).pack(
+            side=tk.LEFT
+        )
+        ttk.Label(row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+
     def _render_ygo_rows(self) -> None:
         for idx, deck in enumerate(self._ygo_decks):
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
@@ -1267,41 +1305,7 @@ class DecksTabMixin:
                 self._refresh_generate_state()
 
             for card in sorted(deck.cards, key=lambda c: c.name.casefold()):
-                row = ttk.Frame(detail)
-                row.pack(fill=tk.X, padx=(12, 4))
-                card_vars[card.card_id] = tk.BooleanVar(value=card.card_id in selected_ids)
-                ttk.Checkbutton(
-                    row, variable=card_vars[card.card_id], command=_sync_selection
-                ).pack(side=tk.LEFT)
-
-                qty_var = tk.IntVar(value=card.quantity)
-
-                def _make_qty_updater(c=card, var=qty_var, checkvar=card_vars[card.card_id]):
-                    def _update(*_args):
-                        try:
-                            new_qty = var.get()
-                            if new_qty == 0:
-                                checkvar.set(False)
-                                _sync_selection()
-                            elif new_qty >= 1:
-                                c.quantity = new_qty
-                                checkvar.set(True)
-                                _sync_selection()
-                        except tk.TclError:
-                            pass  # Invalid input, ignore
-
-                    return _update
-
-                qty_spinbox = ttk.Spinbox(
-                    row, from_=0, to=99, width=4, textvariable=qty_var, command=_make_qty_updater()
-                )
-                qty_spinbox.pack(side=tk.LEFT, padx=(0, 4))
-                qty_var.trace_add("write", _make_qty_updater())
-
-                ttk.Label(row, text=ellipsize(card.name, 28), width=29, anchor=tk.W).pack(
-                    side=tk.LEFT
-                )
-                ttk.Label(row, text=card.zone, foreground="#888").pack(side=tk.LEFT)
+                self._render_ygo_card_row(detail, card, selected_ids, card_vars, _sync_selection)
 
             def _toggle() -> None:
                 if expanded.get():

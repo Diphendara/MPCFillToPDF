@@ -114,6 +114,10 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
             set_code = str(card.get("set", "")).lower()
             collector_number = str(card.get("cn", ""))
             name = card.get("name", "")
+            # Moxfield prefixes altered-art cards with "a-" (e.g., "a-Hullbreaker Horror")
+            # Strip it so Scryfall can find the card
+            if name.startswith("a-"):
+                name = name[2:]
             qty = int(entry.get("quantity", 1))
             if not set_code or not collector_number:
                 continue
