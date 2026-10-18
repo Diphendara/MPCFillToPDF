@@ -12,6 +12,7 @@ import requests
 
 from src.cancellation import Cancelled
 from src.constants import ImageDoneCallback, ProgressCallback, SpeedCallback
+from src.http_client import get_session
 
 _log = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ def download_image(drive_id: str, dest_dir: Path, filename: str) -> Path:
     delay = _INITIAL_BACKOFF
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            resp = requests.get(
+            resp = get_session().get(
                 _lh4_url(drive_id),
                 stream=True,
                 timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),

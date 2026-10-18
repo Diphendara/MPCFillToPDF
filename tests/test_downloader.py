@@ -68,7 +68,7 @@ def test_download_cache_hit_skips_request(tmp_path):
     cached = dest / "DRIVEID.jpg"
     cached.write_bytes(b"cached content")
 
-    with patch("requests.get") as mock_get:
+    with patch("requests.Session.get") as mock_get:
         result = download_image("DRIVEID", dest, "card.jpg")
         mock_get.assert_not_called()
 
@@ -76,20 +76,20 @@ def test_download_cache_hit_skips_request(tmp_path):
 
 
 def test_download_creates_file(tmp_path):
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         result = download_image("ID001", tmp_path / "raw", "card.jpg")
     assert result.exists()
     assert result.stat().st_size > 0
 
 
 def test_download_output_named_by_drive_id(tmp_path):
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         result = download_image("MYID", tmp_path / "raw", "something.jpg")
     assert result.name.startswith("MYID")
 
 
 def test_download_permission_error(tmp_path):
-    with patch("requests.get", side_effect=_fake_403):
+    with patch("requests.Session.get", side_effect=_fake_403):
         with pytest.raises(DownloadPermissionError) as exc_info:
             download_image("ID001", tmp_path / "raw", "card.jpg")
     assert exc_info.value.drive_id == "ID001"
@@ -100,14 +100,14 @@ def test_download_timeout_error(tmp_path):
     def _raise(*args, **kwargs):
         raise requests.exceptions.Timeout("timed out")
 
-    with patch("requests.get", side_effect=_raise):
+    with patch("requests.Session.get", side_effect=_raise):
         with pytest.raises(DownloadTimeoutError) as exc_info:
             download_image("ID001", tmp_path / "raw", "card.jpg")
     assert exc_info.value.drive_id == "ID001"
 
 
 def test_download_rate_limit_exhausted(tmp_path):
-    with patch("requests.get", side_effect=requests.ConnectionError("429 Too Many Requests")):
+    with patch("requests.Session.get", side_effect=requests.ConnectionError("429 Too Many Requests")):
         with patch("time.sleep"):
             with pytest.raises(DownloadRateLimitError):
                 download_image("ID001", tmp_path / "raw", "card.jpg")
@@ -122,7 +122,7 @@ def test_download_rate_limit_retries_then_succeeds(tmp_path):
             raise requests.ConnectionError("503 Service Unavailable")
         return _fake_requests_get(url, **kwargs)
 
-    with patch("requests.get", side_effect=_flaky):
+    with patch("requests.Session.get", side_effect=_flaky):
         with patch("time.sleep"):
             result = download_image("ID001", tmp_path / "raw", "card.jpg")
     assert result.exists()
@@ -133,7 +133,7 @@ def test_download_rate_limit_retries_then_succeeds(tmp_path):
 
 
 def test_download_all_returns_all_results(tmp_path):
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         results = download_all(
             [("ID1", "a.jpg"), ("ID2", "b.jpg")],
             tmp_path / "raw",
@@ -154,7 +154,7 @@ def test_download_all_progress_callback_fires_per_image(tmp_path):
     def _cb(done, total):
         calls.append((done, total))
 
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         download_all(
             [("ID1", "a.jpg"), ("ID2", "b.jpg"), ("ID3", "c.jpg")],
             tmp_path / "raw",
@@ -169,7 +169,7 @@ def test_download_all_progress_callback_fires_per_image(tmp_path):
 def test_download_all_on_image_done_callback(tmp_path):
     done_ids = []
 
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         download_all(
             [("ID1", "a.jpg"), ("ID2", "b.jpg")],
             tmp_path / "raw",
@@ -183,7 +183,7 @@ def test_download_all_cancel_event_raises_cancelled(tmp_path):
     event = threading.Event()
     event.set()
 
-    with patch("requests.get", side_effect=_fake_requests_get):
+    with patch("requests.Session.get", side_effect=_fake_requests_get):
         with pytest.raises(Cancelled):
             download_all(
                 [("ID1", "a.jpg")],
@@ -193,7 +193,7 @@ def test_download_all_cancel_event_raises_cancelled(tmp_path):
 
 
 def test_download_all_propagates_permission_error_as_partial(tmp_path):
-    with patch("requests.get", side_effect=_fake_403):
+    with patch("requests.Session.get", side_effect=_fake_403):
         with pytest.raises(DownloadPartialError) as exc_info:
             download_all([("ID1", "a.jpg")], tmp_path / "raw")
 
@@ -207,7 +207,7 @@ def test_download_all_propagates_timeout_error_as_partial(tmp_path):
     def _raise(*args, **kwargs):
         raise requests.exceptions.Timeout("timeout")
 
-    with patch("requests.get", side_effect=_raise):
+    with patch("requests.Session.get", side_effect=_raise):
         with patch("time.sleep"):
             with pytest.raises(DownloadPartialError) as exc_info:
                 download_all([("ID1", "a.jpg")], tmp_path / "raw")
@@ -228,7 +228,7 @@ def test_download_all_continues_after_partial_failure(tmp_path):
             raise requests.HTTPError(response=resp)
         return _fake_requests_get(url, **kwargs)
 
-    with patch("requests.get", side_effect=_mixed):
+    with patch("requests.Session.get", side_effect=_mixed):
         with pytest.raises(DownloadPartialError) as exc_info:
             download_all(
                 [("GOOD1", "good1.jpg"), ("BAD", "bad.jpg"), ("GOOD2", "good2.jpg")],
@@ -253,7 +253,7 @@ def test_download_all_timeout_retry_succeeds(tmp_path):
             raise requests.exceptions.Timeout("timeout first time")
         return _fake_requests_get(url, **kwargs)
 
-    with patch("requests.get", side_effect=_flaky):
+    with patch("requests.Session.get", side_effect=_flaky):
         with patch("time.sleep"):
             results = download_all([("ID1", "a.jpg")], tmp_path / "raw")
 

@@ -16,6 +16,7 @@ import requests
 from src.cancellation import Cancelled
 from src.constants import ProgressCallback
 from src.deck_importer import DeckCard
+from src.http_client import get_session
 
 _log = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def _throttled_get(url: str, params: dict | None = None) -> requests.Response:
                 time.sleep(wait)
             _last_request_time = time.monotonic()
         try:
-            resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT, params=params)
+            resp = get_session().get(url, headers=_HEADERS, timeout=_TIMEOUT, params=params)
         except (requests.Timeout, requests.ConnectionError) as exc:
             last_exc = exc
             if attempt < len(_RETRY_DELAYS):

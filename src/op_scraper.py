@@ -14,6 +14,7 @@ import requests
 from src.cancellation import Cancelled
 from src.constants import ProgressCallback
 from src.http_client import get as http_get
+from src.http_client import get_session
 from src.http_client import post as http_post
 from src.scraper_utils import generate_fallback_back
 from src.scraper_utils import resources_dir as _resources_dir
@@ -363,7 +364,7 @@ def download_images(
             return card.card_id, path
         url = url_func(card.card_id)
         try:
-            r = requests.get(url, headers=req_headers, timeout=20)
+            r = get_session().get(url, headers=req_headers, timeout=20)
             r.raise_for_status()
             path.write_bytes(r.content)
             return card.card_id, path
@@ -374,7 +375,7 @@ def download_images(
         fb_path = dest_dir / f"{card.card_id}.png"
         if fb_path.exists():
             return card.card_id, fb_path
-        fb_r = requests.get(
+        fb_r = get_session().get(
             _kaizoku_img(card.card_id),
             headers={**_HEADERS, "Referer": _KAIZOKU_REFERER},
             timeout=20,

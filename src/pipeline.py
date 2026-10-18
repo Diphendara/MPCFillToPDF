@@ -309,14 +309,24 @@ def _build_slot_maps(
     )
 
 
+_local_id_cache: dict[str, str] = {}
+
+
 def _local_synthetic_id(path: Path) -> str:
     """Return a stable synthetic 'drive ID' for a local file.
 
     Derived from its absolute path. The hash keeps it short, filesystem-safe,
-    and cache-friendly across re-runs of the same file.
+    and cache-friendly across re-runs of the same file. Results are cached
+    in-process to avoid repeated resolve() syscalls.
     """
+    key = str(path)
+    cached = _local_id_cache.get(key)
+    if cached is not None:
+        return cached
     h = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
-    return f"local_{h}"
+    sid = f"local_{h}"
+    _local_id_cache[key] = sid
+    return sid
 
 
 def _render_pdf_job(

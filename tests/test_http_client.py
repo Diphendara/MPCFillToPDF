@@ -12,27 +12,27 @@ class TestRequest:
 
     def test_get_request_uses_default_timeout(self) -> None:
         """GET request uses default timeout."""
-        with patch("src.http_client.requests.get") as mock_get:
+        with patch("requests.Session.request") as mock_get:
             mock_response = MagicMock()
             mock_get.return_value = mock_response
             request("GET", "https://example.com")
             mock_get.assert_called_once_with(
-                "https://example.com", headers={}, timeout=DEFAULT_TIMEOUT
+                "GET", "https://example.com", headers={}, timeout=DEFAULT_TIMEOUT
             )
 
     def test_post_request_uses_default_timeout(self) -> None:
         """POST request uses default timeout."""
-        with patch("src.http_client.requests.post") as mock_post:
+        with patch("requests.Session.request") as mock_post:
             mock_response = MagicMock()
             mock_post.return_value = mock_response
             request("POST", "https://example.com")
             mock_post.assert_called_once_with(
-                "https://example.com", headers={}, timeout=DEFAULT_TIMEOUT
+                "POST", "https://example.com", headers={}, timeout=DEFAULT_TIMEOUT
             )
 
     def test_custom_headers_and_timeout(self) -> None:
         """Custom headers and timeout are passed through."""
-        with patch("src.http_client.requests.get") as mock_get:
+        with patch("requests.Session.request") as mock_get:
             mock_response = MagicMock()
             mock_get.return_value = mock_response
             request(
@@ -42,6 +42,7 @@ class TestRequest:
                 timeout=30,
             )
             mock_get.assert_called_once_with(
+                "GET",
                 "https://example.com",
                 headers={"Authorization": "Bearer token"},
                 timeout=30,
@@ -49,7 +50,7 @@ class TestRequest:
 
     def test_raise_for_status_enabled_by_default(self) -> None:
         """raise_for_status is called by default."""
-        with patch("src.http_client.requests.get") as mock_get:
+        with patch("requests.Session.request") as mock_get:
             mock_response = MagicMock()
             mock_get.return_value = mock_response
             request("GET", "https://example.com")
@@ -57,7 +58,7 @@ class TestRequest:
 
     def test_raise_for_status_disabled(self) -> None:
         """raise_for_status can be disabled."""
-        with patch("src.http_client.requests.get") as mock_get:
+        with patch("requests.Session.request") as mock_get:
             mock_response = MagicMock()
             mock_get.return_value = mock_response
             request("GET", "https://example.com", raise_for_status=False)
@@ -65,7 +66,7 @@ class TestRequest:
 
     def test_method_case_insensitive(self) -> None:
         """Method is case-insensitive."""
-        with patch("src.http_client.requests.get") as mock_get:
+        with patch("requests.Session.request") as mock_get:
             mock_response = MagicMock()
             mock_get.return_value = mock_response
             request("get", "https://example.com")

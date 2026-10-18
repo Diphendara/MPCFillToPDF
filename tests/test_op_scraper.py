@@ -208,7 +208,7 @@ class TestScrapeDotgg:
 
     def test_parses_deck_name_and_quantities(self):
         r1, r2 = self._two_mocks()
-        with patch("src.op_scraper.requests.get", side_effect=[r1, r2]):
+        with patch("requests.Session.request", side_effect=[r1, r2]):
             deck = _scrape_dotgg("https://onepiece.gg/decks/test-deck/")
         assert deck.name == "Test Deck"
         assert deck.slug == "test-deck"
@@ -219,7 +219,7 @@ class TestScrapeDotgg:
 
     def test_detects_leader(self):
         r1, r2 = self._two_mocks()
-        with patch("src.op_scraper.requests.get", side_effect=[r1, r2]):
+        with patch("requests.Session.request", side_effect=[r1, r2]):
             deck = _scrape_dotgg("https://onepiece.gg/decks/test-deck/")
         assert deck.leader is not None
         assert deck.leader.card_id == "OP01-001"
@@ -227,7 +227,7 @@ class TestScrapeDotgg:
 
     def test_parses_colors(self):
         r1, r2 = self._two_mocks()
-        with patch("src.op_scraper.requests.get", side_effect=[r1, r2]):
+        with patch("requests.Session.request", side_effect=[r1, r2]):
             deck = _scrape_dotgg("https://onepiece.gg/decks/test-deck/")
         leader = deck.leader
         assert "Red" in leader.colors
@@ -280,10 +280,10 @@ class TestScrapeEgman:
     def test_load_short_code_posts_to_supabase(self):
         mock_r = MagicMock()
         mock_r.json.return_value = [{"deck_data": {"EB01-001": 2}, "short_code": "abc"}]
-        with patch("src.op_scraper.requests.post", return_value=mock_r) as mock_post:
+        with patch("requests.Session.request", return_value=mock_r) as mock_post:
             deck_map, slug = _egman_load_short_code("abc")
         mock_post.assert_called_once()
-        call_url = mock_post.call_args[0][0]
+        call_url = mock_post.call_args[0][1]
         assert "get_deck_by_short_code" in call_url
         assert mock_post.call_args[1]["json"] == {"p_code": "abc"}
         assert deck_map == {"EB01-001": 2}
@@ -292,7 +292,7 @@ class TestScrapeEgman:
     def test_load_short_code_not_found_raises(self):
         mock_r = MagicMock()
         mock_r.json.return_value = []
-        with patch("src.op_scraper.requests.post", return_value=mock_r):
+        with patch("requests.Session.request", return_value=mock_r):
             with pytest.raises(ValueError, match="código"):
                 _egman_load_short_code("missing")
 
@@ -307,7 +307,7 @@ class TestScrapeEgman:
                 "short_code": "xyz",
             }
         ]
-        with patch("src.op_scraper.requests.post", return_value=mock_r):
+        with patch("requests.Session.request", return_value=mock_r):
             deck_map, slug = _egman_load_short_code("xyz")
         assert deck_map == {"EB01-001": 3, "EB01-002": 1}
         assert slug == "xyz"
@@ -331,7 +331,7 @@ class TestDownloadImagesFallback:
         deck = self._single_card_deck()
         mock_r = MagicMock()
         mock_r.content = b"img_data"
-        with patch("src.op_scraper.requests.get", return_value=mock_r):
+        with patch("requests.Session.get", return_value=mock_r):
             result = download_images(deck, tmp_path)
         assert "OP01-001" in result
         assert result["OP01-001"].read_bytes() == b"img_data"
@@ -351,7 +351,7 @@ class TestDownloadImagesFallback:
         fallback_mock = MagicMock()
         fallback_mock.content = b"fallback_bytes"
 
-        with patch("src.op_scraper.requests.get", side_effect=[primary_mock, fallback_mock]):
+        with patch("requests.Session.get", side_effect=[primary_mock, fallback_mock]):
             result = download_images(deck, tmp_path)
 
         assert "OP01-001" in result
@@ -370,7 +370,7 @@ class TestDownloadImagesFallback:
         primary_mock = MagicMock()
         primary_mock.raise_for_status.side_effect = primary_err
 
-        with patch("src.op_scraper.requests.get", return_value=primary_mock):
+        with patch("requests.Session.get", return_value=primary_mock):
             with pytest.raises(HTTPError):
                 download_images(deck, tmp_path)
 

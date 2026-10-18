@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageOps
 
 _log = logging.getLogger(__name__)
@@ -36,42 +37,38 @@ def _sample_border_color(
     """Sample the border color near a corner by taking the median of pixels.
 
     Samples along the horizontal and vertical edges just outside the rounded zone.
+    Vectorized with numpy for performance.
     """
     w, h = img.size
-    samples: list[tuple[int, int, int]] = []
+    arr = np.asarray(img)
     # Sample range: from radius to 2*radius along each edge
     lo = radius
     hi = min(2 * radius, min(w, h) // 2)
-
-    if corner == "tl":
-        for i in range(lo, hi):
-            if i < w:
-                samples.append(img.getpixel((i, 0)))
-            if i < h:
-                samples.append(img.getpixel((0, i)))
-    elif corner == "tr":
-        for i in range(lo, hi):
-            if i < w:
-                samples.append(img.getpixel((w - 1 - i, 0)))
-            if i < h:
-                samples.append(img.getpixel((w - 1, i)))
-    elif corner == "bl":
-        for i in range(lo, hi):
-            if i < w:
-                samples.append(img.getpixel((i, h - 1)))
-            if i < h:
-                samples.append(img.getpixel((0, h - 1 - i)))
-    elif corner == "br":
-        for i in range(lo, hi):
-            if i < w:
-                samples.append(img.getpixel((w - 1 - i, h - 1)))
-            if i < h:
-                samples.append(img.getpixel((w - 1, h - 1 - i)))
-
-    if not samples:
+    if lo >= hi:
         return (0, 0, 0)
-    samples.sort(key=lambda c: _luminance(*c))
-    return samples[len(samples) // 2]
+
+    idx = np.arange(lo, hi)
+    if corner == "tl":
+        h_samples = arr[0, idx[idx < w]]
+        v_samples = arr[idx[idx < h], 0]
+    elif corner == "tr":
+        h_samples = arr[0, w - 1 - idx[idx < w]]
+        v_samples = arr[idx[idx < h], w - 1]
+    elif corner == "bl":
+        h_samples = arr[h - 1, idx[idx < w]]
+        v_samples = arr[h - 1 - idx[idx < h], 0]
+    else:  # "br"
+        h_samples = arr[h - 1, w - 1 - idx[idx < w]]
+        v_samples = arr[h - 1 - idx[idx < h], w - 1]
+
+    samples = np.concatenate([h_samples, v_samples])
+    if samples.size == 0:
+        return (0, 0, 0)
+    # Median by luminance (same ordering as before, but vectorized)
+    luma = 0.299 * samples[:, 0] + 0.587 * samples[:, 1] + 0.114 * samples[:, 2]
+    median_idx = np.argsort(luma, kind="stable")[len(luma) // 2]
+    r, g, b = samples[median_idx][:3]
+    return (int(r), int(g), int(b))
 
 
 def _fill_rounded_corners(img: Image.Image) -> Image.Image:
@@ -81,47 +78,64 @@ def _fill_rounded_corners(img: Image.Image) -> Image.Image:
     create artefacts when mirror-bleed is applied.  This function replaces
     those corner pixels with the colour sampled from the adjacent border.
     Images without rounded corners are returned unmodified.
+
+    Vectorized with numpy: builds a quarter-circle mask per corner and
+    replaces anomalous pixels in one shot instead of per-pixel Python loops.
     """
     w, h = img.size
     radius = max(1, round(min(w, h) * _CORNER_RADIUS_FRAC))
-    radius_sq = radius * radius
 
-    # Precompute quarter-circle offsets once (integer comparison, no sqrt)
-    offsets = [
-        (dx, dy)
-        for dy in range(radius + 1)
-        for dx in range(radius + 1)
-        if dx * dx + dy * dy <= radius_sq
-    ]
+    arr = np.asarray(img).copy()
+    # Precompute quarter-circle boolean mask once (radius+1 × radius+1)
+    dy, dx = np.mgrid[0 : radius + 1, 0 : radius + 1]
+    quarter_mask = (dx * dx + dy * dy) <= radius * radius
 
     corner_defs = (
-        ("tl", 0, 0, 1, 1),
-        ("tr", w - 1, 0, -1, 1),
-        ("bl", 0, h - 1, 1, -1),
-        ("br", w - 1, h - 1, -1, -1),
+        ("tl", 0, 0),
+        ("tr", w - 1, 0),
+        ("bl", 0, h - 1),
+        ("br", w - 1, h - 1),
     )
 
     any_filled = False
-    pixels = img.load()
-
-    for name, ox, oy, sx, sy in corner_defs:
+    for name, ox, oy in corner_defs:
         border_color = _sample_border_color(img, name, radius)
         border_luma = _luminance(*border_color)
-        filled_this = False
-        for dx, dy in offsets:
-            px = ox + dx * sx
-            py = oy + dy * sy
-            if not (0 <= px < w and 0 <= py < h):
-                continue
-            r, g, b = pixels[px, py][:3]
-            if abs(_luminance(r, g, b) - border_luma) > _CORNER_LUMA_THRESHOLD:
-                pixels[px, py] = border_color
-                filled_this = True
-        if filled_this:
+
+        # Slice the corner region from the array (top-left origin of the region)
+        if name == "tl":
+            y0, x0 = 0, 0
+            region = arr[y0 : y0 + radius + 1, x0 : x0 + radius + 1]
+            mask = quarter_mask
+        elif name == "tr":
+            y0, x0 = 0, w - 1 - radius
+            region = arr[y0 : y0 + radius + 1, x0 : x0 + radius + 1]
+            mask = quarter_mask[:, ::-1]  # flip horizontally
+        elif name == "bl":
+            y0, x0 = h - 1 - radius, 0
+            region = arr[y0 : y0 + radius + 1, x0 : x0 + radius + 1]
+            mask = quarter_mask[::-1, :]  # flip vertically
+        else:  # "br"
+            y0, x0 = h - 1 - radius, w - 1 - radius
+            region = arr[y0 : y0 + radius + 1, x0 : x0 + radius + 1]
+            mask = quarter_mask[::-1, ::-1]  # flip both
+
+        if region.shape[0] == 0 or region.shape[1] == 0:
+            continue
+        # Clamp mask to actual region size (edges of very small images)
+        mh, mw = region.shape[:2]
+        mask = mask[:mh, :mw]
+
+        # Luminance of every pixel in the region, vectorized
+        region_luma = 0.299 * region[:, :, 0] + 0.587 * region[:, :, 1] + 0.114 * region[:, :, 2]
+        anomalous = mask & (np.abs(region_luma - border_luma) > _CORNER_LUMA_THRESHOLD)
+        if anomalous.any():
+            region[anomalous] = border_color
             any_filled = True
 
     if any_filled:
         _log.debug("Filled rounded corners")
+        return Image.fromarray(arr)
     return img
 
 
@@ -208,5 +222,11 @@ def process_for_pdf(
     by = round(ch * BLEED_MM / card_h_mm)
     bled = _add_mirror_bleed(trimmed, bx, by)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    bled.save(output_path)
+    suffix = output_path.suffix.lower()
+    if suffix in (".jpg", ".jpeg"):
+        bled.save(output_path, quality=95, optimize=True)
+    elif suffix == ".png":
+        bled.save(output_path, optimize=True)
+    else:
+        bled.save(output_path)
     return output_path
