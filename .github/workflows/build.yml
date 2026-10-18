@@ -36,7 +36,7 @@ jobs:
 
       - name: Install dependencies (non-Windows)
         if: runner.os != 'Windows'
-        run: pip install Pillow reportlab gdown requests plyer pyinstaller
+        run: pip install -r requirements.txt pyinstaller
 
       - name: Set up MSVC environment
         if: runner.os == 'Windows'
