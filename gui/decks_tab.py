@@ -7,10 +7,13 @@ tagged with its TCG icon.
 
 from __future__ import annotations
 
+import logging
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+import requests
 
 from gui.row_renderer import TCGRowRenderer
 from gui.widgets import (
