@@ -531,6 +531,8 @@ class DecksTabMixin:
         for i, deck in enumerate(self.state.mtg_url_decks):
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, pady=1, padx=2)
+
+            # ── Row 1: name + count + back selector + buttons ──────────
             frame = ttk.Frame(outer)
             frame.pack(fill=tk.X)
             frame.columnconfigure(0, weight=3)
@@ -592,10 +594,6 @@ class DecksTabMixin:
             ).grid(row=0, column=col, padx=(0, 2))
             col += 1
 
-            detail = ttk.Frame(outer)
-            expanded = tk.BooleanVar(value=False)
-            self._render_mtg_detail(detail, i, deck, side_count)
-
             extras_btn = ttk.Button(
                 right,
                 text="Cartas ▼",
@@ -603,6 +601,38 @@ class DecksTabMixin:
                 command=lambda idx=i: self._toggle_mtg_extras(idx),
             )
             extras_btn.grid(row=0, column=col)
+
+            # ── Row 2: option checkboxes ────────────────────────────────
+            opts = ttk.Frame(outer)
+            opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
+
+            if side_count:
+                side_var = tk.BooleanVar(value=deck.include_side)
+
+                def _toggle_side(idx=i, var=side_var):
+                    self.state.mtg_url_decks[idx].include_side = var.get()
+                    self._refresh_generate_state()
+
+                ttk.Checkbutton(
+                    opts, text="Incluir sideboard", variable=side_var, command=_toggle_side
+                ).pack(side=tk.LEFT, padx=(0, 12))
+
+            token_var = tk.BooleanVar(value=deck.include_tokens)
+
+            def _toggle_tokens(idx=i, var=token_var):
+                self.state.mtg_url_decks[idx].include_tokens = var.get()
+                self._refresh_generate_state()
+
+            ttk.Checkbutton(
+                opts,
+                text="Incluir tokens y extras",
+                variable=token_var,
+                command=_toggle_tokens,
+            ).pack(side=tk.LEFT, padx=(0, 12))
+
+            detail = ttk.Frame(outer)
+            expanded = tk.BooleanVar(value=False)
+            self._render_mtg_detail(detail, i, deck, side_count)
 
             self._mtg_deck_rows.append(
                 {
@@ -614,34 +644,7 @@ class DecksTabMixin:
             )
 
     def _render_mtg_detail(self, detail, idx: int, deck, side_count: int) -> None:
-        """Render the collapsible detail area (sideboard/tokens toggles + card rows)."""
-        controls = ttk.Frame(detail)
-        controls.pack(fill=tk.X, padx=(12, 4), pady=(0, 4))
-
-        if side_count:
-            side_var = tk.BooleanVar(value=deck.include_side)
-
-            def _toggle_side(i=idx, var=side_var):
-                self.state.mtg_url_decks[i].include_side = var.get()
-                self._refresh_generate_state()
-
-            ttk.Checkbutton(
-                controls, text="Incluir sideboard", variable=side_var, command=_toggle_side
-            ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
-
-        token_var = tk.BooleanVar(value=deck.include_tokens)
-
-        def _toggle_tokens(i=idx, var=token_var):
-            self.state.mtg_url_decks[i].include_tokens = var.get()
-            self._refresh_generate_state()
-
-        ttk.Checkbutton(
-            controls,
-            text="Incluir tokens y extras",
-            variable=token_var,
-            command=_toggle_tokens,
-        ).pack(side=tk.LEFT, padx=(12, 8), pady=(0, 4))
-
+        """Render the collapsible detail area (card rows only — options moved to row 2)."""
         selected_ids = deck.selected_card_ids
         if selected_ids is None:
             selected_ids = {id(card) for card in deck.cards}
@@ -850,8 +853,9 @@ class DecksTabMixin:
             outer.pack(fill=tk.X, pady=3, padx=2)
             outer.columnconfigure(0, weight=1)
 
+            # ── Row 1: name + sections + count + buttons ──────────────
             summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
+            summary.pack(fill=tk.X, padx=6, pady=(4, 0))
             summary.columnconfigure(1, weight=1)
 
             ttk.Label(
@@ -881,30 +885,6 @@ class DecksTabMixin:
                 summary, text=f"{deck.total_slots} cartas", foreground="#888", anchor="e"
             ).grid(row=0, column=2, sticky="e", padx=(8, 6))
 
-            print_runes_var = tk.BooleanVar(value=True)
-            has_runes = bool(by_sec.get("rune"))
-            runes_cb = ttk.Checkbutton(
-                summary,
-                text="imprimir runas",
-                variable=print_runes_var,
-            )
-            if not has_runes:
-                runes_cb.state(["disabled"])
-            runes_cb.grid(row=0, column=3, padx=(4, 8))
-
-            # Sideboard checkbox
-            include_sideboard_var = tk.BooleanVar(value=False)
-            has_sideboard = bool(by_sec.get("sideboard"))
-            sideboard_cb = ttk.Checkbutton(
-                summary,
-                text="incluir sideboard",
-                variable=include_sideboard_var,
-                command=self._refresh_generate_state,
-            )
-            if not has_sideboard:
-                sideboard_cb.state(["disabled"])
-            sideboard_cb.grid(row=0, column=4, padx=(4, 8))
-
             expanded_var = tk.BooleanVar(value=False)
             toggle_btn = ttk.Button(
                 summary,
@@ -912,14 +892,41 @@ class DecksTabMixin:
                 width=10,
                 command=lambda i=idx: self._rb_toggle_details(i),
             )
-            toggle_btn.grid(row=0, column=5, padx=(0, 4))
+            toggle_btn.grid(row=0, column=3, padx=(0, 4))
 
             ttk.Button(
                 summary,
                 text="✕",
                 width=2,
                 command=lambda i=idx: self._rb_remove_deck(i),
-            ).grid(row=0, column=6)
+            ).grid(row=0, column=4)
+
+            # ── Row 2: option checkboxes ────────────────────────────────
+            opts = ttk.Frame(outer)
+            opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
+
+            print_runes_var = tk.BooleanVar(value=True)
+            has_runes = bool(by_sec.get("rune"))
+            runes_cb = ttk.Checkbutton(
+                opts,
+                text="Imprimir runas",
+                variable=print_runes_var,
+            )
+            if not has_runes:
+                runes_cb.state(["disabled"])
+            runes_cb.pack(side=tk.LEFT, padx=(0, 12))
+
+            include_sideboard_var = tk.BooleanVar(value=False)
+            has_sideboard = bool(by_sec.get("sideboard"))
+            sideboard_cb = ttk.Checkbutton(
+                opts,
+                text="Incluir sideboard",
+                variable=include_sideboard_var,
+                command=self._refresh_generate_state,
+            )
+            if not has_sideboard:
+                sideboard_cb.state(["disabled"])
+            sideboard_cb.pack(side=tk.LEFT, padx=(0, 12))
 
             detail = ttk.Frame(outer)
             self._render_rb_detail(detail, deck, by_sec)
@@ -1142,8 +1149,10 @@ class DecksTabMixin:
         for idx, deck in enumerate(self._ygo_decks):
             outer = ttk.Frame(self._decks_inner, relief="groove", borderwidth=1)
             outer.pack(fill=tk.X, padx=2, pady=3)
+
+            # ── Row 1: name + count + buttons ──────────────────────────
             summary = ttk.Frame(outer)
-            summary.pack(fill=tk.X, padx=6, pady=4)
+            summary.pack(fill=tk.X, padx=6, pady=(4, 0))
             ttk.Label(
                 summary,
                 text=ellipsize(deck.name, 28),
@@ -1151,20 +1160,26 @@ class DecksTabMixin:
                 image=self._ygo_icon_img,
                 compound=tk.LEFT,
             ).pack(side=tk.LEFT)
-            include_side = tk.BooleanVar(value=False)
-            side_label = f"Incluir Side ({deck.side_slots})" if deck.side_slots else "Sin Side Deck"
-            ttk.Checkbutton(
-                summary,
-                text=side_label,
-                variable=include_side,
-                state=tk.NORMAL if deck.side_slots else tk.DISABLED,
-            ).pack(side=tk.RIGHT)
             ttk.Button(
                 summary, text="✕", width=2, command=lambda i=idx: self._ygo_remove_deck(i)
             ).pack(side=tk.RIGHT, padx=(0, 5))
             ttk.Label(summary, text=f"{deck.total_slots()} Main/Extra", foreground="#888").pack(
                 side=tk.RIGHT, padx=(0, 8)
             )
+
+            # ── Row 2: option checkboxes ────────────────────────────────
+            opts = ttk.Frame(outer)
+            opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
+
+            include_side = tk.BooleanVar(value=False)
+            side_label = f"Incluir Side ({deck.side_slots})" if deck.side_slots else "Sin Side Deck"
+            ttk.Checkbutton(
+                opts,
+                text=side_label,
+                variable=include_side,
+                state=tk.NORMAL if deck.side_slots else tk.DISABLED,
+            ).pack(side=tk.LEFT, padx=(0, 12))
+
             detail = ttk.Frame(outer)
             expanded = tk.BooleanVar(value=False)
             self._render_ygo_detail(detail, deck)
