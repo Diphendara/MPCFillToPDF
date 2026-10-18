@@ -469,12 +469,13 @@ class App(
     def _preflight_named_deck_rows(self, decks, label: str) -> int:
         """Render rows for named decks (OP/RB/Lorcana); return total card count."""
         total = 0
+        prefix = f"{label} – " if label else ""
         for deck in decks:
             n = deck.total_slots
             total += n
             self._preflight_row(
                 [
-                    (f"• {label} – {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"• {prefix}{ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
                 ]
@@ -482,11 +483,11 @@ class App(
         return total
 
     def _preflight_ygo_rows(self) -> None:
-        for deck, row in zip(self._ygo_decks, self._ygo_deck_rows):
+        for deck, row in zip(self._ygo_decks, self._ygo_deck_rows, strict=False):
             n = deck.total_slots(row["include_side_var"].get())
             self._preflight_row(
                 [
-                    (f"• Yu-Gi-Oh! – {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"• {ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas (PDF separado)", "normal"),
                 ]
@@ -499,7 +500,7 @@ class App(
             total += n
             self._preflight_row(
                 [
-                    (f"• Magic – {ellipsize(deck.display_name, 28)}: ", "normal"),
+                    (f"• {ellipsize(deck.display_name, 28)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
                 ]
@@ -564,6 +565,19 @@ class App(
                 ]
             )
 
+    def _preflight_section_header(self, title: str) -> None:
+        """Render a section header for a TCG group in the preflight panel."""
+        frame = ttk.Frame(self._preflight_inner)
+        frame.pack(fill=tk.X, pady=(6, 2))
+        self._preflight_labels.append(frame)
+        ttk.Label(
+            frame,
+            text=title,
+            anchor=tk.W,
+            font=("Segoe UI", 9, "bold"),
+            foreground="#333",
+        ).pack(side=tk.LEFT)
+
     def _update_preflight(self) -> None:
         for widget in self._preflight_labels:
             widget.destroy()
@@ -581,18 +595,45 @@ class App(
             self._preflight_frame.grid_remove()
             return
 
-        xml_total = self._preflight_xml_rows()
-        xml_total += self._preflight_named_deck_rows(self._op_decks, "One Piece")
-        xml_total += self._preflight_named_deck_rows(self._rb_decks, "Riftbound")
-        xml_total += self._preflight_named_deck_rows(self._lorcana_decks, "Lorcana")
-        self._preflight_ygo_rows()
-        xml_total += self._preflight_mtg_url_rows()
+        xml_total = 0
 
+        # ── XML files (no TCG group — they're generic) ────────────────
+        if self.state.xml_paths:
+            self._preflight_section_header("XMLs")
+            xml_total += self._preflight_xml_rows()
+
+        # ── Magic ──────────────────────────────────────────────────────
+        if self.state.mtg_url_decks:
+            self._preflight_section_header("Magic")
+            xml_total += self._preflight_mtg_url_rows()
+
+        # ── Riftbound ──────────────────────────────────────────────────
+        if self._rb_decks:
+            self._preflight_section_header("Riftbound")
+            xml_total += self._preflight_named_deck_rows(self._rb_decks, "")
+
+        # ── One Piece ──────────────────────────────────────────────────
+        if self._op_decks:
+            self._preflight_section_header("One Piece")
+            xml_total += self._preflight_named_deck_rows(self._op_decks, "")
+
+        # ── Lorcana ────────────────────────────────────────────────────
+        if self._lorcana_decks:
+            self._preflight_section_header("Lorcana")
+            xml_total += self._preflight_named_deck_rows(self._lorcana_decks, "")
+
+        # ── Yu-Gi-Oh ───────────────────────────────────────────────────
+        if self._ygo_decks:
+            self._preflight_section_header("Yu-Gi-Oh!")
+            self._preflight_ygo_rows()
+
+        # ── Local images ───────────────────────────────────────────────
         local_count = len(self.state.local_fronts)
         if local_count:
+            self._preflight_section_header("Locales")
             self._preflight_row(
                 [
-                    ("• Locales: ", "normal"),
+                    ("• Imágenes locales: ", "normal"),
                     (f"{local_count}", "bold"),
                     (" carta(s)", "normal"),
                 ]
