@@ -477,7 +477,7 @@ class App(
         return total
 
     def _preflight_named_deck_rows(self, decks, label: str) -> int:
-        """Render rows for named decks (OP/RB/Lorcana); return total card count."""
+        """Render rows for named decks (OP/Lorcana); return total card count."""
         total = 0
         prefix = f"{label} – " if label else ""
         for deck in decks:
@@ -488,6 +488,23 @@ class App(
                     (f"• {prefix}{ellipsize(deck.name, 22)}: ", "normal"),
                     (f"{n}", "bold"),
                     (" cartas", "normal"),
+                ]
+            )
+        return total
+
+    def _preflight_rb_rows(self) -> int:
+        """Render rows for Riftbound decks; return total card count."""
+        total = 0
+        for deck, row in zip(self._rb_decks, self._rb_deck_rows, strict=False):
+            include_side = row["include_sideboard_var"].get()
+            n = deck.total_slots_with_side if include_side else deck.total_slots
+            total += n
+            side_txt = f" (+{deck.side_slots} side)" if include_side and deck.side_slots else ""
+            self._preflight_row(
+                [
+                    (f"• {ellipsize(deck.name, 22)}: ", "normal"),
+                    (f"{n}", "bold"),
+                    (f" cartas{side_txt}", "normal"),
                 ]
             )
         return total
@@ -642,7 +659,7 @@ class App(
         # ── Riftbound ──────────────────────────────────────────────────
         if self._rb_decks:
             self._preflight_section_header("Riftbound")
-            xml_total += self._preflight_named_deck_rows(self._rb_decks, "")
+            xml_total += self._preflight_rb_rows()
 
         # ── One Piece ──────────────────────────────────────────────────
         if self._op_decks:

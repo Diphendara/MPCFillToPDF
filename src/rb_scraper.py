@@ -92,6 +92,16 @@ class RBDeck:
         """Return the total number of card slots occupied by the deck."""
         return sum(c.quantity for c in self.cards)
 
+    @property
+    def side_slots(self) -> int:
+        """Return the number of sideboard card slots."""
+        return sum(c.quantity for c in self.cards if c.section == "sideboard")
+
+    @property
+    def total_slots_with_side(self) -> int:
+        """Return total slots including sideboard."""
+        return self.total_slots + self.side_slots
+
     def by_section(self) -> dict[str, list[RBCard]]:
         """Group the deck cards by section, preserving SECTION_ORDER."""
         result: dict[str, list[RBCard]] = {s: [] for s in SECTION_ORDER}
