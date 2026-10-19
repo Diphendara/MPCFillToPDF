@@ -242,7 +242,7 @@ class DecksTabMixin:
             "riftdex.com",
         ]
         lorcana_domains = ["lorcana.gg", "inkdecks.com"]
-        ygo_domains = ["ygoprodeck.com", "yugiohmeta.com"]
+        ygo_domains = ["ygoprodeck.com", "yugiohmeta.com", "edisonformat.net"]
 
         if any(d in url for d in mtg_domains):
             return "MTG", "🎴 Detectado: Magic: The Gathering"
