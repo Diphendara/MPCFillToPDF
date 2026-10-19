@@ -478,5 +478,5 @@ class TestYugiohRows:
                     all_texts.append(widget.cget("text"))
                 except Exception:
                     pass
-        assert "Incluir Side (15)" in all_texts
+        assert "Incluir Side (+15)" in all_texts
         assert row["include_side_var"].get() is False
