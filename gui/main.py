@@ -482,9 +482,11 @@ class App(
             )
         return total
 
-    def _preflight_ygo_rows(self) -> None:
+    def _preflight_ygo_rows(self) -> int:
+        total = 0
         for deck, row in zip(self._ygo_decks, self._ygo_deck_rows, strict=False):
             n = deck.total_slots(row["include_side_var"].get())
+            total += n
             self._preflight_row(
                 [
                     (f"• {ellipsize(deck.name, 22)}: ", "normal"),
@@ -492,6 +494,7 @@ class App(
                     (" cartas (PDF separado)", "normal"),
                 ]
             )
+        return total
 
     def _preflight_mtg_url_rows(self) -> int:
         total = 0
@@ -625,7 +628,7 @@ class App(
         # ── Yu-Gi-Oh ───────────────────────────────────────────────────
         if self._ygo_decks:
             self._preflight_section_header("Yu-Gi-Oh!")
-            self._preflight_ygo_rows()
+            xml_total += self._preflight_ygo_rows()
 
         # ── Local images ───────────────────────────────────────────────
         local_count = len(self.state.local_fronts)
