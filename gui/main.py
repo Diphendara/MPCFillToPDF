@@ -297,9 +297,19 @@ class App(
         """Build the right side: summary/preflight panel."""
         self._preflight_frame = ttk.LabelFrame(parent, text="Resumen")
         self._preflight_frame.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+        self._preflight_frame.rowconfigure(0, weight=1)  # Lists expand
+        self._preflight_frame.rowconfigure(1, weight=0)  # Total stays at bottom
+        self._preflight_frame.columnconfigure(0, weight=1)
+
+        # Container for deck lists (scrollable, expands)
         self._preflight_inner = ttk.Frame(self._preflight_frame)
-        self._preflight_inner.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self._preflight_inner.grid(row=0, column=0, sticky="nsew", padx=6, pady=(4, 0))
         self._preflight_labels: list[ttk.Label] = []
+
+        # Container for total (fixed at bottom)
+        self._preflight_total_frame = ttk.Frame(self._preflight_frame)
+        self._preflight_total_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 6))
+        self._preflight_total_labels: list[ttk.Label] = []
 
     def _build_xml_pane(self, parent: ttk.Frame) -> None:
         """Build the left side: unified decks panel + Settings tab."""
@@ -570,9 +580,14 @@ class App(
 
     def _preflight_total_row(self, parts: list[tuple[str, str]]) -> None:
         """Render the grand total row with larger font at the bottom of preflight."""
-        frame = ttk.Frame(self._preflight_inner)
-        frame.pack(fill=tk.X, pady=(12, 4))
-        self._preflight_labels.append(frame)
+        # Clear previous total
+        for widget in self._preflight_total_labels:
+            widget.destroy()
+        self._preflight_total_labels.clear()
+
+        frame = ttk.Frame(self._preflight_total_frame)
+        frame.pack(fill=tk.X)
+        self._preflight_total_labels.append(frame)
         for text, style in parts:
             if style == "warn":
                 kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 12, "bold")}
