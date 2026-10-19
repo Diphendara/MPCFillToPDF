@@ -596,23 +596,71 @@ class App(
             )
 
     def _preflight_total_row(self, parts: list[tuple[str, str]]) -> None:
-        """Render the grand total row with larger font at the bottom of preflight."""
+        """Render the grand total as multiple lines at the bottom of preflight.
+
+        Format:
+            Total: X cartas
+            X pares de páginas
+            ⚠ X huecos en la última página (if any)
+        """
         # Clear previous total
         for widget in self._preflight_total_labels:
             widget.destroy()
         self._preflight_total_labels.clear()
 
-        frame = ttk.Frame(self._preflight_total_frame)
-        frame.pack(fill=tk.X)
-        self._preflight_total_labels.append(frame)
+        # Extract data from parts
+        total_cards = ""
+        pages_info = ""
+        warning = ""
+        cache_str = ""
+
         for text, style in parts:
-            if style == "warn":
-                kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 12, "bold")}
-            elif style == "bold":
-                kw = {"foreground": "#222", "font": ("Segoe UI", 12, "bold")}
-            else:
-                kw = {"foreground": "#333", "font": ("Segoe UI", 11)}
-            ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
+            if style == "bold" and not total_cards:
+                total_cards = text
+            elif "par(es) de páginas" in text:
+                # Split pages info from cache string
+                if "·" in text:
+                    pages_part, cache_part = text.split("·", 1)
+                    pages_info = pages_part.strip()
+                    cache_str = f" ·{cache_part}" if cache_part.strip() else ""
+                else:
+                    pages_info = text.strip()
+            elif style == "warn":
+                warning = text
+
+        # Line 1: Total: X cartas
+        line1 = ttk.Frame(self._preflight_total_frame)
+        line1.pack(fill=tk.X)
+        self._preflight_total_labels.append(line1)
+        ttk.Label(line1, text="Total: ", font=("Segoe UI", 12), foreground="#333").pack(
+            side=tk.LEFT
+        )
+        ttk.Label(
+            line1, text=f"{total_cards} cartas", font=("Segoe UI", 12, "bold"), foreground="#222"
+        ).pack(side=tk.LEFT)
+
+        # Line 2: X pares de páginas
+        line2 = ttk.Frame(self._preflight_total_frame)
+        line2.pack(fill=tk.X)
+        self._preflight_total_labels.append(line2)
+        ttk.Label(
+            line2,
+            text=f"{pages_info}{cache_str}",
+            font=("Segoe UI", 11),
+            foreground="#444",
+        ).pack(side=tk.LEFT)
+
+        # Line 3: Warning (if any)
+        if warning:
+            line3 = ttk.Frame(self._preflight_total_frame)
+            line3.pack(fill=tk.X)
+            self._preflight_total_labels.append(line3)
+            ttk.Label(
+                line3,
+                text=warning,
+                font=("Segoe UI", 11, "bold"),
+                foreground="#cc0000",
+            ).pack(side=tk.LEFT)
 
     def _preflight_section_header(self, title: str) -> None:
         """Render a section header for a TCG group in the preflight panel."""
