@@ -704,7 +704,7 @@ def parse_op_text(text: str) -> list[tuple[int, str, str, bool]]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Regex for Yu-Gi-Oh format: "3 Blue-Eyes White Dragon" or "1 Dark Magician (LOB)"
-_YGO_LINE_RE = re.compile(r"^(\d+)\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$", re.IGNORECASE)
+_YGO_LINE_RE = re.compile(r"^(\d+)x?\s+(.+?)(?:\s+\(([A-Z0-9]+)\))?\s*$", re.IGNORECASE)
 
 
 def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
@@ -713,10 +713,11 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
     Expected formats:
         3 Blue-Eyes White Dragon
         1 Dark Magician (LOB)
+        3x Blue-Eyes White Dragon
 
-    Returns YGODeck object.
+    Returns YGODeck object with resolved card IDs.
     """
-    from src.ygo_scraper import YGOCard, YGODeck
+    from src.ygo_scraper import YGOCard, YGODeck, _fetch_cards_by_names
 
     cards: list[YGOCard] = []
 
@@ -734,25 +735,28 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
 
         match = _YGO_LINE_RE.match(line)
         if not match:
-            raise TextImportError(
-                f"Formato no reconocido: '{line}'. "
-                "Formato esperado: 'Cantidad Nombre' o 'Cantidad Nombre (SET)'",
-                line_number=line_num,
-            )
-
-        quantity = int(match.group(1))
-        name = match.group(2).strip()
+            # Try matching without quantity (defaults to 1)
+            if re.match(r"^[A-Za-z]", line):
+                quantity = 1
+                name = line.strip()
+            else:
+                raise TextImportError(
+                    f"Formato no reconocido: '{line}'. "
+                    "Formato esperado: 'Cantidad Nombre', '3x Nombre' o 'Nombre'",
+                    line_number=line_num,
+                )
+        else:
+            quantity = int(match.group(1))
+            name = match.group(2).strip()
 
         if quantity < 1:
             raise TextImportError(
                 f"Cantidad inválida: {quantity}. Debe ser al menos 1.", line_number=line_num
             )
 
-        # For YGO, we need to resolve the card ID from the name
-        # This will require an API call to YGOPRODeck or similar
         cards.append(
             YGOCard(
-                card_id=0,  # Will need to be resolved
+                card_id=0,  # Will be resolved below
                 name=name,
                 quantity=quantity,
                 zone=zone,
@@ -762,8 +766,29 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
     if not cards:
         raise TextImportError("No se encontraron cartas en el texto proporcionado.")
 
+    # Resolve card IDs from names via YGOPRODeck API
+    unique_names = list(dict.fromkeys(card.name for card in cards))
+    resolved = _fetch_cards_by_names(unique_names)
+
+    resolved_cards: list[YGOCard] = []
+    for card in cards:
+        card_id, canonical_name = resolved.get(card.name.casefold(), (0, card.name))
+        if card_id == 0:
+            raise TextImportError(
+                f"No se encontró la carta '{card.name}' en YGOPRODeck. "
+                "Verifica que el nombre sea exacto."
+            )
+        resolved_cards.append(
+            YGOCard(
+                card_id=card_id,
+                name=canonical_name,
+                quantity=card.quantity,
+                zone=card.zone,
+            )
+        )
+
     return YGODeck(
         name="Imported from text",
         deck_id=f"text-import-{uuid.uuid4().hex[:8]}",
-        cards=cards,
+        cards=resolved_cards,
     )
