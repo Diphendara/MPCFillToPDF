@@ -926,7 +926,7 @@ class DecksTabMixin:
             runes_cb.pack(side=tk.LEFT, padx=(0, 12))
 
             include_sideboard_var = tk.BooleanVar(value=False)
-            sideboard_count = by_sec.get("sideboard", 0)
+            sideboard_count = len(by_sec.get("sideboard", []))
             has_sideboard = bool(sideboard_count)
             sideboard_cb = ttk.Checkbutton(
                 opts,
