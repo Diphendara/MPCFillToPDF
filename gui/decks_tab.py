@@ -23,7 +23,6 @@ from gui.widgets import (
     WINDND_AVAILABLE,
     PreviewWindow,
     XmlPb,
-    attach_context_menu,
     ellipsize,
     load_tab_icon,
 )
@@ -113,17 +112,17 @@ class DecksTabMixin:
     # ─────────────────────────────────────────────────────────────────────
 
     def _open_url_dialog(self) -> None:
-        """Universal URL import dialog with automatic TCG detection from domain."""
+        """Universal URL import dialog with automatic TCG detection per line."""
         dlg = tk.Toplevel(self.root)
-        dlg.title("Añadir mazo desde URL")
-        dlg.geometry("520x420")
-        dlg.resizable(False, False)
+        dlg.title("Añadir mazos desde URLs")
+        dlg.geometry("560x500")
+        dlg.resizable(True, True)
         dlg.grab_set()
-        self._mtg_url_dialog = dlg  # kept for the mtg_url_loaded handler
+        self._mtg_url_dialog = dlg
 
         ttk.Label(
             dlg,
-            text="Pega la URL del mazo:",
+            text="Pega las URLs de los mazos (una por línea):",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=10, pady=(10, 4))
 
@@ -145,45 +144,108 @@ class DecksTabMixin:
             "tengan menos calidad que las de MPCFill",
             foreground="#b86000",
             font=("Segoe UI", 8),
-            wraplength=490,
+            wraplength=530,
         ).pack(anchor="w", padx=10, pady=(0, 2))
 
+        # Multi-line URL input
         url_frame = ttk.Frame(dlg)
-        url_frame.pack(fill=tk.X, padx=10)
-        url_frame.columnconfigure(1, weight=1)
-        ttk.Label(url_frame, text="URL:").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        url_var = tk.StringVar()
-        url_entry = ttk.Entry(url_frame, textvariable=url_var)
-        url_entry.grid(row=0, column=1, sticky="ew")
-        attach_context_menu(url_entry)
-        url_entry.focus_set()
+        url_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 4))
+        url_frame.rowconfigure(0, weight=1)
+        url_frame.columnconfigure(0, weight=1)
+
+        url_text = tk.Text(url_frame, height=6, wrap=tk.NONE, font=("Consolas", 9))
+        url_text.grid(row=0, column=0, sticky="nsew")
+        url_scroll = ttk.Scrollbar(url_frame, orient=tk.VERTICAL, command=url_text.yview)
+        url_scroll.grid(row=0, column=1, sticky="ns")
+        url_text.configure(yscrollcommand=url_scroll.set)
+        url_text.focus_set()
 
         status_var = tk.StringVar(value="")
         self._mtg_url_status_var = status_var
         ttk.Label(dlg, textvariable=status_var, foreground="#555").pack(
-            anchor="w", padx=10, pady=(6, 0)
+            anchor="w", padx=10, pady=(4, 0)
         )
 
         btn_row = ttk.Frame(dlg)
         btn_row.pack(fill=tk.X, padx=10, pady=(6, 10))
 
-        # Auto-detect TCG from URL
-        detected_tcg = [None]  # Use list to allow modification in nested function
+        # Detect TCG for each line
+        detected_urls = []  # List of (url, tcg) tuples
 
-        def _detect_tcg_from_url(*_args):
-            tcg, message = self._detect_tcg_for_url(url_var.get())
-            detected_tcg[0] = tcg
-            detection_var.set(message)
+        def _detect_all_tcgs(*_args):
+            detected_urls.clear()
+            lines = [
+                u.strip() for u in url_text.get("1.0", tk.END).strip().splitlines() if u.strip()
+            ]
 
-        url_var.trace_add("write", _detect_tcg_from_url)
+            if not lines:
+                detection_var.set("")
+                return
+
+            tcg_counts = {}
+            unknown = []
+
+            for url in lines:
+                tcg, _ = self._detect_tcg_for_url(url)
+                if tcg:
+                    detected_urls.append((url, tcg))
+                    tcg_counts[tcg] = tcg_counts.get(tcg, 0) + 1
+                else:
+                    unknown.append(url)
+
+            # Build detection message
+            parts = []
+            tcg_icons = {
+                "MTG": "🎴",
+                "One Piece": "🏴‍☠️",
+                "Riftbound": "⚔️",
+                "Lorcana": "✨",
+                "Yu-Gi-Oh": "🎲",
+            }
+            for tcg, count in tcg_counts.items():
+                icon = tcg_icons.get(tcg, "")
+                parts.append(f"{icon} {tcg} ({count})")
+
+            msg = " + ".join(parts) if parts else ""
+            if unknown:
+                msg += (
+                    f" | ❌ {len(unknown)} no reconocida(s)"
+                    if msg
+                    else f"❌ {len(unknown)} no reconocida(s)"
+                )
+
+            detection_var.set(msg if msg else "Escribe URLs para detectar TCG…")
+
+        url_text.bind("<KeyRelease>", _detect_all_tcgs)
 
         def _do_import():
-            self._do_url_import(dlg, url_var, status_var, detected_tcg[0], import_btn)
+            if not detected_urls:
+                status_var.set("⚠️ No hay URLs válidas para importar")
+                return
+
+            import_btn.state(["disabled"])
+            total = len(detected_urls)
+            status_var.set(f"Importando {total} mazo(s)…")
+
+            def _run():
+                errors = []
+                for i, (url, tcg) in enumerate(detected_urls, 1):
+                    try:
+                        status_var.set(f"Importando {i}/{total}: {url[:40]}…")
+                        self._dispatch_url_import(tcg, url)
+                    except Exception as exc:
+                        _log.warning("Failed to import %s: %s", url, exc)
+                        errors.append(f"{url[:30]}…: {exc}")
+
+                if errors:
+                    self.events.put(("deck_url_error", ("Multi", f"Errores: {'; '.join(errors)}")))
+                dlg.after(0, dlg.destroy)
+
+            threading.Thread(target=_run, daemon=True).start()
 
         import_btn = ttk.Button(btn_row, text="Importar", command=_do_import)
         import_btn.pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(btn_row, text="Cancelar", command=dlg.destroy).pack(side=tk.RIGHT)
-        url_entry.bind("<Return>", lambda _e: _do_import())
         self._mtg_import_btn = import_btn
 
     @staticmethod
