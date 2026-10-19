@@ -14,13 +14,15 @@ class TestRiftboundSideboard:
             cards=[
                 RBCard("c1", "Card 1", 3, "maindeck"),
                 RBCard("c2", "Card 2", 2, "maindeck"),
-                RBCard("s1", "Side 1", 2, "sideboard"),
-                RBCard("s2", "Side 2", 1, "sideboard"),
+                RBCard("s1", "Side 1", 4, "sideboard"),  # 4 copies of same card
+                RBCard("s2", "Side 2", 3, "sideboard"),  # 3 copies
+                RBCard("s3", "Side 3", 2, "sideboard"),  # 2 copies
+                RBCard("s4", "Side 4", 1, "sideboard"),  # 1 copy
             ],
         )
         assert deck.total_slots == 5  # 3 + 2
-        assert deck.side_slots == 3  # 2 + 1
-        assert deck.total_slots_with_side == 8  # 5 + 3
+        assert deck.side_slots == 10  # 4 + 3 + 2 + 1 (quantities, not unique cards)
+        assert deck.total_slots_with_side == 15  # 5 + 10
 
     def test_empty_sideboard(self):
         deck = RBDeck(
