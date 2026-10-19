@@ -1499,31 +1499,27 @@ class App(
             self._show_error_dialog("\n\n".join(parts))
         elif kind == "op_deck_loaded":
             _, deck = ev
-            if not any(d.slug == deck.slug for d in self._op_decks):
-                self._op_decks.append(deck)
-                self._refresh_xml_rows()
-                self._refresh_generate_state()
+            self._op_decks.append(deck)
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
             self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "rb_deck_loaded":
             _, deck = ev
-            if not any(d.deck_id == deck.deck_id for d in self._rb_decks):
-                self._rb_decks.append(deck)
-                self._refresh_xml_rows()
-                self._refresh_generate_state()
+            self._rb_decks.append(deck)
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
             self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "lorcana_deck_loaded":
             _, deck = ev
-            if not any(d.deck_id == deck.deck_id for d in self._lorcana_decks):
-                self._lorcana_decks.append(deck)
-                self._refresh_xml_rows()
-                self._refresh_generate_state()
+            self._lorcana_decks.append(deck)
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
             self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "ygo_deck_loaded":
             _, deck = ev
-            if not any(d.deck_id == deck.deck_id for d in self._ygo_decks):
-                self._ygo_decks.append(deck)
-                self._refresh_xml_rows()
-                self._refresh_generate_state()
+            self._ygo_decks.append(deck)
+            self._refresh_xml_rows()
+            self._refresh_generate_state()
             self.status_var.set(f"Añadido: {deck.name}")
         elif kind == "deck_url_error":
             _, (tcg, msg) = ev
