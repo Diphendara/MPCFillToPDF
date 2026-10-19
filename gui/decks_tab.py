@@ -1168,19 +1168,22 @@ class DecksTabMixin:
             expanded = tk.BooleanVar(value=False)
             self._render_ygo_detail(detail, deck)
 
-            def _toggle() -> None:
-                if expanded.get():
-                    detail.pack_forget()
-                    toggle_btn.configure(text="Cartas ▼")
-                    expanded.set(False)
-                else:
-                    detail.pack(fill=tk.X, padx=0, pady=(0, 4))
-                    toggle_btn.configure(text="Cartas ▲")
-                    expanded.set(True)
-                self._decks_inner.update_idletasks()
-                self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
+            def _make_toggle(d=detail, e=expanded):
+                def _toggle() -> None:
+                    if e.get():
+                        d.pack_forget()
+                        toggle_btn.configure(text="Cartas ▼")
+                        e.set(False)
+                    else:
+                        d.pack(fill=tk.X, padx=0, pady=(0, 4))
+                        toggle_btn.configure(text="Cartas ▲")
+                        e.set(True)
+                    self._decks_inner.update_idletasks()
+                    self._decks_canvas.configure(scrollregion=self._decks_canvas.bbox("all"))
 
-            toggle_btn = ttk.Button(row1, text="Cartas ▼", width=10, command=_toggle)
+                return _toggle
+
+            toggle_btn = ttk.Button(row1, text="Cartas ▼", width=10, command=_make_toggle())
             toggle_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
             ttk.Button(
