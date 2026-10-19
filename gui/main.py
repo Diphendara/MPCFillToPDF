@@ -551,7 +551,7 @@ class App(
             blanks = (CARDS_PER_PAGE - rem) if rem else 0
 
         if blanks:
-            self._preflight_row(
+            self._preflight_total_row(
                 [
                     ("Total: ", "normal"),
                     (f"{total_cards}", "bold"),
@@ -560,13 +560,27 @@ class App(
                 ]
             )
         else:
-            self._preflight_row(
+            self._preflight_total_row(
                 [
                     ("Total: ", "normal"),
                     (f"{total_cards}", "bold"),
                     (f" cartas · {pairs} par(es) de páginas{cache_str}", "normal"),
                 ]
             )
+
+    def _preflight_total_row(self, parts: list[tuple[str, str]]) -> None:
+        """Render the grand total row with larger font at the bottom of preflight."""
+        frame = ttk.Frame(self._preflight_inner)
+        frame.pack(fill=tk.X, pady=(12, 4))
+        self._preflight_labels.append(frame)
+        for text, style in parts:
+            if style == "warn":
+                kw: dict = {"foreground": "#cc0000", "font": ("Segoe UI", 12, "bold")}
+            elif style == "bold":
+                kw = {"foreground": "#222", "font": ("Segoe UI", 12, "bold")}
+            else:
+                kw = {"foreground": "#333", "font": ("Segoe UI", 11)}
+            ttk.Label(frame, text=text, anchor=tk.W, **kw).pack(side=tk.LEFT)
 
     def _preflight_section_header(self, title: str) -> None:
         """Render a section header for a TCG group in the preflight panel."""

@@ -618,7 +618,10 @@ class DecksTabMixin:
                     self._refresh_generate_state()
 
                 ttk.Checkbutton(
-                    opts, text="Incluir sideboard", variable=side_var, command=_toggle_side
+                    opts,
+                    text=f"Incluir sideboard (+{side_count})",
+                    variable=side_var,
+                    command=_toggle_side,
                 ).pack(side=tk.LEFT, padx=(0, 12))
 
             token_var = tk.BooleanVar(value=deck.include_tokens)
@@ -629,7 +632,7 @@ class DecksTabMixin:
 
             ttk.Checkbutton(
                 opts,
-                text="Incluir tokens y extras",
+                text=f"Incluir tokens y extras (+{token_count})",
                 variable=token_var,
                 command=_toggle_tokens,
             ).pack(side=tk.LEFT, padx=(0, 12))
@@ -923,10 +926,13 @@ class DecksTabMixin:
             runes_cb.pack(side=tk.LEFT, padx=(0, 12))
 
             include_sideboard_var = tk.BooleanVar(value=False)
-            has_sideboard = bool(by_sec.get("sideboard"))
+            sideboard_count = by_sec.get("sideboard", 0)
+            has_sideboard = bool(sideboard_count)
             sideboard_cb = ttk.Checkbutton(
                 opts,
-                text="Incluir sideboard",
+                text=f"Incluir sideboard (+{sideboard_count})"
+                if has_sideboard
+                else "Sin sideboard",
                 variable=include_sideboard_var,
                 command=self._refresh_generate_state,
             )
@@ -1206,12 +1212,15 @@ class DecksTabMixin:
             opts.pack(fill=tk.X, padx=(24, 6), pady=(0, 3))
 
             include_side = tk.BooleanVar(value=False)
-            side_label = f"Incluir Side ({deck.side_slots})" if deck.side_slots else "Sin Side Deck"
+            side_label = (
+                f"Incluir Side (+{deck.side_slots})" if deck.side_slots else "Sin Side Deck"
+            )
             ttk.Checkbutton(
                 opts,
                 text=side_label,
                 variable=include_side,
                 state=tk.NORMAL if deck.side_slots else tk.DISABLED,
+                command=self._refresh_generate_state,
             ).pack(side=tk.LEFT, padx=(0, 12))
 
             self._ygo_deck_rows.append({"outer": outer, "include_side_var": include_side})
