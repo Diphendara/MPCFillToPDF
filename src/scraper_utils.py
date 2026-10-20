@@ -58,24 +58,40 @@ def download_url_images(
     headers: dict[str, str],
     cancel_event: Event | None = None,
     progress_cb: ProgressCallback = None,
+    fallback_urls: dict[str, list[str]] | None = None,
 ) -> dict[str, Path]:
     """Cache and download keyed image URLs with consistent cancellation/progress.
 
     Failed downloads (404, etc.) are logged and skipped — the caller should
     handle missing keys by using a placeholder image.
+
+    Args:
+        fallback_urls: Optional dict of key -> list of alternative URLs to try
+                      if the primary URL fails.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     def _fetch(key: str, url: str) -> tuple[str, Path | None]:
         path = path_for_key(key, url)
-        if not path.exists():
+        if path.exists():
+            return key, path
+
+        # Build list of URLs to try: primary + fallbacks
+        urls_to_try = [url]
+        if fallback_urls and key in fallback_urls:
+            urls_to_try.extend(fallback_urls[key])
+
+        for try_url in urls_to_try:
             try:
-                response = http_get(url, headers=headers)
+                response = http_get(try_url, headers=headers)
                 path.write_bytes(response.content)
+                return key, path
             except Exception as exc:
-                _log.warning("Failed to download %s: %s", url, exc)
-                return key, None
-        return key, path
+                _log.debug("Failed to download %s: %s", try_url, exc)
+                continue
+
+        _log.warning("All download attempts failed for %s", key)
+        return key, None
 
     # Skip entries with empty or blank URLs — they would raise MissingSchema.
     urls = {k: v for k, v in urls.items() if v and v.strip()}

@@ -39,6 +39,12 @@ _RB_FS_BASE = (
 )
 _RB_IMG_CDN = "https://cdn.piltoverarchive.com/cards/{code}.webp"
 
+# Image CDN fallbacks - tried in order if primary fails
+_RB_IMG_FALLBACKS = [
+    "https://cdn.piltoverarchive.com/cards/{code}.webp",
+    "https://static.dotgg.gg/riftbound/cards/{code}.webp",
+]
+
 # ── riftbound.gg (dotgg) ─────────────────────────────────────────────────────
 _RBGG_DECK_API = "https://api.dotgg.gg/cgfw/getdeck?game=riftbound&slug={slug}"
 _RBGG_CARDS_API = "https://api.dotgg.gg/cgfw/getcards?game=riftbound&mode=indexed"
@@ -695,6 +701,16 @@ def download_images(
         if card.image_url and card.image_url.strip()
     }
 
+    # Build fallback URLs for each card (try all CDNs)
+    fallback_urls = {}
+    for variant_id, card in unique.items():
+        code = card.card_id
+        fallbacks = [cdn.format(code=code) for cdn in _RB_IMG_FALLBACKS]
+        # Remove the primary URL from fallbacks (already in urls dict)
+        fallbacks = [f for f in fallbacks if f != card.image_url]
+        if fallbacks:
+            fallback_urls[variant_id] = fallbacks
+
     return download_url_images(
         urls,
         dest_dir,
@@ -702,6 +718,7 @@ def download_images(
         _HEADERS,
         cancel_event,
         progress_cb,
+        fallback_urls,
     )
 
 
