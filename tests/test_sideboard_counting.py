@@ -12,12 +12,66 @@ class TestRiftboundSideboard:
             name="Test",
             deck_id="test-1",
             cards=[
-                RBCard("c1", "Card 1", 3, "maindeck"),
-                RBCard("c2", "Card 2", 2, "maindeck"),
-                RBCard("s1", "Side 1", 4, "sideboard"),  # 4 copies of same card
-                RBCard("s2", "Side 2", 3, "sideboard"),  # 3 copies
-                RBCard("s3", "Side 3", 2, "sideboard"),  # 2 copies
-                RBCard("s4", "Side 4", 1, "sideboard"),  # 1 copy
+                RBCard(
+                    card_id="c1",
+                    variant_id="c1",
+                    name="Card 1",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=3,
+                    image_url="",
+                    section="maindeck",
+                ),
+                RBCard(
+                    card_id="c2",
+                    variant_id="c2",
+                    name="Card 2",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=2,
+                    image_url="",
+                    section="maindeck",
+                ),
+                RBCard(
+                    card_id="s1",
+                    variant_id="s1_sb",
+                    name="Side 1",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=4,
+                    image_url="",
+                    section="sideboard",
+                ),  # 4 copies of same card
+                RBCard(
+                    card_id="s2",
+                    variant_id="s2_sb",
+                    name="Side 2",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=3,
+                    image_url="",
+                    section="sideboard",
+                ),  # 3 copies
+                RBCard(
+                    card_id="s3",
+                    variant_id="s3_sb",
+                    name="Side 3",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=2,
+                    image_url="",
+                    section="sideboard",
+                ),  # 2 copies
+                RBCard(
+                    card_id="s4",
+                    variant_id="s4_sb",
+                    name="Side 4",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=1,
+                    image_url="",
+                    section="sideboard",
+                ),  # 1 copy
             ],
         )
         assert deck.total_slots == 5  # 3 + 2
@@ -29,7 +83,16 @@ class TestRiftboundSideboard:
             name="Test",
             deck_id="test-2",
             cards=[
-                RBCard("c1", "Card 1", 3, "maindeck"),
+                RBCard(
+                    card_id="c1",
+                    variant_id="c1",
+                    name="Card 1",
+                    card_type="Unit",
+                    card_super=None,
+                    quantity=3,
+                    image_url="",
+                    section="maindeck",
+                ),
             ],
         )
         assert deck.total_slots == 3
@@ -70,7 +133,7 @@ class TestMTGSideboard:
     """Verify MTG sideboard counting via active_count."""
 
     def test_active_count_respects_include_side(self):
-        from gui.main import MTGUrlDeck
+        from gui.main import MtgUrlDeck
 
         class MockCard:
             def __init__(self, name, quantity, zone):
@@ -78,7 +141,7 @@ class TestMTGSideboard:
                 self.quantity = quantity
                 self.zone = zone
 
-        deck = MTGUrlDeck(
+        deck = MtgUrlDeck(
             url="https://moxfield.com/decks/test",
             cards=[
                 MockCard("Main 1", 4, "main"),
@@ -101,7 +164,7 @@ class TestMTGSideboard:
         assert deck.active_count == 10  # 9 + 1
 
     def test_active_count_with_selection(self):
-        from gui.main import MTGUrlDeck
+        from gui.main import MtgUrlDeck
 
         class MockCard:
             def __init__(self, name, quantity, zone):
@@ -112,7 +175,7 @@ class TestMTGSideboard:
         card1 = MockCard("Main 1", 4, "main")
         card2 = MockCard("Main 2", 2, "main")
 
-        deck = MTGUrlDeck(
+        deck = MtgUrlDeck(
             url="https://moxfield.com/decks/test",
             cards=[card1, card2],
             name="Test Deck",
