@@ -705,13 +705,26 @@ def download_images(
         if card.image_url and card.image_url.strip()
     }
 
-    # Build fallback URLs for each card (try all CDNs)
+    # Build fallback URLs for each card (try all CDNs + case variants)
     fallback_urls = {}
     for variant_id, card in unique.items():
         code = card.card_id
-        fallbacks = [cdn.format(code=code) for cdn in _RB_IMG_FALLBACKS]
-        # Remove the primary URL from fallbacks (already in urls dict)
-        fallbacks = [f for f in fallbacks if f != card.image_url]
+        # Generate case variants: original, all lowercase, all uppercase
+        # For codes like "UNL-R03A", try "UNL-R03a", "unl-r03a", etc.
+        code_variants = [code]
+        # If code ends with uppercase letter (variant indicator), try lowercase
+        if code and code[-1].isupper() and code[-1].isalpha():
+            code_variants.append(code[:-1] + code[-1].lower())
+        # Also try all lowercase
+        code_variants.append(code.lower())
+
+        fallbacks = []
+        for cv in code_variants:
+            for cdn in _RB_IMG_FALLBACKS:
+                url = cdn.format(code=cv)
+                if url != card.image_url and url not in fallbacks:
+                    fallbacks.append(url)
+
         if fallbacks:
             fallback_urls[variant_id] = fallbacks
 
