@@ -16,6 +16,15 @@ from src.http_client import get as http_get
 _log = logging.getLogger(__name__)
 
 
+class ImageDownloadError(Exception):
+    """Raised when one or more card images fail to download."""
+
+    def __init__(self, failures: list[tuple[str, str]]):
+        self.failures = failures
+        details = "\n".join(f"  • {key}: {url}" for key, url in failures)
+        super().__init__(f"No se pudieron descargar {len(failures)} carta(s):\n{details}")
+
+
 def resources_dir() -> Path:
     """Return the project resources directory, handling frozen (.exe) and dev environments."""
     if getattr(sys, "frozen", False):
@@ -71,10 +80,10 @@ def download_url_images(
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    def _fetch(key: str, url: str) -> tuple[str, Path | None]:
+    def _fetch(key: str, url: str) -> tuple[str, Path | None, str | None]:
         path = path_for_key(key, url)
         if path.exists():
-            return key, path
+            return key, path, None
 
         # Build list of URLs to try: primary + fallbacks
         urls_to_try = [url]
@@ -85,18 +94,18 @@ def download_url_images(
             try:
                 response = http_get(try_url, headers=headers)
                 path.write_bytes(response.content)
-                return key, path
+                return key, path, None
             except Exception as exc:
                 _log.debug("Failed to download %s: %s", try_url, exc)
                 continue
 
-        _log.warning("All download attempts failed for %s", key)
-        return key, None
+        return key, None, url
 
     # Skip entries with empty or blank URLs — they would raise MissingSchema.
     urls = {k: v for k, v in urls.items() if v and v.strip()}
 
     result: dict[str, Path] = {}
+    failures: list[tuple[str, str]] = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(_fetch, key, url): key for key, url in urls.items()}
         for done, future in enumerate(as_completed(futures), start=1):
@@ -104,9 +113,15 @@ def download_url_images(
                 for pending in futures:
                     pending.cancel()
                 raise Cancelled()
-            key, path = future.result()
+            key, path, failed_url = future.result()
             if path is not None:
                 result[key] = path
+            elif failed_url:
+                failures.append((key, failed_url))
             if progress_cb:
                 progress_cb(done, len(urls))
+
+    if failures:
+        raise ImageDownloadError(failures)
+
     return result
