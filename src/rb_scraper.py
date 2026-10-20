@@ -258,6 +258,8 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
         card_type = _normalize_type(meta.get("type"))
         card_super = _normalize_type(meta.get("supertype")) or None
         section = _type_to_section(card_type, card_super)
+        # Use API image URL if available (has correct case), else construct
+        image_url = meta.get("image") or _RBGG_IMG_URL.format(code=code)
         cards.append(
             RBCard(
                 card_id=code,
@@ -266,7 +268,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
                 card_type=card_type,
                 card_super=card_super,
                 quantity=int(qty_str),
-                image_url=_RBGG_IMG_URL.format(code=code),
+                image_url=image_url,
                 section=section,
             )
         )
@@ -276,6 +278,8 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
     if len(boards) > 1:
         for code, qty_str in boards[1].items():
             meta = cards_db.get(code, {})
+            # Use API image URL if available (has correct case), else construct
+            image_url = meta.get("image") or _RBGG_IMG_URL.format(code=code)
             cards.append(
                 RBCard(
                     card_id=code,
@@ -284,7 +288,7 @@ def _scrape_riftbound_gg(url: str) -> RBDeck:
                     card_type=_normalize_type(meta.get("type")),
                     card_super=_normalize_type(meta.get("supertype")) or None,
                     quantity=int(qty_str),
-                    image_url=_RBGG_IMG_URL.format(code=code),
+                    image_url=image_url,
                     section="sideboard",
                 )
             )
