@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,8 @@ from threading import Event
 from src.cancellation import Cancelled
 from src.constants import ProgressCallback
 from src.http_client import get as http_get
+
+_log = logging.getLogger(__name__)
 
 
 def resources_dir() -> Path:
@@ -56,14 +59,22 @@ def download_url_images(
     cancel_event: Event | None = None,
     progress_cb: ProgressCallback = None,
 ) -> dict[str, Path]:
-    """Cache and download keyed image URLs with consistent cancellation/progress."""
+    """Cache and download keyed image URLs with consistent cancellation/progress.
+
+    Failed downloads (404, etc.) are logged and skipped — the caller should
+    handle missing keys by using a placeholder image.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    def _fetch(key: str, url: str) -> tuple[str, Path]:
+    def _fetch(key: str, url: str) -> tuple[str, Path | None]:
         path = path_for_key(key, url)
         if not path.exists():
-            response = http_get(url, headers=headers)
-            path.write_bytes(response.content)
+            try:
+                response = http_get(url, headers=headers)
+                path.write_bytes(response.content)
+            except Exception as exc:
+                _log.warning("Failed to download %s: %s", url, exc)
+                return key, None
         return key, path
 
     # Skip entries with empty or blank URLs — they would raise MissingSchema.
@@ -78,7 +89,8 @@ def download_url_images(
                     pending.cancel()
                 raise Cancelled()
             key, path = future.result()
-            result[key] = path
+            if path is not None:
+                result[key] = path
             if progress_cb:
                 progress_cb(done, len(urls))
     return result
