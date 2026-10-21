@@ -25,7 +25,7 @@ En macOS/Linux:
 
 ```sh
 source .venv/bin/activate
-python -m pip install 'Pillow>=10.0,<12' 'reportlab>=4.0,<5' 'gdown>=5.0,<6' 'requests>=2.28,<3' 'plyer>=2.0,<3'
+python -m pip install 'Pillow>=10.0,<12' 'pymupdf>=1.24,<2' 'gdown>=5.0,<6' 'requests>=2.28,<3' 'plyer>=2.0,<3'
 ```
 
 `requirements.txt` incluye `windnd`, usado para arrastrar archivos en Windows. En macOS/Linux se omite, como hace el workflow de empaquetado. Si tu instalación de Python no incluye Tkinter, instálalo antes de abrir la GUI. `plyer` proporciona notificaciones de escritorio cuando están disponibles.
