@@ -4,9 +4,9 @@ import threading
 from pathlib import Path
 from unittest.mock import patch
 
+import pymupdf
 import pytest
 from PIL import Image
-from reportlab.lib.units import mm
 
 from src.cancellation import Cancelled
 from src.pdf_generator import (
@@ -17,6 +17,7 @@ from src.pdf_generator import (
     _projected_pdf_bytes,
     _trim_origin,
     generate,
+    mm,
 )
 
 # ─── helpers ────────────────────────────────────────────────────────────────
@@ -163,12 +164,26 @@ def test_generate_without_fronts_only_has_two_pages_per_batch(tmp_path):
     img = _img(tmp_path / "card.jpg")
     slots, front, back = _slot_maps(CARDS_PER_PAGE)
     results = generate(tmp_path / "out", "deck", slots, front, back, _id_to_path(front, back, img))
-    # Use raw PDF bytes to count showPage markers (/Page entries)
-    content = results[0].read_bytes()
-    # Each page is recorded as a /Page dictionary in the PDF cross-reference.
-    # Counting b'/Page' occurrences is a reliable proxy for page count.
-    page_count = content.count(b"/Page\n") + content.count(b"/Page\r")
-    assert page_count == 2
+    doc = pymupdf.open(str(results[0]))
+    try:
+        assert doc.page_count == 2
+    finally:
+        doc.close()
+
+
+def test_generate_a4_page_dimensions(tmp_path):
+    """Generated PDF pages must be A4 (595.28 × 841.89 pt)."""
+    img = _img(tmp_path / "card.jpg")
+    slots, front, back = _slot_maps(1)
+    results = generate(tmp_path / "out", "deck", slots, front, back, _id_to_path(front, back, img))
+    doc = pymupdf.open(str(results[0]))
+    try:
+        page = doc[0]
+        rect = page.rect
+        assert abs(rect.width - 595.28) < 1.0
+        assert abs(rect.height - 841.89) < 1.0
+    finally:
+        doc.close()
 
 
 def test_generate_fronts_only_produces_smaller_file(tmp_path):
