@@ -6,11 +6,13 @@ and reuses image XObjects when the same image appears multiple times.
 """
 
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
 
 import pymupdf
+from PIL import Image
 
 from src.app_settings import (
     DEFAULT_CUT_LINE_COLOR,
@@ -132,6 +134,10 @@ def _insert_image(
     Subsequent placements reuse the same XObject (xref), so repeated cards
     and front/back pairs add no extra image data to the PDF. The original
     JPEG/PNG stream is embedded as-is (no recompression).
+
+    If PyMuPDF doesn't recognise the file format (WebP, BMP, TIFF, or
+    non-standard JPEGs), fall back to PIL conversion to PNG — matching
+    ReportLab's implicit behaviour of accepting anything PIL can open.
     """
     key = str(img_path)
     xref = image_xrefs.get(key, 0)
@@ -139,7 +145,15 @@ def _insert_image(
         # First placement embeds the source stream and returns its xref.
         # keep_proportion=False matches ReportLab's drawImage: the image
         # fills the rect exactly (card images are pre-sized by the cropper).
-        xref = page.insert_image(rect, filename=key, keep_proportion=False)
+        try:
+            xref = page.insert_image(rect, filename=key, keep_proportion=False)
+        except pymupdf.mupdf.FzErrorFormat:
+            # PyMuPDF rejected the format — convert via PIL to PNG bytes.
+            with Image.open(key) as img:
+                buf = BytesIO()
+                img.convert("RGB").save(buf, format="PNG")
+                buf.seek(0)
+                xref = page.insert_image(rect, stream=buf.read(), keep_proportion=False)
         image_xrefs[key] = xref
     else:
         page.insert_image(rect, xref=xref, keep_proportion=False)
