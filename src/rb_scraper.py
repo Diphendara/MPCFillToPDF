@@ -95,8 +95,8 @@ class RBDeck:
 
     @property
     def total_slots(self) -> int:
-        """Return the total number of card slots occupied by the deck."""
-        return sum(c.quantity for c in self.cards)
+        """Return the total number of card slots occupied by the deck (excludes sideboard)."""
+        return sum(c.quantity for c in self.cards if c.section != "sideboard")
 
     @property
     def side_slots(self) -> int:
