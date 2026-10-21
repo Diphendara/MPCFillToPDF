@@ -124,7 +124,7 @@ def main() -> None:
         f"--add-data={ICONS}{sep}icons",
         f"--add-data={RESOURCES}{sep}resources",
         "--hidden-import=PIL.Image",
-        "--hidden-import=reportlab.pdfgen",
+        "--hidden-import=pymupdf",
         # Strip stdlib modules that are never imported at runtime.
         # Reduces archive surface scanned by AV heuristics.
         "--exclude-module=unittest",
