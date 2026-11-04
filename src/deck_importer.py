@@ -137,7 +137,15 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
             if not set_code or not collector_number:
                 continue
             cards.append(DeckCard(name, set_code, collector_number, qty, zone))
-    cards.extend(_extract_token_cards(data.get("tokens", [])))
+    # Moxfield's tokens board also lists prototype faces (A-/B- prefixed
+    # printings of mainboard cards, e.g. "A-Haywire Mite"). They are not real
+    # tokens and never appear as such on the website, so drop any token that
+    # resolves to a card already present in main/sideboard.
+    main_keys = {(c.name.casefold(), c.set_code, c.collector_number) for c in cards}
+    for token in _extract_token_cards(data.get("tokens", [])):
+        key = (token.name.casefold(), token.set_code, token.collector_number)
+        if key not in main_keys:
+            cards.append(token)
     return FetchedDeck(name=deck_name, cards=cards)
 
 
@@ -270,10 +278,12 @@ def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
         collector_number = str(
             card.get("cn", card.get("collectorNumber", card.get("collector_number", "")))
         )
+        # Normalize prototype-face prefixes BEFORE deduplicating, so the A- and
+        # B- faces of the same card collapse into a single printable entry.
+        name, collector_number = _strip_moxfield_face_prefixes(name, collector_number)
         key = (name.casefold(), set_code, collector_number)
         if name and key not in seen:
             seen.add(key)
-            name, collector_number = _strip_moxfield_face_prefixes(name, collector_number)
             cards.append(DeckCard(name, set_code, collector_number, 1, "token"))
     return cards
 

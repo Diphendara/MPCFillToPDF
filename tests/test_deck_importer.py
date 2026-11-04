@@ -233,6 +233,59 @@ class TestMoxfieldPrototypeCards:
         assert altered.set_code == "vow"
         assert altered.collector_number == "74"
 
+    def test_prototype_faces_collapse_to_single_card(self):
+        """A- and B- faces of the same prototype card yield ONE card, not two."""
+        fixture = {
+            "name": "Proto Dup",
+            "boards": {
+                "mainboard": {"cards": {}},
+                "commanders": {"cards": {}},
+                "companions": {"cards": {}},
+                "sideboard": {"cards": {}},
+            },
+            "tokens": [
+                {"card": {"name": "A-Haywire Mite", "set": "bro", "cn": "A-199"}},
+                {"card": {"name": "B-Haywire Mite", "set": "bro", "cn": "B-199"}},
+            ],
+        }
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(fixture)):
+            result = fetch_deck("https://www.moxfield.com/decks/ABC123")
+        haywires = [c for c in result.cards if c.name == "Haywire Mite"]
+        assert len(haywires) == 1
+        assert haywires[0].collector_number == "199"
+
+    def test_prototype_face_tokens_dropped_when_card_in_mainboard(self):
+        """Prototype faces listed as tokens are dropped if the base card is in mainboard."""
+        fixture = {
+            "name": "Proto Main",
+            "boards": {
+                "mainboard": {
+                    "cards": {
+                        "m1": {
+                            "quantity": 2,
+                            "card": {"name": "Haywire Mite", "set": "bro", "cn": "199"},
+                        }
+                    }
+                },
+                "commanders": {"cards": {}},
+                "companions": {"cards": {}},
+                "sideboard": {"cards": {}},
+            },
+            "tokens": [
+                {"card": {"name": "A-Haywire Mite", "set": "bro", "cn": "A-199"}},
+                {"card": {"name": "B-Haywire Mite", "set": "bro", "cn": "B-199"}},
+                {"card": {"name": "Goblin", "set": "tmom", "cn": "7"}},
+            ],
+        }
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(fixture)):
+            result = fetch_deck("https://www.moxfield.com/decks/ABC123")
+        haywires = [c for c in result.cards if c.name == "Haywire Mite"]
+        assert len(haywires) == 1  # only the mainboard copy
+        assert haywires[0].zone == "main"
+        goblins = [c for c in result.cards if c.name == "Goblin"]
+        assert len(goblins) == 1  # real tokens still pass through
+        assert goblins[0].zone == "token"
+
 
 @pytest.mark.network
 class TestArchidektFetch:
