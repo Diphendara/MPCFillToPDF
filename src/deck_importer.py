@@ -131,6 +131,13 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
             # Strip it so Scryfall can find the card
             if name.startswith("a-"):
                 name = name[2:]
+            # Moxfield marks prototype faces (The Brothers' War) with an "A-"/"B-"
+            # prefix on BOTH the card name and the collector number (e.g.,
+            # "A-Haywire Mite" with cn "A-199"). Scryfall only knows the base
+            # printing ("Haywire Mite" / "199"), so strip the prefix from both.
+            if re.match(r"^[AB]-\d+$", collector_number) and re.match(r"^[AB]-", name):
+                name = name[2:]
+                collector_number = collector_number[2:]
             qty = int(entry.get("quantity", 1))
             if not set_code or not collector_number:
                 continue

@@ -66,6 +66,33 @@ _MOXFIELD_FIXTURE_WITH_TOKENS = {
     ],
 }
 
+_MOXFIELD_FIXTURE_WITH_PROTOTYPE = {
+    "name": "Prototype Deck",
+    "boards": {
+        "mainboard": {
+            "cards": {
+                "p1": {
+                    "quantity": 2,
+                    "card": {"name": "A-Haywire Mite", "set": "bro", "cn": "A-199"},
+                },
+                "p2": {
+                    "quantity": 1,
+                    "card": {"name": "B-Blitz Automaton", "set": "bro", "cn": "B-158"},
+                },
+                # Altered-art cards keep the lowercase "a-" prefix on the name
+                # only — their collector number has no prefix.
+                "p3": {
+                    "quantity": 1,
+                    "card": {"name": "a-Hullbreaker Horror", "set": "vow", "cn": "74"},
+                },
+            }
+        },
+        "commanders": {"cards": {}},
+        "companions": {"cards": {}},
+        "sideboard": {"cards": {}},
+    },
+}
+
 _ARCHIDEKT_FIXTURE = {
     "name": "Archidekt Test",
     "cards": [
@@ -169,6 +196,42 @@ class TestMoxfieldFetch:
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
         tokens = [c for c in result.cards if c.zone == "token"]
         assert [(c.name, c.quantity) for c in tokens] == [("Treasure", 1), ("Goblin", 1)]
+
+
+class TestMoxfieldPrototypeCards:
+    """Prototype face prefixes (A-/B-) on Moxfield imports (uses http_get, no network)."""
+
+    def _mock_resp(self, data):
+        resp = MagicMock()
+        resp.json.return_value = data
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def test_strips_prototype_face_prefixes(self):
+        """Prototype faces (A-/B- on name AND collector number) resolve to the base printing."""
+        with patch(
+            "src.deck_importer.http_get",
+            return_value=self._mock_resp(_MOXFIELD_FIXTURE_WITH_PROTOTYPE),
+        ):
+            result = fetch_deck("https://www.moxfield.com/decks/ABC123")
+        by_name = {c.name: c for c in result.cards}
+        haywire = by_name["Haywire Mite"]
+        assert haywire.set_code == "bro"
+        assert haywire.collector_number == "199"
+        blitz = by_name["Blitz Automaton"]
+        assert blitz.collector_number == "158"
+
+    def test_keeps_altered_art_prefix_handling(self):
+        """Altered-art lowercase 'a-' prefix is still stripped from the name only."""
+        with patch(
+            "src.deck_importer.http_get",
+            return_value=self._mock_resp(_MOXFIELD_FIXTURE_WITH_PROTOTYPE),
+        ):
+            result = fetch_deck("https://www.moxfield.com/decks/ABC123")
+        by_name = {c.name: c for c in result.cards}
+        altered = by_name["Hullbreaker Horror"]
+        assert altered.set_code == "vow"
+        assert altered.collector_number == "74"
 
 
 @pytest.mark.network
