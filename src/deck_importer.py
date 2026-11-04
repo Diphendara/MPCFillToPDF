@@ -254,6 +254,31 @@ def _strip_moxfield_face_prefixes(name: str, collector_number: str) -> tuple[str
     return name, collector_number
 
 
+def _is_token_like(card: dict) -> bool:
+    """Decide whether an entry from a deck API's tokens array is a real token.
+
+    Moxfield's tokens array also lists related non-token cards: Alchemy
+    conjures (e.g. "Gilt-Leaf Alchemist"), cards that fetch the token's
+    source (e.g. "Tower Winder"), and alternate printings of mainboard
+    cards. These never show up as tokens on the website. They carry
+    positive evidence of being regular cards: ``isToken`` is false, the
+    layout is a normal card layout and the set type is not a token set.
+    Entries without these fields (older API payloads, other sources) are
+    assumed to be tokens.
+    """
+    if card.get("isToken"):
+        return True
+    layout = str(card.get("layout", "")).lower()
+    if layout in ("token", "emblem"):
+        return True
+    set_type = str(card.get("set_type", "")).lower()
+    if set_type == "token":
+        return True
+    if "isToken" in card or "layout" in card or "set_type" in card:
+        return False
+    return True
+
+
 def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
     """Return one printable card for each distinct token supplied by a deck API."""
     if isinstance(raw_tokens, dict):
@@ -270,6 +295,8 @@ def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
             continue
         card = entry.get("card", entry)
         if not isinstance(card, dict):
+            continue
+        if not _is_token_like(card):
             continue
         oracle_card = card.get("oracleCard", {})
         name = str(card.get("name", oracle_card.get("name", "")))

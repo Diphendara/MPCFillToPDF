@@ -286,6 +286,49 @@ class TestMoxfieldPrototypeCards:
         assert len(goblins) == 1  # real tokens still pass through
         assert goblins[0].zone == "token"
 
+    def test_related_non_token_cards_dropped_from_token_board(self):
+        """Moxfield lists related non-token cards (Alchemy conjures, fetch
+        cards, alternate printings) in the tokens array; only token-like
+        entries (isToken, token/emblem layout, token set_type) survive."""
+        fixture = {
+            "name": "Token Filter",
+            "boards": {
+                "mainboard": {"cards": {}},
+                "commanders": {"cards": {}},
+                "companions": {"cards": {}},
+                "sideboard": {"cards": {}},
+            },
+            "tokens": [
+                # real tokens (what the website shows)
+                {"card": {"name": "Beast", "set": "tfdc", "cn": "10", "isToken": True, "layout": "token", "set_type": "token"}},
+                {"card": {"name": "Elephant", "set": "tmsc", "cn": "28", "isToken": True, "layout": "token", "set_type": "token"}},
+                {"card": {"name": "Experience", "set": "ttdc", "cn": "34", "isToken": False, "layout": "normal", "set_type": "token"}},
+                {"card": {"name": "Food", "set": "sld", "cn": "2551", "isToken": True, "layout": "token", "set_type": "box"}},
+                {"card": {"name": "Treasure", "set": "sld", "cn": "2820", "isToken": True, "layout": "token", "set_type": "box"}},
+                {"card": {"name": "Zombie", "set": "tmdd", "cn": "10", "isToken": True, "layout": "token", "set_type": "token"}},
+                {"card": {"name": "Wrenn and Realmbreaker Emblem", "set": "tmom", "cn": "23", "isToken": False, "layout": "emblem", "set_type": "token"}},
+                # related non-token cards (must be dropped)
+                {"card": {"name": "Gilt-Leaf Alchemist", "set": "yecl", "cn": "14", "isToken": False, "layout": "normal", "set_type": "alchemy"}},
+                {"card": {"name": "Tome of the Infinite", "set": "j21", "cn": "13", "isToken": False, "layout": "normal", "set_type": "draft_innovation"}},
+                {"card": {"name": "Tower Winder", "set": "otc", "cn": "70", "isToken": False, "layout": "normal", "set_type": "commander"}},
+                # alternate printings of mainboard cards (must be dropped)
+                {"card": {"name": "The One Ring", "set": "ltr", "cn": "791", "isToken": False, "layout": "normal", "set_type": "draft_innovation"}},
+                {"card": {"name": "Command Tower", "set": "sld", "cn": "2794", "isToken": False, "layout": "reversible_card", "set_type": "box"}},
+            ],
+        }
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(fixture)):
+            result = fetch_deck("https://www.moxfield.com/decks/ABC123")
+        token_names = {c.name for c in result.cards if c.zone == "token"}
+        assert token_names == {
+            "Beast",
+            "Elephant",
+            "Experience",
+            "Food",
+            "Treasure",
+            "Zombie",
+            "Wrenn and Realmbreaker Emblem",
+        }
+
 
 @pytest.mark.network
 class TestArchidektFetch:
