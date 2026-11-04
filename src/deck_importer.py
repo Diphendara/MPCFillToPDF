@@ -131,13 +131,8 @@ def _fetch_moxfield(deck_id: str) -> FetchedDeck:
             # Strip it so Scryfall can find the card
             if name.startswith("a-"):
                 name = name[2:]
-            # Moxfield marks prototype faces (The Brothers' War) with an "A-"/"B-"
-            # prefix on BOTH the card name and the collector number (e.g.,
-            # "A-Haywire Mite" with cn "A-199"). Scryfall only knows the base
-            # printing ("Haywire Mite" / "199"), so strip the prefix from both.
-            if re.match(r"^[AB]-\d+$", collector_number) and re.match(r"^[AB]-", name):
-                name = name[2:]
-                collector_number = collector_number[2:]
+            # Prototype faces carry an "A-"/"B-" prefix on both name and cn.
+            name, collector_number = _strip_moxfield_face_prefixes(name, collector_number)
             qty = int(entry.get("quantity", 1))
             if not set_code or not collector_number:
                 continue
@@ -237,6 +232,20 @@ def _fetch_tappedout(slug: str) -> FetchedDeck:
     return FetchedDeck(name=deck_name, cards=cards)
 
 
+def _strip_moxfield_face_prefixes(name: str, collector_number: str) -> tuple[str, str]:
+    """Strip Moxfield prototype-face prefixes (A-/B-) from name and collector number.
+
+    Moxfield marks prototype faces (The Brothers' War) with an "A-"/"B-" prefix
+    on BOTH the card name and the collector number (e.g., "A-Haywire Mite" with
+    cn "A-199"). Scryfall only knows the base printing ("Haywire Mite" / "199").
+    Altered-art cards use a lowercase "a-" on the name only, with a plain
+    collector number — those never match the cn pattern and are left alone.
+    """
+    if re.match(r"^[AB]-\d+$", collector_number) and re.match(r"^[AB]-", name):
+        return name[2:], collector_number[2:]
+    return name, collector_number
+
+
 def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
     """Return one printable card for each distinct token supplied by a deck API."""
     if isinstance(raw_tokens, dict):
@@ -264,6 +273,7 @@ def _extract_token_cards(raw_tokens: object) -> list[DeckCard]:
         key = (name.casefold(), set_code, collector_number)
         if name and key not in seen:
             seen.add(key)
+            name, collector_number = _strip_moxfield_face_prefixes(name, collector_number)
             cards.append(DeckCard(name, set_code, collector_number, 1, "token"))
     return cards
 

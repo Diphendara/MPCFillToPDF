@@ -312,8 +312,17 @@ def download_card_images(card: DeckCard, dest_dir: Path) -> tuple[Path, Path | N
         except ScryfallError:
             if not card.name:
                 raise
-            set_code, collector_number = fetch_card_by_name(card.name)
-            scryfall = fetch_card(set_code, collector_number)
+            # Name lookup fallback. If the name still carries a prototype-face
+            # prefix (A-/B-), retry without it — Scryfall only indexes the
+            # base printing (e.g. "Haywire Mite", never "A-Haywire Mite").
+            fallback_name = card.name
+            if re.match(r"^[AB]-", fallback_name):
+                fallback_name = fallback_name[2:]
+                set_code, collector_number = fetch_card_by_name(fallback_name)
+                scryfall = fetch_card(set_code, collector_number)
+            else:
+                set_code, collector_number = fetch_card_by_name(card.name)
+                scryfall = fetch_card(set_code, collector_number)
         slug = f"{set_code.lower()}_{collector_number}"
 
     front_ext = _ext_from_url(scryfall.front_url)
