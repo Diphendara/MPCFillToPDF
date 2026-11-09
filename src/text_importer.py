@@ -481,6 +481,7 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
     from src.deck_importer import DeckCard, FetchedDeck
 
     cards: list[DeckCard] = []
+    zone = "main"
 
     for line_num, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
@@ -489,10 +490,10 @@ def parse_mtg_text(text: str) -> list[tuple[int, str, str]]:
         if not line or line.startswith("#") or line.startswith("//"):
             continue
 
-        # Check for sideboard marker
-        zone = "main"
+        # Sideboard marker: cards after it belong to the sideboard
         if line.lower().startswith("sideboard:") or line.lower().startswith("sb:"):
-            continue  # TODO: Handle sideboard cards
+            zone = "side"
+            continue
 
         match = _MTG_LINE_RE.match(line)
         if not match:
@@ -720,6 +721,7 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
     from src.ygo_scraper import YGOCard, YGODeck, _fetch_cards_by_names
 
     cards: list[YGOCard] = []
+    zone = "main"
 
     for line_num, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
@@ -727,11 +729,13 @@ def parse_ygo_text(text: str) -> list[tuple[int, str, str]]:
         if not line or line.startswith("#") or line.startswith("//"):
             continue
 
-        # Check for side/extra deck markers
-        zone = "main"
-        if line.lower().startswith("side:") or line.lower().startswith("extra:"):
-            zone = "side" if line.lower().startswith("side:") else "extra"
-            continue  # TODO: Handle section headers
+        # Side/Extra deck markers: cards after them belong to that zone
+        if line.lower().startswith("side:"):
+            zone = "side"
+            continue
+        if line.lower().startswith("extra:"):
+            zone = "extra"
+            continue
 
         match = _YGO_LINE_RE.match(line)
         if not match:

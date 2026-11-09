@@ -203,3 +203,98 @@ class TestBuildRiftboundDeckFromText:
         deck = build_riftbound_deck_from_text(text)
 
         assert deck.total_slots == 6  # 3 + 1 + 2
+
+
+class TestParseMtgText:
+    """Tests for parse_mtg_text function."""
+
+    def test_sideboard_cards_marked_as_side_zone(self):
+        """Cards after 'Sideboard:' marker get zone='side', not dropped."""
+        from src.text_importer import parse_mtg_text
+
+        text = """4 Lightning Bolt
+1 Sol Ring
+Sideboard:
+2 Red Elemental Blast
+1 Pyroblast"""
+        deck = parse_mtg_text(text)
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Lightning Bolt"].zone == "main"
+        assert by_name["Sol Ring"].zone == "main"
+        assert by_name["Red Elemental Blast"].zone == "side"
+        assert by_name["Pyroblast"].zone == "side"
+
+    def test_sb_marker_also_marks_sideboard(self):
+        """The shorter 'SB:' marker works the same as 'Sideboard:'."""
+        from src.text_importer import parse_mtg_text
+
+        text = """4 Lightning Bolt
+SB:
+2 Red Elemental Blast"""
+        deck = parse_mtg_text(text)
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Lightning Bolt"].zone == "main"
+        assert by_name["Red Elemental Blast"].zone == "side"
+
+    def test_sideboard_marker_case_insensitive(self):
+        """Marker matching is case-insensitive."""
+        from src.text_importer import parse_mtg_text
+
+        text = """4 Lightning Bolt
+sideboard:
+2 Red Elemental Blast"""
+        deck = parse_mtg_text(text)
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Red Elemental Blast"].zone == "side"
+
+    def test_no_sideboard_all_main(self):
+        """Without markers every card stays in main zone."""
+        from src.text_importer import parse_mtg_text
+
+        text = """4 Lightning Bolt (2ED) 137
+1 Sol Ring (CMM) 814"""
+        deck = parse_mtg_text(text)
+        assert all(c.zone == "main" for c in deck.cards)
+        assert len(deck.cards) == 2
+
+
+class TestParseYgoText:
+    """Tests for parse_ygo_text function."""
+
+    @pytest.fixture
+    def mock_ygo_resolver(self, monkeypatch):
+        """Avoid the YGOPRODeck network call during tests."""
+        from unittest.mock import MagicMock
+
+        fake = MagicMock(
+            return_value={"blue-eyes white dragon": (89631139, "Blue-Eyes White Dragon")}
+        )
+        monkeypatch.setattr("src.ygo_scraper._fetch_cards_by_names", fake)
+        return fake
+
+    def test_side_and_extra_deck_zones(self, mock_ygo_resolver):
+        """Cards after 'Side:'/'Extra:' markers keep their zone, not dropped."""
+        from src.text_importer import parse_ygo_text
+
+        text = """3 Blue-Eyes White Dragon
+Side:
+1 Blue-Eyes White Dragon
+Extra:
+2 Blue-Eyes White Dragon"""
+        deck = parse_ygo_text(text)
+        zones = [(c.zone, c.quantity) for c in deck.cards]
+        assert zones == [("main", 3), ("side", 1), ("extra", 2)]
+
+    def test_main_only_stays_main(self, mock_ygo_resolver):
+        """Without markers every card stays in main zone."""
+        from src.text_importer import parse_ygo_text
+
+        deck = parse_ygo_text("3 Blue-Eyes White Dragon")
+        assert [(c.zone, c.quantity) for c in deck.cards] == [("main", 3)]
+
+    def test_unresolved_card_raises(self, mock_ygo_resolver):
+        """A card not found in YGOPRODeck raises TextImportError."""
+        from src.text_importer import parse_ygo_text
+
+        with pytest.raises(TextImportError):
+            parse_ygo_text("1 Dark Magician")
