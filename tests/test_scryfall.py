@@ -331,3 +331,171 @@ class TestDownloadCardImagesNameResolution:
 
             download_card_images(card, tmp_path)
         mock_name.assert_not_called()
+
+
+class TestThrottledGet:
+    """Tests for _throttled_get retry and rate-limit handling."""
+
+    def test_returns_response_when_ok(self):
+        import src.scryfall as sf
+
+        resp = _mock_resp(_NORMAL_CARD_JSON)
+        with patch("src.scryfall.get_session") as session:
+            session.return_value.get.return_value = resp
+            result = sf._throttled_get("https://api.scryfall.com/x")
+        assert result is resp
+
+    def test_retries_on_429_with_retry_after_header(self):
+        """A 429 response is retried after the Retry-After delay."""
+
+        import src.scryfall as sf
+
+        limited = _mock_resp(_NORMAL_CARD_JSON, status=429)
+        limited.headers = {"Retry-After": "0.01"}
+        ok = _mock_resp(_NORMAL_CARD_JSON)
+        sleeps: list[float] = []
+        with (
+            patch("src.scryfall.get_session") as session,
+            patch("src.scryfall.time.sleep", side_effect=sleeps.append),
+        ):
+            session.return_value.get.side_effect = [limited, ok]
+            result = sf._throttled_get("https://api.scryfall.com/x")
+        assert result is ok
+        assert session.return_value.get.call_count == 2
+        assert 0.01 in sleeps
+
+    def test_raises_after_exhausting_429_retries(self):
+        """Persistent 429s eventually raise the last response error path."""
+        import src.scryfall as sf
+
+        limited = _mock_resp(_NORMAL_CARD_JSON, status=429)
+        limited.headers = {"Retry-After": "0.01"}
+        with (
+            patch("src.scryfall.get_session") as session,
+            patch("src.scryfall.time.sleep"),
+        ):
+            session.return_value.get.return_value = limited
+            result = sf._throttled_get("https://api.scryfall.com/x")
+        # After exhausting retries the last response is returned (caller raises)
+        assert result is limited
+        assert session.return_value.get.call_count == 1 + len(sf._RETRY_DELAYS)
+
+    def test_retries_on_connection_error_then_succeeds(self):
+        """A connection error is retried and succeeds on the second attempt."""
+        import requests
+
+        import src.scryfall as sf
+
+        ok = _mock_resp(_NORMAL_CARD_JSON)
+        with (
+            patch("src.scryfall.get_session") as session,
+            patch("src.scryfall.time.sleep"),
+        ):
+            session.return_value.get.side_effect = [
+                requests.ConnectionError("boom"),
+                ok,
+            ]
+            result = sf._throttled_get("https://api.scryfall.com/x")
+        assert result is ok
+
+    def test_raises_when_connection_errors_exhausted(self):
+        """Persistent connection errors propagate after all retries."""
+        import requests
+
+        import src.scryfall as sf
+
+        with (
+            patch("src.scryfall.get_session") as session,
+            patch("src.scryfall.time.sleep"),
+            pytest.raises(requests.ConnectionError),
+        ):
+            session.return_value.get.side_effect = requests.ConnectionError("boom")
+            sf._throttled_get("https://api.scryfall.com/x")
+
+
+class TestFetchCardById:
+    """Tests for fetch_card_by_id and _card_from_id_response."""
+
+    def test_normal_card_returns_front_only(self):
+        import src.scryfall as sf
+
+        with patch("src.scryfall._throttled_get", return_value=_mock_resp(_NORMAL_CARD_JSON)):
+            card = sf.fetch_card_by_id("uuid-123")
+        assert card.front_url.endswith("abc.jpg")
+        assert card.back_url is None
+
+    def test_mdfc_card_returns_both_faces(self):
+        import src.scryfall as sf
+
+        with patch("src.scryfall._throttled_get", return_value=_mock_resp(_MDFC_CARD_JSON)):
+            card = sf.fetch_card_by_id("uuid-456")
+        assert card.front_url.endswith("face0.jpg")
+        assert card.back_url is not None and card.back_url.endswith("face1.jpg")
+
+    def test_disk_cache_prevents_second_network_call(self):
+        import src.scryfall as sf
+
+        with patch("src.scryfall._throttled_get", return_value=_mock_resp(_NORMAL_CARD_JSON)) as tg:
+            sf.fetch_card_by_id("uuid-789")
+            sf.fetch_card_by_id("uuid-789")
+        assert tg.call_count == 1
+
+    def test_http_error_raises_scryfall_error(self):
+        import requests
+
+        import src.scryfall as sf
+
+        with patch(
+            "src.scryfall._throttled_get",
+            side_effect=requests.HTTPError("404"),
+        ):
+            with pytest.raises(ScryfallError, match="no encontrada"):
+                sf.fetch_card_by_id("uuid-bad")
+
+    def test_unexpected_response_format_raises(self):
+        import src.scryfall as sf
+
+        with patch("src.scryfall._throttled_get", return_value=_mock_resp({"foo": "bar"})):
+            with pytest.raises(ScryfallError, match="inesperado"):
+                sf.fetch_card_by_id("uuid-weird")
+
+    def test_disk_cache_write_failure_is_not_fatal(self, tmp_path):
+        """A cache write OSError inside _disk_cache_put does not break the fetch."""
+        import src.scryfall as sf
+
+        with (
+            patch("src.scryfall._throttled_get", return_value=_mock_resp(_NORMAL_CARD_JSON)),
+            patch("src.scryfall.json.dump", side_effect=OSError("disk full")),
+        ):
+            card = sf.fetch_card_by_id("uuid-cache-fail")
+        assert card.front_url.endswith("abc.jpg")
+
+
+class TestFetchRelatedTokens:
+    """Extra tests for fetch_related_tokens edge cases."""
+
+    def test_network_error_for_one_card_does_not_abort_the_rest(self):
+        import requests
+
+        good = {
+            "all_parts": [
+                {"id": "src-1", "type_line": "Creature", "name": "Source"},
+                {
+                    "id": "tok-1",
+                    "type_line": "Token Creature — Beast",
+                    "name": "Beast",
+                },
+            ]
+        }
+        responses = [
+            requests.ConnectionError("boom"),
+            _mock_resp(good),
+        ]
+        with patch("src.scryfall._throttled_get", side_effect=responses):
+            tokens = fetch_related_tokens(["bad-id", "good-id"])
+        assert [t.name for t in tokens] == ["Beast"]
+
+    def test_empty_and_blank_ids_are_skipped(self):
+        with patch("src.scryfall._throttled_get") as tg:
+            assert fetch_related_tokens(["", ""]) == []
+        tg.assert_not_called()
