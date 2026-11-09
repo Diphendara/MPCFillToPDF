@@ -725,3 +725,141 @@ class TestRiftboundHelpers:
         assert _get_base_code("UNL-118A") == "UNL-118"
         assert _get_base_code("UNL-T01g") == "UNL-T01"
         assert _get_base_code("OGN-156") == "OGN-156"
+
+
+class TestRiftboundSideboardHeaders:
+    def test_side_board_header_marks_sideboard(self):
+        text = "Side Board:\n1 Sabotage (OGN-156)"
+        lines = parse_riftbound_text(text)
+        assert lines[0].is_sideboard is True
+
+    def test_side_header_marks_sideboard(self):
+        text = "Side:\n1 Sabotage (OGN-156)"
+        lines = parse_riftbound_text(text)
+        assert lines[0].is_sideboard is True
+
+
+class TestBuildRiftboundCodeVariations:
+    """Cover the code-variation and sideboard logic in build_riftbound_deck_from_text."""
+
+    def _build(self, text, db):
+        with patch("src.text_importer._fetch_dotgg_cards_db", return_value=db):
+            return build_riftbound_deck_from_text(text)
+
+    def test_token_code_with_lowercase_g_found(self):
+        db = {"UNL-T01g": {"id": "UNL-T01g", "name": "Gold", "type": ["Token"], "image": ""}}
+        deck = self._build("1 Gold (UNL-T01g)", db)
+        assert deck.cards[0].card_id == "UNL-T01g"
+        # No image in DB -> CDN URL built from the DB id
+        assert deck.cards[0].image_url == "https://static.dotgg.gg/riftbound/cards/UNL-T01g.webp"
+
+    def test_base_code_fallback_for_variant(self):
+        db = {
+            "UNL-118": {
+                "id": "UNL-118",
+                "name": "Elder Dragon",
+                "type": ["Unit"],
+                "image": "img.webp",
+            }
+        }
+        deck = self._build("1 Elder Dragon (UNL-118A)", db)
+        assert deck.cards[0].card_id == "UNL-118"
+
+    def test_unknown_code_falls_back_to_cdn_and_maindeck(self):
+        deck = self._build("1 Ghost (XXX-999)", {})
+        card = deck.cards[0]
+        assert card.section == "maindeck"
+        assert card.image_url == "https://static.dotgg.gg/riftbound/cards/XXX-999.webp"
+
+    def test_sideboard_card_gets_sideboard_section_and_sb_variant(self):
+        db = {
+            "OGN-156": {"id": "OGN-156", "name": "Sabotage", "type": ["Spell"], "image": "img.webp"}
+        }
+        deck = self._build("Sideboard:\n1 Sabotage (OGN-156)", db)
+        card = deck.cards[0]
+        assert card.section == "sideboard"
+        assert card.variant_id == "OGN-156_sb"
+
+
+class TestParseMtgRemaining:
+    def test_card_without_set_fetches_from_scryfall(self):
+        from src.text_importer import parse_mtg_text
+
+        with patch("src.scryfall.fetch_card_by_name", return_value=("neo", "129")) as by_name:
+            deck = parse_mtg_text("2 Lightning Bolt")
+        assert by_name.called
+        assert deck.cards[0].set_code == "neo"
+        assert deck.cards[0].collector_number == "129"
+
+    def test_scryfall_error_continues_without_set(self):
+        from src.scryfall import ScryfallError
+        from src.text_importer import parse_mtg_text
+
+        with patch("src.scryfall.fetch_card_by_name", side_effect=ScryfallError("not found")):
+            deck = parse_mtg_text("2 Lightning Bolt")
+        assert deck.cards[0].set_code == ""
+
+    def test_scryfall_connection_error_continues_without_set(self):
+        from src.text_importer import parse_mtg_text
+
+        with patch("src.scryfall.fetch_card_by_name", side_effect=requests.ConnectionError("down")):
+            deck = parse_mtg_text("2 Lightning Bolt")
+        assert deck.cards[0].set_code == ""
+
+    def test_hyphenated_collector_splits_set_and_number(self):
+        from src.text_importer import parse_mtg_text
+
+        deck = parse_mtg_text("1 Liesa, Shroud of Dusk (PLST) CMR-286")
+        assert deck.cards[0].set_code == "cmr"
+        assert deck.cards[0].collector_number == "286"
+
+    def test_invalid_line_raises_with_line_number(self):
+        from src.text_importer import parse_mtg_text
+
+        with pytest.raises(TextImportError, match="Línea 1"):
+            parse_mtg_text("?? nonsense")
+
+    def test_zero_quantity_raises(self):
+        from src.text_importer import parse_mtg_text
+
+        with pytest.raises(TextImportError, match="Cantidad inválida"):
+            parse_mtg_text("0 Lightning Bolt")
+
+    def test_empty_text_raises(self):
+        from src.text_importer import parse_mtg_text
+
+        with pytest.raises(TextImportError, match="No se encontraron cartas"):
+            parse_mtg_text("")
+
+
+class TestParseYgoRemaining:
+    def test_line_without_quantity_defaults_to_one(self):
+        from src.text_importer import parse_ygo_text
+
+        with patch(
+            "src.ygo_scraper._fetch_cards_by_names",
+            return_value={"dark magician": (1, "Dark Magician")},
+        ):
+            deck = parse_ygo_text("Dark Magician")
+        assert deck.cards[0].quantity == 1
+
+    def test_side_and_extra_markers(self):
+        from src.text_importer import parse_ygo_text
+
+        resolved = {"a": (1, "A"), "b": (2, "B"), "c": (3, "C")}
+        with patch("src.ygo_scraper._fetch_cards_by_names", return_value=resolved):
+            deck = parse_ygo_text("1 A\nside:\n1 B\nextra:\n1 C")
+        zones = {c.name: c.zone for c in deck.cards}
+        assert zones == {"A": "main", "B": "side", "C": "extra"}
+
+    def test_symbol_garbage_line_raises(self):
+        from src.text_importer import parse_ygo_text
+
+        with pytest.raises(TextImportError, match="Formato no reconocido"):
+            parse_ygo_text("!! garbage")
+
+    def test_zero_quantity_raises(self):
+        from src.text_importer import parse_ygo_text
+
+        with pytest.raises(TextImportError, match="Cantidad inválida"):
+            parse_ygo_text("0 Dark Magician")

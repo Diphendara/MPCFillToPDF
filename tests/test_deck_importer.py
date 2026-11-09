@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.deck_importer import (
     DeckCard,
@@ -777,3 +778,169 @@ class TestSideboardFiltering:
         assert card.collector_number == "1"
         assert card.quantity == 3
         assert card.zone == "main"
+
+
+class TestRemainingImporterBranches:
+    """Offline tests for the remaining uncovered branches in deck_importer.py."""
+
+    @staticmethod
+    def _resp(payload, text=None):
+        r = MagicMock()
+        if text is not None:
+            r.text = text
+        else:
+            r.json.return_value = payload
+        r.raise_for_status.return_value = None
+        return r
+
+    def test_archidekt_side_and_skip_categories(self):
+        payload = {
+            "name": "Cats",
+            "cards": [
+                {
+                    "categories": ["Sideboard"],
+                    "quantity": 2,
+                    "card": {
+                        "edition": {"editioncode": "M21"},
+                        "collectorNumber": "1",
+                        "oracleCard": {"name": "Cat"},
+                    },
+                },
+                {
+                    "categories": ["Maybeboard"],
+                    "quantity": 1,
+                    "card": {
+                        "edition": {"editioncode": "M21"},
+                        "collectorNumber": "2",
+                        "oracleCard": {"name": "Maybe"},
+                    },
+                },
+                {
+                    "categories": [],
+                    "quantity": 3,
+                    "card": {
+                        "edition": {"editioncode": "M21"},
+                        "collectorNumber": "3",
+                        "oracleCard": {"name": "Main"},
+                    },
+                },
+                {
+                    "categories": [],
+                    "quantity": 1,
+                    "card": {
+                        "edition": {"editioncode": "M21"},
+                        "collectorNumber": "4",
+                        "oracleCard": {"name": ""},
+                    },
+                },
+            ],
+            "tokens": {},
+        }
+        with patch("src.deck_importer.http_get", return_value=self._resp(payload)):
+            deck = fetch_deck("https://archidekt.com/decks/123/x")
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Cat"].zone == "side"
+        assert "Maybe" not in by_name  # Maybeboard skipped
+        assert by_name["Main"].zone == "main"
+        assert len(deck.cards) == 2  # Maybeboard and empty-name entries dropped
+
+    def test_archidekt_tokens_trigger_related_fetch(self):
+        payload = {
+            "name": "Tokens",
+            "cards": [
+                {
+                    "categories": [],
+                    "quantity": 1,
+                    "uid": "u1",
+                    "card": {
+                        "edition": {"editioncode": "M21"},
+                        "collectorNumber": "1",
+                        "oracleCard": {"name": "Source", "tokens": True},
+                    },
+                },
+            ],
+            "tokens": {},
+        }
+        token = DeckCard("Beast", "tmm", "1", 1, "token")
+        with (
+            patch("src.deck_importer.http_get", return_value=self._resp(payload)),
+            patch("src.scryfall.fetch_related_tokens", return_value=[token]) as related,
+        ):
+            deck = fetch_deck("https://archidekt.com/decks/123/x")
+        assert related.called
+        assert any(c.name == "Beast" for c in deck.cards)
+
+    def test_deckstats_sideboard_and_nameless_entries(self):
+        payload = {
+            "name": "Burn",
+            "sections": [
+                {
+                    "name": "Mainboard",
+                    "cards": [{"name": "Bolt", "amount": 4}, {"name": "", "amount": 1}],
+                }
+            ],
+            "sideboard": [{"name": "Flare", "amount": 2}, {"name": "", "amount": 1}],
+        }
+        with patch("src.deck_importer.http_get", return_value=self._resp(payload)):
+            deck = fetch_deck("https://deckstats.net/decks/12/34-burn")
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Bolt"].zone == "main"
+        assert by_name["Flare"].zone == "side"
+        assert len(deck.cards) == 2
+
+    def test_extract_token_cards_rare_shapes(self):
+        from src.deck_importer import _extract_token_cards
+
+        assert _extract_token_cards(None) == []  # not dict/list
+        assert _extract_token_cards(["not-a-dict", 42]) == []  # entries not dicts
+        # entry whose card payload is not a dict
+        assert _extract_token_cards([{"card": "nope"}]) == []
+        # token-like card is kept, non-token-like is dropped
+        kept = _extract_token_cards([{"card": {"isToken": True, "name": "Beast"}}])
+        assert [c.name for c in kept] == ["Beast"]
+
+    def test_tappedout_tokens_error_returns_empty(self):
+        from src.deck_importer import _fetch_tappedout_tokens
+
+        with patch("src.deck_importer.http_get", side_effect=requests.ConnectionError("down")):
+            assert _fetch_tappedout_tokens("slug") == []
+
+    def test_tappedout_tokens_no_match_returns_empty(self):
+        from src.deck_importer import _fetch_tappedout_tokens
+
+        with patch(
+            "src.deck_importer.http_get",
+            return_value=self._resp(None, text="<html>no tokens</html>"),
+        ):
+            assert _fetch_tappedout_tokens("slug") == []
+
+    def test_tappedout_token_name_strips_suffix(self):
+        from src.deck_importer import _tappedout_token_name
+
+        assert _tappedout_token_name("Beast 3/3 G") == "Beast"
+        assert _tappedout_token_name("Plain Name") == "Plain Name"
+
+    def test_astro_val_and_find(self):
+        from src.deck_importer import _astro_find, _astro_val
+
+        assert _astro_val([0, "hello"]) == "hello"
+        assert _astro_val([1, [[0, "a"], [0, "b"]]]) == ["a", "b"]
+        assert _astro_find({"nested": [0, {"key": [0, "found"]}]}, "key") == "found"
+        assert _astro_find([[0, "x"]], "missing") is None
+
+    def test_manabox_extract_props_missing_marker(self):
+        from src.deck_importer import _manabox_extract_props
+
+        assert _manabox_extract_props("no props here") == ""
+
+    def test_manabox_invalid_json_raises(self):
+        html = '<div props="&quot;cards&quot;: not json"></div>'
+        with patch("src.deck_importer.http_get", return_value=self._resp(None, text=html)):
+            with pytest.raises(DeckImportError, match="parsear"):
+                fetch_deck("https://manabox.app/decks/abc")
+
+    def test_manabox_cards_not_list_raises(self):
+        html = '<div props="{&quot;cards&quot;: 5}"></div>'
+        with patch("src.deck_importer.http_get", return_value=self._resp(None, text=html)):
+            with pytest.raises(DeckImportError, match="inesperado"):
+                fetch_deck("https://manabox.app/decks/abc")
