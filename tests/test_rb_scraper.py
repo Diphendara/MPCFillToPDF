@@ -167,7 +167,6 @@ class TestFirestoreHelpers:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeRiftbinder:
     def _firestore_response(self) -> dict:
         return {
@@ -216,14 +215,14 @@ class TestScrapeRiftbinder:
     def test_parses_name(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = self._firestore_response()
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             deck = _scrape_riftbinder("https://riftbinder.com/decks/abc123")
         assert deck.name == "Test Deck"
 
     def test_parses_legend(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = self._firestore_response()
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             deck = _scrape_riftbinder("https://riftbinder.com/decks/abc123")
         legend_cards = [c for c in deck.cards if c.section == "legend"]
         assert len(legend_cards) == 1
@@ -232,7 +231,7 @@ class TestScrapeRiftbinder:
     def test_parses_battlefield(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = self._firestore_response()
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             deck = _scrape_riftbinder("https://riftbinder.com/decks/abc123")
         bf = [c for c in deck.cards if c.section == "battlefield"]
         assert len(bf) == 1
@@ -241,7 +240,7 @@ class TestScrapeRiftbinder:
     def test_parses_maindeck_quantity(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = self._firestore_response()
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             deck = _scrape_riftbinder("https://riftbinder.com/decks/abc123")
         main = [c for c in deck.cards if c.section == "maindeck"]
         assert len(main) == 1
@@ -250,7 +249,7 @@ class TestScrapeRiftbinder:
     def test_parses_sideboard(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = self._firestore_response()
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             deck = _scrape_riftbinder("https://riftbinder.com/decks/abc123")
         sb = [c for c in deck.cards if c.section == "sideboard"]
         assert len(sb) == 1
@@ -521,7 +520,7 @@ class TestDownloadImagesCancellation:
 
         mock_resp = MagicMock()
         mock_resp.content = b"fake"
-        with patch("src.rb_scraper.requests.get", return_value=mock_resp):
+        with patch("src.rb_scraper.http_get", return_value=mock_resp):
             with pytest.raises(Cancelled):
                 download_images(deck, tmp_path, cancel_event=cancel)
 
@@ -531,12 +530,11 @@ class TestDownloadImagesCancellation:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestTrpcGet:
     def test_builds_url_and_parses_result(self):
         mock_r = MagicMock()
         mock_r.json.return_value = {"result": {"data": {"json": {"key": "value"}}}}
-        with patch("src.rb_scraper.requests.get", return_value=mock_r) as mock_get:
+        with patch("src.rb_scraper.http_get", return_value=mock_r) as mock_get:
             result = _trpc_get("decks.getById", {"id": "abc"})
         assert result == {"key": "value"}
         call_url = mock_get.call_args[0][0]
@@ -546,7 +544,7 @@ class TestTrpcGet:
     def test_passes_encoded_payload(self):
         mock_r = MagicMock()
         mock_r.json.return_value = {"result": {"data": {"json": {}}}}
-        with patch("src.rb_scraper.requests.get", return_value=mock_r) as mock_get:
+        with patch("src.rb_scraper.http_get", return_value=mock_r) as mock_get:
             _trpc_get("proc", {"id": "xyz"})
         call_url = mock_get.call_args[0][0]
         assert "input=" in call_url
@@ -664,7 +662,6 @@ class TestPiltoverPagePayload:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeRiftboundGg:
     def _deck_json(self):
         return {
@@ -688,7 +685,7 @@ class TestScrapeRiftboundGg:
         r1.json.return_value = self._deck_json()
         r2 = MagicMock()
         r2.json.return_value = self._cards_json()
-        with patch("src.rb_scraper.requests.get", side_effect=[r1, r2]):
+        with patch("src.rb_scraper.http_get", side_effect=[r1, r2]):
             deck = _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
         assert deck.name == "RBgg Deck"
         qtys = {c.card_id: c.quantity for c in deck.cards}
@@ -701,7 +698,7 @@ class TestScrapeRiftboundGg:
         r1.json.return_value = self._deck_json()
         r2 = MagicMock()
         r2.json.return_value = self._cards_json()
-        with patch("src.rb_scraper.requests.get", side_effect=[r1, r2]):
+        with patch("src.rb_scraper.http_get", side_effect=[r1, r2]):
             deck = _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
         sections = {c.card_id: c.section for c in deck.cards}
         assert sections["CARD-002"] == "legend"
@@ -710,7 +707,7 @@ class TestScrapeRiftboundGg:
     def test_empty_body_raises(self):
         r1 = MagicMock()
         r1.text = "  "
-        with patch("src.rb_scraper.requests.get", return_value=r1):
+        with patch("src.rb_scraper.http_get", return_value=r1):
             with pytest.raises(ValueError, match="privado"):
                 _scrape_riftbound_gg("https://riftbound.gg/decks/my-deck/")
 
@@ -724,7 +721,6 @@ class TestScrapeRiftboundGg:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeRiftmana:
     def test_extracts_uuid_and_fetches_api(self):
         uuid = "aaaabbbb-1111-2222-3333-ccccddddeeee"
@@ -749,7 +745,7 @@ class TestScrapeRiftmana:
                 }
             }
         }
-        with patch("src.rb_scraper.requests.get", side_effect=[html_r, api_r]):
+        with patch("src.rb_scraper.http_get", side_effect=[html_r, api_r]):
             deck = _scrape_riftmana("https://riftmana.com/decks/my-deck")
         assert deck.name == "RM Deck"
         assert deck.deck_id == uuid
@@ -760,7 +756,7 @@ class TestScrapeRiftmana:
     def test_uuid_not_found_raises(self):
         html_r = MagicMock()
         html_r.text = "<html>no uuid here</html>"
-        with patch("src.rb_scraper.requests.get", return_value=html_r):
+        with patch("src.rb_scraper.http_get", return_value=html_r):
             with pytest.raises(ValueError, match="UUID"):
                 _scrape_riftmana("https://riftmana.com/decks/my-deck")
 
@@ -770,7 +766,6 @@ class TestScrapeRiftmana:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeRiftdex:
     DECK_UUID = "00000000-1111-2222-3333-444455556666"
     CARD_UUID = "aaaabbbb-0000-0000-0000-111122223333"
@@ -791,7 +786,7 @@ class TestScrapeRiftdex:
                 "image_url": "https://example.com/rd001.webp",
             }
         ]
-        with patch("src.rb_scraper.requests.get", side_effect=[deck_r, cards_r]):
+        with patch("src.rb_scraper.http_get", side_effect=[deck_r, cards_r]):
             deck = _scrape_riftdex(f"https://riftdex.com/deck/{self.DECK_UUID}")
         assert deck.name == "RD Deck"
         assert deck.cards[0].card_id == "RD-001"
@@ -800,7 +795,7 @@ class TestScrapeRiftdex:
     def test_not_found_raises(self):
         r = MagicMock()
         r.json.return_value = []
-        with patch("src.rb_scraper.requests.get", return_value=r):
+        with patch("src.rb_scraper.http_get", return_value=r):
             with pytest.raises(ValueError, match="No se encontró"):
                 _scrape_riftdex(f"https://riftdex.com/deck/{self.DECK_UUID}")
 
@@ -814,7 +809,6 @@ class TestScrapeRiftdex:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestRBDownloadImages:
     def _make_card(self, variant_id: str = "v001") -> RBCard:
         return RBCard(
@@ -833,7 +827,7 @@ class TestRBDownloadImages:
         deck = RBDeck(deck_id="d1", name="Test", cards=[card])
         mock_r = MagicMock()
         mock_r.content = b"image_bytes"
-        with patch("src.rb_scraper.requests.get", return_value=mock_r):
+        with patch("src.scraper_utils.http_get", return_value=mock_r):
             result = download_images(deck, tmp_path)
         assert "v001" in result
         assert result["v001"].read_bytes() == b"image_bytes"
@@ -850,7 +844,7 @@ class TestRBDownloadImages:
             call_count += 1
             return mock_r
 
-        with patch("src.rb_scraper.requests.get", side_effect=_track):
+        with patch("src.scraper_utils.http_get", side_effect=_track):
             result = download_images(deck, tmp_path)
         assert call_count == 1
         assert "v001" in result
@@ -860,7 +854,7 @@ class TestRBDownloadImages:
         deck = RBDeck(deck_id="d1", name="Test", cards=[card])
         cached = tmp_path / "v001.webp"
         cached.write_bytes(b"cached")
-        with patch("src.rb_scraper.requests.get") as mock_get:
+        with patch("src.rb_scraper.http_get") as mock_get:
             result = download_images(deck, tmp_path)
         mock_get.assert_not_called()
         assert result["v001"] == cached
