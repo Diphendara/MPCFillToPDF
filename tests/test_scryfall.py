@@ -1,11 +1,15 @@
+import json
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.deck_importer import DeckCard
 from src.scryfall import (
     ScryfallCard,
     ScryfallError,
+    download_card_images,
     download_deck_images,
     fetch_card,
     fetch_card_by_name,
@@ -499,3 +503,147 @@ class TestFetchRelatedTokens:
         with patch("src.scryfall._throttled_get") as tg:
             assert fetch_related_tokens(["", ""]) == []
         tg.assert_not_called()
+
+
+class TestDiskCacheEdgeCases:
+    def test_expired_entry_returns_none(self, tmp_path):
+        import time
+
+        import src.scryfall as sf
+
+        cache_dir = tmp_path / "sf"
+        cache_dir.mkdir()
+        entry = {"ts": time.time() - sf._DISK_CACHE_TTL - 10, "data": {"x": 1}}
+        (cache_dir / "card_test_1.json").write_text(json.dumps(entry))
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sf, "_DISK_CACHE_DIR", cache_dir)
+        try:
+            assert sf._disk_cache_get("card_test_1") is None
+        finally:
+            monkeypatch.undo()
+
+    def test_corrupt_json_returns_none(self, tmp_path):
+        import src.scryfall as sf
+
+        cache_dir = tmp_path / "sf"
+        cache_dir.mkdir()
+        (cache_dir / "card_test_2.json").write_text("{not json")
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(sf, "_DISK_CACHE_DIR", cache_dir)
+        try:
+            assert sf._disk_cache_get("card_test_2") is None
+        finally:
+            monkeypatch.undo()
+
+    def test_missing_file_returns_none(self):
+        import src.scryfall as sf
+
+        assert sf._disk_cache_get("card_never_cached") is None
+
+
+class TestCardFromResponseEdges:
+    def test_card_faces_without_front_image_raises(self):
+        import src.scryfall as sf
+
+        data = {"card_faces": [{"image_uris": {}}, {"image_uris": {"large": "back.jpg"}}]}
+        with pytest.raises(ScryfallError, match="imagen de frente"):
+            sf._card_from_response(data, "tst", "1")
+
+    def test_unexpected_format_raises(self):
+        import src.scryfall as sf
+
+        with pytest.raises(ScryfallError, match="Formato de respuesta"):
+            sf._card_from_response({}, "tst", "1")
+
+    def test_id_response_mdfc_without_front_raises(self):
+        import src.scryfall as sf
+
+        data = {"card_faces": [{"image_uris": {}}, {"image_uris": {"large": "back.jpg"}}]}
+        with pytest.raises(ScryfallError, match="Formato de respuesta"):
+            sf._card_from_id_response(data, "uuid-1")
+
+    def test_id_response_unexpected_format_raises(self):
+        import src.scryfall as sf
+
+        with pytest.raises(ScryfallError, match="Formato de respuesta"):
+            sf._card_from_id_response({}, "uuid-1")
+
+
+class TestFetchCardByNameEdges:
+    def test_request_exception_raises_scryfall_error(self):
+        with patch("src.scryfall._throttled_get", side_effect=requests.ConnectionError("net down")):
+            with pytest.raises(ScryfallError, match="Error de conexión"):
+                fetch_card_by_name("Lightning Bolt")
+
+
+class TestExtFromUrl:
+    def test_extracts_extension(self):
+        import src.scryfall as sf
+
+        assert sf._ext_from_url("https://x/card.JPG") == ".jpg"
+        assert sf._ext_from_url("https://x/card.webp") == ".webp"
+        assert sf._ext_from_url("https://x/card") == ".jpg"
+
+
+class TestDownloadCardImagesFallbacks:
+    def test_a_prefix_name_falls_back_without_prefix(self, tmp_path):
+        """A-Haywire Mite retries as Haywire Mite when the printing fails."""
+        card = DeckCard(
+            name="A-Haywire Mite", set_code="", collector_number="", quantity=1, zone="main"
+        )
+
+        with (
+            patch("src.scryfall.fetch_card_by_name") as by_name,
+            patch("src.scryfall.fetch_card") as fetch,
+        ):
+            by_name.side_effect = [("neo", "129"), ("neo", "129")]
+            # First fetch_card (with bogus set from first by_name) fails,
+            # second (after stripping A-) succeeds.
+            good = ScryfallCard("https://x/front.jpg", None)
+            fetch.side_effect = [ScryfallError("missing"), good]
+            dl = MagicMock()
+            dl.content = b"image-bytes"
+            dl.raise_for_status.return_value = None
+            with patch("src.scryfall._throttled_get", return_value=dl):
+                front, back = download_card_images(card, tmp_path)
+
+        assert front.exists()
+        assert back is None
+        # by_name called twice: initial resolution + A- stripped retry
+        assert by_name.call_count == 2
+        assert by_name.call_args_list[-1].args[0] == "Haywire Mite"
+
+    def test_card_without_name_raises_original_error(self, tmp_path):
+        card = DeckCard(name="", set_code="neo", collector_number="999", quantity=1, zone="main")
+
+        with patch("src.scryfall.fetch_card", side_effect=ScryfallError("missing")):
+            with pytest.raises(ScryfallError, match="missing"):
+                download_card_images(card, tmp_path)
+
+
+class TestDownloadDeckImagesEdges:
+    def test_cancel_event_raises_cancelled(self, tmp_path):
+        from src.cancellation import Cancelled
+
+        cancel = threading.Event()
+        card = DeckCard(name="Bolt", set_code="neo", collector_number="1", quantity=1, zone="main")
+
+        def _slow_download(c, d):
+            cancel.set()
+            raise ScryfallError("boom")
+
+        with patch("src.scryfall.download_card_images", side_effect=_slow_download):
+            with pytest.raises(Cancelled):
+                download_deck_images([card], tmp_path, cancel_event=cancel)
+
+    def test_progress_callback_fires(self, tmp_path):
+        card = DeckCard(name="Bolt", set_code="neo", collector_number="1", quantity=1, zone="main")
+        seen = []
+
+        with patch(
+            "src.scryfall.download_card_images",
+            return_value=(tmp_path / "f.jpg", None),
+        ):
+            download_deck_images([card], tmp_path, progress_cb=lambda d, t: seen.append((d, t)))
+
+        assert seen == [(1, 1)]

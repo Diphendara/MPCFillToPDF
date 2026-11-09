@@ -348,3 +348,91 @@ class TestLegacyDeckErrors:
         with patch("src.ygo_scraper.http_get", return_value=resp):
             with pytest.raises(ValueError, match="Export Deck"):
                 _scrape_legacy_deck("https://ygoprodeck.com/decks/abc")
+
+
+class TestRemainingBranches:
+    """Offline tests for error and fallback branches across the module."""
+
+    def test_get_ygo_back_falls_back_to_generated_proxy(self):
+        from src.ygo_scraper import get_ygo_back
+
+        with patch("src.ygo_scraper.bundled_back", return_value=None):
+            back = get_ygo_back()
+        assert back is not None
+        assert back.name == "yugioh_proxy_back.png"
+
+    def test_parse_ydke_missing_prefix_raises(self):
+        from src.ygo_scraper import parse_ydke
+
+        with pytest.raises(ValueError, match="ydke://"):
+            parse_ydke("not-a-ydke-string")
+
+    def test_parse_ydke_too_few_parts_raises(self):
+        from src.ygo_scraper import parse_ydke
+
+        with pytest.raises(ValueError, match="Main, Extra y Side"):
+            parse_ydke("ydke://a!b")
+
+    def test_parse_ydke_empty_deck_raises(self):
+        from src.ygo_scraper import parse_ydke
+
+        empty = base64.b64encode(b"").decode()
+        with patch("src.ygo_scraper._fetch_names", return_value={}):
+            with pytest.raises(ValueError, match="no contiene cartas"):
+                parse_ydke(f"ydke://{empty}!{empty}!{empty}!")
+
+    def test_parse_ydke_incomplete_ids_raises(self):
+        from src.ygo_scraper import _decode_ydke_part
+
+        bad = base64.b64encode(b"\x01\x02\x03").decode()  # 3 bytes, not multiple of 4
+        with pytest.raises(ValueError, match="incompletos"):
+            _decode_ydke_part(bad)
+
+    def test_ygoprodeck_page_invalid_json_raises(self):
+        from src.ygo_scraper import _parse_ygoprodeck_page
+
+        html = "var maindeckjs = 'not-json';"
+        with pytest.raises(ValueError, match="no es valida"):
+            _parse_ygoprodeck_page(html, "https://ygoprodeck.com/deck/x")
+
+    def test_ygoprodeck_page_no_cards_raises(self):
+        from src.ygo_scraper import _parse_ygoprodeck_page
+
+        with pytest.raises(ValueError, match="No se encontraron cartas"):
+            _parse_ygoprodeck_page("<html></html>", "https://ygoprodeck.com/deck/x")
+
+    def test_meta_page_no_card_links_raises(self):
+        from src.ygo_scraper import _parse_meta_page
+
+        with pytest.raises(ValueError, match="No se encontraron cartas"):
+            _parse_meta_page("<html></html>", "https://yugiohmeta.com/deck/x")
+
+    def test_edison_url_missing_params_raises(self):
+        from src.ygo_scraper import _scrape_edison_deck
+
+        with pytest.raises(ValueError, match="event y deck"):
+            _scrape_edison_deck("https://edisonformat.net/deckbuilder")
+
+    def test_legacy_ydke_string_parses_directly(self):
+        from src.ygo_scraper import _scrape_legacy_deck
+
+        empty = base64.b64encode(b"").decode()
+        ids = base64.b64encode(struct.pack("<I", 46986414)).decode()
+        with patch("src.ygo_scraper._fetch_names", return_value={46986414: "Dark Magician"}):
+            deck = _scrape_legacy_deck(f"ydke://{ids}!{empty}!{empty}!")
+        assert deck.cards[0].name == "Dark Magician"
+
+    def test_scrape_supported_unsupported_host_raises(self):
+        from src.ygo_scraper import _scrape_supported_deck
+
+        with pytest.raises(ValueError, match="Formato no reconocido"):
+            _scrape_supported_deck("https://unknown.example.com/deck")
+
+    def test_scrape_supported_ydke_bypasses_adapter(self):
+        from src.ygo_scraper import _scrape_supported_deck
+
+        empty = base64.b64encode(b"").decode()
+        ids = base64.b64encode(struct.pack("<I", 46986414)).decode()
+        with patch("src.ygo_scraper._fetch_names", return_value={46986414: "Dark Magician"}):
+            deck = _scrape_supported_deck(f"ydke://{ids}!{empty}!{empty}!")
+        assert deck.cards[0].name == "Dark Magician"
