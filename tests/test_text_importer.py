@@ -298,3 +298,261 @@ Extra:
 
         with pytest.raises(TextImportError):
             parse_ygo_text("1 Dark Magician")
+
+
+class TestParseLorcanaText:
+    """Tests for parse_lorcana_text function."""
+
+    def test_parse_simple_line(self):
+        """Parse 'Quantity Name' format."""
+        from src.text_importer import parse_lorcana_text
+
+        deck = parse_lorcana_text("4 Elsa - Snow Queen")
+        assert len(deck.cards) == 1
+        assert deck.cards[0].name == "Elsa - Snow Queen"
+        assert deck.cards[0].quantity == 4
+
+    def test_parse_with_card_number(self):
+        """Parse 'Quantity Name (Number)' format."""
+        from src.text_importer import parse_lorcana_text
+
+        deck = parse_lorcana_text("2 Mickey Mouse (1)")
+        assert deck.cards[0].name == "Mickey Mouse"
+        assert deck.cards[0].card_id == "1"
+
+    def test_parse_multiple_lines(self):
+        """Parse several lines at once."""
+        from src.text_importer import parse_lorcana_text
+
+        text = """4 Elsa - Snow Queen
+2 Mickey Mouse (1)
+1 Hades - King of Olympus"""
+        deck = parse_lorcana_text(text)
+        assert len(deck.cards) == 3
+        assert [c.quantity for c in deck.cards] == [4, 2, 1]
+
+    def test_invalid_format_raises(self):
+        """A line without quantity raises with line number."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError):
+            parse_lorcana_text("4 Elsa - Snow Queen\nElsa - Snow Queen")
+
+    def test_zero_quantity_raises(self):
+        """Quantity below 1 raises."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError, match="al menos 1"):
+            parse_lorcana_text("0 Elsa - Snow Queen")
+
+    def test_empty_text_raises(self):
+        """No cards found raises."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError):
+            parse_lorcana_text("   ")
+
+    def test_comments_and_blank_lines_skipped(self):
+        """Comments and empty lines are ignored."""
+        from src.text_importer import parse_lorcana_text
+
+        text = """# my deck
+4 Elsa - Snow Queen
+
+// comment
+2 Mickey Mouse (1)"""
+        deck = parse_lorcana_text(text)
+        assert len(deck.cards) == 2
+
+
+class TestParseOpText:
+    """Tests for parse_op_text function."""
+
+    def test_parse_named_with_code(self):
+        """Parse 'Quantity Name (CODE)' format."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("4 Roronoa Zoro (OP01-001)")
+        assert deck.cards[0].name == "Roronoa Zoro"
+        assert deck.cards[0].card_id == "OP01-001"
+        assert deck.cards[0].is_leader is False
+        assert deck.cards[0].quantity == 4
+
+    def test_parse_leader(self):
+        """Parse '(Leader)' marker."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("1 Monkey D. Luffy (Leader)")
+        assert deck.cards[0].name == "Monkey D. Luffy"
+        assert deck.cards[0].is_leader is True
+        assert deck.cards[0].card_id == ""
+
+    def test_parse_code_only_format(self):
+        """Parse '2xOP04-016_r1' compact format."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("2xOP04-016_r1")
+        assert deck.cards[0].card_id == "OP04-016_R1"
+        assert deck.cards[0].quantity == 2
+        assert deck.cards[0].is_leader is False
+
+    def test_invalid_format_raises(self):
+        """Unrecognized line raises."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError):
+            parse_op_text("garbage line here")
+
+    def test_zero_quantity_raises(self):
+        """Quantity below 1 raises."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError, match="al menos 1"):
+            parse_op_text("0 Roronoa Zoro (OP01-001)")
+
+    def test_empty_text_raises(self):
+        """No cards found raises."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError):
+            parse_op_text("")
+
+    def test_comments_and_blank_lines_skipped(self):
+        """Comments and empty lines are ignored."""
+        from src.text_importer import parse_op_text
+
+        text = """# One Piece deck
+1 Monkey D. Luffy (Leader)
+
+4 Roronoa Zoro (OP01-001)"""
+        deck = parse_op_text(text)
+        assert len(deck.cards) == 2
+
+
+class TestParseLorcanaText:
+    """Tests for parse_lorcana_text function."""
+
+    def test_parse_simple_line(self):
+        """Parse 'Quantity Name' format."""
+        from src.text_importer import parse_lorcana_text
+
+        deck = parse_lorcana_text("4 Elsa - Snow Queen")
+        assert len(deck.cards) == 1
+        assert deck.cards[0].name == "Elsa - Snow Queen"
+        assert deck.cards[0].quantity == 4
+
+    def test_parse_with_card_number(self):
+        """Parse 'Quantity Name (Number)' format."""
+        from src.text_importer import parse_lorcana_text
+
+        deck = parse_lorcana_text("2 Mickey Mouse (1)")
+        assert deck.cards[0].name == "Mickey Mouse"
+        assert deck.cards[0].card_id == "1"
+
+    def test_parse_multiple_lines(self):
+        """Parse several lines at once."""
+        from src.text_importer import parse_lorcana_text
+
+        text = """4 Elsa - Snow Queen
+2 Mickey Mouse (1)
+1 Hades - King of Olympus"""
+        deck = parse_lorcana_text(text)
+        assert len(deck.cards) == 3
+        assert [c.quantity for c in deck.cards] == [4, 2, 1]
+
+    def test_invalid_format_raises(self):
+        """A line without quantity raises with line number."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError, match="Línea 2"):
+            parse_lorcana_text("4 Elsa - Snow Queen\nElsa - Snow Queen")
+
+    def test_zero_quantity_raises(self):
+        """Quantity below 1 raises."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError, match="al menos 1"):
+            parse_lorcana_text("0 Elsa - Snow Queen")
+
+    def test_empty_text_raises(self):
+        """No cards found raises."""
+        from src.text_importer import parse_lorcana_text
+
+        with pytest.raises(TextImportError):
+            parse_lorcana_text("   ")
+
+    def test_comments_and_blank_lines_skipped(self):
+        """Comments and empty lines are ignored."""
+        from src.text_importer import parse_lorcana_text
+
+        text = """# my deck
+4 Elsa - Snow Queen
+
+// comment
+2 Mickey Mouse (1)"""
+        deck = parse_lorcana_text(text)
+        assert len(deck.cards) == 2
+
+
+class TestParseOpText:
+    """Tests for parse_op_text function."""
+
+    def test_parse_named_with_code(self):
+        """Parse 'Quantity Name (CODE)' format."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("4 Roronoa Zoro (OP01-001)")
+        assert deck.cards[0].name == "Roronoa Zoro"
+        assert deck.cards[0].card_id == "OP01-001"
+        assert deck.cards[0].is_leader is False
+        assert deck.cards[0].quantity == 4
+
+    def test_parse_leader(self):
+        """Parse '(Leader)' marker."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("1 Monkey D. Luffy (Leader)")
+        assert deck.cards[0].name == "Monkey D. Luffy"
+        assert deck.cards[0].is_leader is True
+        assert deck.cards[0].card_id == ""
+
+    def test_parse_code_only_format(self):
+        """Parse '2xOP04-016_r1' compact format."""
+        from src.text_importer import parse_op_text
+
+        deck = parse_op_text("2xOP04-016_r1")
+        assert deck.cards[0].card_id == "OP04-016_R1"
+        assert deck.cards[0].quantity == 2
+        assert deck.cards[0].is_leader is False
+
+    def test_invalid_format_raises(self):
+        """Unrecognized line raises with line number."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError):
+            parse_op_text("garbage line here")
+
+    def test_zero_quantity_raises(self):
+        """Quantity below 1 raises."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError, match="al menos 1"):
+            parse_op_text("0 Roronoa Zoro (OP01-001)")
+
+    def test_empty_text_raises(self):
+        """No cards found raises."""
+        from src.text_importer import parse_op_text
+
+        with pytest.raises(TextImportError):
+            parse_op_text("")
+
+    def test_comments_and_blank_lines_skipped(self):
+        """Comments and empty lines are ignored."""
+        from src.text_importer import parse_op_text
+
+        text = """# One Piece deck
+1 Monkey D. Luffy (Leader)
+
+4 Roronoa Zoro (OP01-001)"""
+        deck = parse_op_text(text)
+        assert len(deck.cards) == 2
