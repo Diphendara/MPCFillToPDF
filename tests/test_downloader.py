@@ -1,6 +1,8 @@
 """Tests for src/downloader.py — single-image and batch download logic."""
 
 import threading
+import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,3 +263,128 @@ def test_download_all_timeout_retry_succeeds(tmp_path):
 
     assert "ID1" in results
     assert attempts["ID1"] == 2
+
+
+# ─── download_image: remaining retry branches ────────────────────────────────
+
+
+def test_download_connection_error_retries_then_succeeds(tmp_path):
+    """Plain ConnectionErrors (not rate limits) are retried with backoff."""
+    attempts = {"n": 0}
+
+    def _flaky(url, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise requests.ConnectionError("connection reset")
+        return _fake_requests_get(url, **kwargs)
+
+    with patch("requests.Session.get", side_effect=_flaky):
+        with patch("time.sleep"):
+            result = download_image("ID001", tmp_path / "raw", "card.jpg")
+    assert result.exists()
+    assert attempts["n"] == 2
+
+
+def test_download_connection_error_exhausted_raises_timeout(tmp_path):
+    """After exhausting retries, ConnectionError becomes DownloadTimeoutError."""
+    with patch("requests.Session.get", side_effect=requests.ConnectionError("conn refused")):
+        with patch("time.sleep"):
+            with pytest.raises(DownloadTimeoutError):
+                download_image("ID001", tmp_path / "raw", "card.jpg")
+
+
+def test_download_http_error_generic_raises(tmp_path):
+    """Non-403/404, non-rate-limit HTTP errors propagate untouched."""
+
+    def _raise_500(*args, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 500
+        raise requests.HTTPError("500", response=resp)
+
+    with patch("requests.Session.get", side_effect=_raise_500):
+        with patch("time.sleep"):
+            with pytest.raises(requests.HTTPError):
+                download_image("ID001", tmp_path / "raw", "card.jpg")
+
+
+def test_download_request_exception_rate_limited_retries(tmp_path):
+    """Rate-limit-looking RequestExceptions hit the generic retry branch too."""
+    attempts = {"n": 0}
+
+    def _flaky(url, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise requests.exceptions.ChunkedEncodingError("quota exceeded")
+        return _fake_requests_get(url, **kwargs)
+
+    with patch("requests.Session.get", side_effect=_flaky):
+        with patch("time.sleep"):
+            result = download_image("ID001", tmp_path / "raw", "card.jpg")
+    assert result.exists()
+    assert attempts["n"] == 2
+
+
+# ─── download_all: speed callback, retry failure, cancel during retry ────────
+
+
+def test_download_all_speed_callback_fires(tmp_path):
+    """on_speed_update fires once enough bytes and time have accumulated."""
+    speeds = []
+
+    def _slow_get(url, **kwargs):
+        time.sleep(0.15)  # exceed the 0.1s elapsed threshold
+        return _fake_requests_get(url, **kwargs)
+
+    with patch("requests.Session.get", side_effect=_slow_get):
+        download_all(
+            [("ID1", "a.jpg"), ("ID2", "b.jpg")],
+            tmp_path / "raw",
+            on_speed_update=lambda mbps, eta: speeds.append((mbps, eta)),
+        )
+
+    assert speeds, "speed callback should have fired at least once"
+
+
+def test_download_all_stat_oserror_is_ignored(tmp_path):
+    """A file vanishing between completion and stat must not break the batch."""
+
+    def _fake_get_then_vanish(url, **kwargs):
+        mock = _fake_requests_get(url, **kwargs)
+        return mock
+
+    real_replace = Path.replace
+
+    def _replace_and_delete(self, target):
+        real_replace(self, target)
+        target.unlink(missing_ok=True)
+        return target
+
+    with patch("requests.Session.get", side_effect=_fake_get_then_vanish):
+        with patch.object(Path, "replace", _replace_and_delete):
+            results = download_all([("ID1", "a.jpg")], tmp_path / "raw")
+
+    assert "ID1" in results
+
+
+def test_download_all_timeout_retry_fails_again_raises_partial(tmp_path):
+    """An image that times out twice ends up in the partial error's timeout list."""
+    with patch("requests.Session.get", side_effect=requests.exceptions.Timeout("always slow")):
+        with patch("time.sleep"):
+            with pytest.raises(DownloadPartialError) as exc_info:
+                download_all([("ID1", "a.jpg")], tmp_path / "raw")
+
+    assert ("ID1", "a.jpg") in exc_info.value.timeout_errors
+
+
+def test_download_all_cancel_during_retry_breaks(tmp_path):
+    """Setting the cancel event before the retry loop stops further retries."""
+    cancel = threading.Event()
+
+    def _timeout_once(url, **kwargs):
+        cancel.set()  # cancel while the first (and only) attempt is in flight
+        raise requests.exceptions.Timeout("timeout")
+
+    with patch("requests.Session.get", side_effect=_timeout_once):
+        with patch("time.sleep"):
+            with pytest.raises(Cancelled):
+                download_all([("ID1", "a.jpg")], tmp_path / "raw", cancel_event=cancel)

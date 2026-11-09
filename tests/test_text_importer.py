@@ -1,6 +1,9 @@
 """Tests for text_importer module."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
+import requests
 
 from src.text_importer import (
     TextImportError,
@@ -556,3 +559,169 @@ class TestParseOpText:
 4 Roronoa Zoro (OP01-001)"""
         deck = parse_op_text(text)
         assert len(deck.cards) == 2
+
+
+class TestPiltoverTextImport:
+    """Tests for build_riftbound_deck_from_piltover_text."""
+
+    @staticmethod
+    def _db_response(cards):
+        """Mock response for the dotgg getcards endpoint."""
+        names = ["id", "name", "image", "type", "supertype"]
+        data = [
+            [
+                c.get("id", ""),
+                c.get("name", ""),
+                c.get("image", ""),
+                c.get("type", []),
+                c.get("supertype"),
+            ]
+            for c in cards
+        ]
+        resp = MagicMock()
+        resp.json.return_value = {"names": names, "data": data}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def _build(self, text, cards):
+        from src.text_importer import build_riftbound_deck_from_piltover_text
+
+        with patch("src.text_importer.http_get", return_value=self._db_response(cards)):
+            return build_riftbound_deck_from_piltover_text(text, "Piltover Deck")
+
+    def test_full_sections_roundtrip(self):
+        cards = [
+            {"id": "UNL-001", "name": "LeBlanc, Deceiver", "type": ["Legend"]},
+            {"id": "UNL-002", "name": "Cull the Weak", "type": ["Spell"]},
+            {"id": "UNL-003", "name": "Rune of Vigor", "type": ["Rune"]},
+        ]
+        deck = self._build(
+            "Legend:\n1 LeBlanc, Deceiver\n\nMainDeck:\n3 Cull the Weak\n\nRunes:\n2 Rune of Vigor",
+            cards,
+        )
+        assert deck.name == "Piltover Deck"
+        assert deck.deck_id.startswith("text-import-piltover-")
+        by_section = {}
+        for c in deck.cards:
+            by_section.setdefault(c.section, []).append(c)
+        assert by_section["legend"][0].name == "LeBlanc, Deceiver"
+        assert by_section["maindeck"][0].quantity == 3
+        assert by_section["rune"][0].card_id == "UNL-003"
+
+    def test_card_not_in_db_uses_placeholder(self):
+        deck = self._build("MainDeck:\n1 Ghost Card", [])
+        card = deck.cards[0]
+        assert card.card_id == "Ghost Card"
+        assert card.image_url == ""
+        assert card.card_type == ""
+        assert card.card_super is None
+
+    def test_missing_image_constructs_cdn_url(self):
+        cards = [{"id": "UNL-009", "name": "No Image Card", "type": ["Spell"]}]
+        deck = self._build("MainDeck:\n1 No Image Card", cards)
+        assert deck.cards[0].image_url == "https://static.dotgg.gg/riftbound/cards/UNL-009.webp"
+
+    def test_supertype_and_type_string_fallbacks(self):
+        cards = [
+            {"id": "UNL-010", "name": "Weird Type", "type": "Champion"},
+            {"id": "UNL-011", "name": "Super Card", "type": ["Champion"], "supertype": "Legend"},
+        ]
+        deck = self._build("MainDeck:\n1 Weird Type\nChampion:\n1 Super Card", cards)
+        by_name = {c.name: c for c in deck.cards}
+        assert by_name["Weird Type"].card_type == "Champion"
+        assert by_name["Super Card"].card_super == "Legend"
+
+    def test_unknown_section_header_raises(self):
+        with pytest.raises(TextImportError, match="Sección desconocida"):
+            self._build("Nonsense:\n1 Card", [])
+
+    def test_card_without_section_raises(self):
+        with pytest.raises(TextImportError, match="Carta sin sección"):
+            self._build("1 Loose Card", [])
+
+    def test_unrecognized_line_raises(self):
+        with pytest.raises(TextImportError, match="Formato no reconocido"):
+            self._build("MainDeck:\nno-quantity-here", [])
+
+    def test_invalid_quantity_raises(self):
+        with pytest.raises(TextImportError, match="Cantidad inválida"):
+            self._build("MainDeck:\n0 Card", [])
+
+    def test_empty_text_raises(self):
+        with pytest.raises(TextImportError, match="No se encontraron cartas"):
+            self._build("", [])
+
+
+class TestRiftboundHelpers:
+    """Tests for _trpc_get, _search_card_by_code, _fetch_dotgg_cards_db, _get_base_code."""
+
+    def test_trpc_get_builds_url_and_extracts_json(self):
+        from src.text_importer import _trpc_get
+
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"data": {"json": {"hello": "world"}}}}
+        resp.raise_for_status.return_value = None
+        with patch("src.text_importer.http_get", return_value=resp) as get:
+            out = _trpc_get("cards.search", {"query": "OGN-156"})
+        assert out == {"hello": "world"}
+        url = get.call_args.args[0]
+        assert url.startswith("https://piltoverarchive.com/api/trpc/cards.search?input=")
+
+    def test_search_card_by_code_list_result(self):
+        from src.text_importer import _search_card_by_code
+
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"data": {"json": [{"id": "OGN-156"}]}}}
+        resp.raise_for_status.return_value = None
+        with patch("src.text_importer.http_get", return_value=resp):
+            assert _search_card_by_code("OGN-156") == {"id": "OGN-156"}
+
+    def test_search_card_by_code_dict_with_cards(self):
+        from src.text_importer import _search_card_by_code
+
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"data": {"json": {"cards": [{"id": "UNL-118"}]}}}}
+        resp.raise_for_status.return_value = None
+        with patch("src.text_importer.http_get", return_value=resp):
+            assert _search_card_by_code("UNL-118") == {"id": "UNL-118"}
+
+    def test_search_card_by_code_not_found(self):
+        from src.text_importer import _search_card_by_code
+
+        resp = MagicMock()
+        resp.json.return_value = {"result": {"data": {"json": []}}}
+        resp.raise_for_status.return_value = None
+        with patch("src.text_importer.http_get", return_value=resp):
+            assert _search_card_by_code("XXX-000") is None
+
+    def test_search_card_by_code_network_error_returns_none(self):
+        from src.text_importer import _search_card_by_code
+
+        with patch("src.text_importer.http_get", side_effect=requests.ConnectionError("boom")):
+            assert _search_card_by_code("OGN-156") is None
+
+    def test_fetch_dotgg_cards_db_builds_lookup(self):
+        from src.text_importer import _fetch_dotgg_cards_db
+
+        resp = MagicMock()
+        resp.json.return_value = {
+            "names": ["id", "name"],
+            "data": [["UNL-118", "Elder Dragon"], ["", "No ID Card"]],
+        }
+        resp.raise_for_status.return_value = None
+        with patch("src.text_importer.http_get", return_value=resp):
+            db = _fetch_dotgg_cards_db()
+        assert db == {"UNL-118": {"id": "UNL-118", "name": "Elder Dragon"}}
+
+    def test_fetch_dotgg_cards_db_error_returns_empty(self):
+        from src.text_importer import _fetch_dotgg_cards_db
+
+        with patch("src.text_importer.http_get", side_effect=requests.Timeout("slow")):
+            assert _fetch_dotgg_cards_db() == {}
+
+    def test_get_base_code_variants(self):
+        from src.text_importer import _get_base_code
+
+        assert _get_base_code("UNL-118A") == "UNL-118"
+        assert _get_base_code("UNL-T01g") == "UNL-T01"
+        assert _get_base_code("OGN-156") == "OGN-156"
