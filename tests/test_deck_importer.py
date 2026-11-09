@@ -133,7 +133,6 @@ _ARCHIDEKT_FIXTURE_WITH_TOKENS = {
 }
 
 
-@pytest.mark.network
 class TestMoxfieldFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -142,9 +141,7 @@ class TestMoxfieldFetch:
         return resp
 
     def test_extracts_mainboard_cards(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)):
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
         main = [c for c in result.cards if c.zone == "main"]
         assert len(main) == 2
@@ -154,9 +151,7 @@ class TestMoxfieldFetch:
         assert bolt.quantity == 4
 
     def test_extracts_sideboard_cards(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)):
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
         side = [c for c in result.cards if c.zone == "side"]
         assert len(side) == 1
@@ -164,15 +159,13 @@ class TestMoxfieldFetch:
         assert side[0].quantity == 2
 
     def test_extracts_deck_name(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MOXFIELD_FIXTURE)):
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
         assert result.name == "Test Deck"
 
     def test_extracts_companion_as_main(self):
         with patch(
-            "src.deck_importer.requests.get",
+            "src.deck_importer.http_get",
             return_value=self._mock_resp(_MOXFIELD_FIXTURE_WITH_COMPANION),
         ):
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
@@ -184,13 +177,13 @@ class TestMoxfieldFetch:
     def test_raises_on_http_error(self):
         import requests as req
 
-        with patch("src.deck_importer.requests.get", side_effect=req.RequestException("404")):
+        with patch("src.deck_importer.http_get", side_effect=req.RequestException("404")):
             with pytest.raises(DeckImportError, match="Moxfield"):
                 fetch_deck("https://www.moxfield.com/decks/BAD")
 
     def test_extracts_each_distinct_token_once(self):
         with patch(
-            "src.deck_importer.requests.get",
+            "src.deck_importer.http_get",
             return_value=self._mock_resp(_MOXFIELD_FIXTURE_WITH_TOKENS),
         ):
             result = fetch_deck("https://www.moxfield.com/decks/ABC123")
@@ -438,7 +431,6 @@ class TestMoxfieldPrototypeCards:
         }
 
 
-@pytest.mark.network
 class TestArchidektFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -447,9 +439,7 @@ class TestArchidektFetch:
         return resp
 
     def test_extracts_mainboard_cards(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)):
             result = fetch_deck("https://archidekt.com/decks/12345/my-deck")
         main = [c for c in result.cards if c.zone == "main"]
         assert len(main) == 1
@@ -459,37 +449,30 @@ class TestArchidektFetch:
         assert main[0].quantity == 4
 
     def test_extracts_sideboard_cards(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)):
             result = fetch_deck("https://archidekt.com/decks/12345/my-deck")
         side = [c for c in result.cards if c.zone == "side"]
         assert len(side) == 1
         assert side[0].name == "Negate"
 
     def test_extracts_deck_name(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)):
             result = fetch_deck("https://archidekt.com/decks/12345/my-deck")
         assert result.name == "Archidekt Test"
 
     def test_skips_maybeboard(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_ARCHIDEKT_FIXTURE)):
             result = fetch_deck("https://archidekt.com/decks/12345/my-deck")
         names = [c.name for c in result.cards]
         assert "Skipped" not in names
 
 
-@pytest.mark.network
 class TestArchidektTokens:
     def test_extracts_api_tokens(self):
         resp = MagicMock()
         resp.json.return_value = _ARCHIDEKT_FIXTURE_WITH_TOKENS
         resp.raise_for_status.return_value = None
-        with patch("src.deck_importer.requests.get", return_value=resp):
+        with patch("src.deck_importer.http_get", return_value=resp):
             result = fetch_deck("https://archidekt.com/decks/12345/my-deck")
         assert [(c.name, c.zone) for c in result.cards if c.zone == "token"] == [("Servo", "token")]
 
@@ -507,7 +490,7 @@ class TestArchidektTokens:
         resp = MagicMock()
         resp.json.return_value = data
         resp.raise_for_status.return_value = None
-        with patch("src.deck_importer.requests.get", return_value=resp):
+        with patch("src.deck_importer.http_get", return_value=resp):
             result = fetch_deck("https://archidekt.com/decks/15820256/terra")
         assert [(c.name, c.zone) for c in result.cards] == [("Terra, Herald of Hope", "main")]
 
@@ -529,7 +512,7 @@ class TestArchidektTokens:
         resp = MagicMock()
         resp.json.return_value = data
         resp.raise_for_status.return_value = None
-        with patch("src.deck_importer.requests.get", return_value=resp):
+        with patch("src.deck_importer.http_get", return_value=resp):
             result = fetch_deck("https://archidekt.com/decks/15820256/terra")
         assert [(c.name, c.zone) for c in result.cards] == [("Desecrated Tomb", "main")]
 
@@ -611,7 +594,6 @@ _MANABOX_HTML = (
 )
 
 
-@pytest.mark.network
 class TestDeckstatsFetch:
     def _mock_resp(self, data):
         resp = MagicMock()
@@ -620,9 +602,7 @@ class TestDeckstatsFetch:
         return resp
 
     def test_extracts_mainboard_from_sections(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)):
             result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
         main = [c for c in result.cards if c.zone == "main"]
         assert len(main) == 3
@@ -631,30 +611,25 @@ class TestDeckstatsFetch:
         assert bolt.set_code == ""
 
     def test_extracts_sideboard(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)):
             result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
         side = [c for c in result.cards if c.zone == "side"]
         assert len(side) == 1
         assert side[0].name == "Eidolon of the Great Revel"
 
     def test_extracts_deck_name(self):
-        with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)
-        ):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_DECKSTATS_FIXTURE)):
             result = fetch_deck("https://deckstats.net/decks/12345/67890-burn")
         assert result.name == "Deckstats Test"
 
     def test_raises_on_http_error(self):
         import requests as req
 
-        with patch("src.deck_importer.requests.get", side_effect=req.RequestException("timeout")):
+        with patch("src.deck_importer.http_get", side_effect=req.RequestException("timeout")):
             with pytest.raises(DeckImportError, match="Deckstats"):
                 fetch_deck("https://deckstats.net/decks/12345/67890-burn")
 
 
-@pytest.mark.network
 class TestTappedoutFetch:
     def _mock_resp(self, text):
         resp = MagicMock()
@@ -663,7 +638,7 @@ class TestTappedoutFetch:
         return resp
 
     def test_extracts_main_cards(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
             result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
         main = [c for c in result.cards if c.zone == "main"]
         assert len(main) == 2
@@ -672,7 +647,7 @@ class TestTappedoutFetch:
         assert bolt.set_code == ""
 
     def test_extracts_sideboard_lines(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
             result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
         side = [c for c in result.cards if c.zone == "side"]
         assert len(side) == 2
@@ -680,22 +655,21 @@ class TestTappedoutFetch:
         assert any(c.name == "Smash to Smithereens" for c in side)
 
     def test_deck_name_from_slug(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
             result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
         assert "Burn" in result.name
 
     def test_skips_comment_lines(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_TAPPEDOUT_TEXT)):
             result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
         assert all(c.name != "sideboard" for c in result.cards)
 
     def test_raises_on_empty_response(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp("")):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp("")):
             with pytest.raises(DeckImportError):
                 fetch_deck("https://tappedout.net/mtg-decks/empty-deck/")
 
 
-@pytest.mark.network
 class TestTappedoutTokens:
     def test_extracts_generated_tokens_from_deck_page(self):
         def response(text):
@@ -705,7 +679,7 @@ class TestTappedoutTokens:
             return result
 
         with patch(
-            "src.deck_importer.requests.get",
+            "src.deck_importer.http_get",
             side_effect=[response(_TAPPEDOUT_TEXT), response(_TAPPEDOUT_PAGE)],
         ):
             result = fetch_deck("https://tappedout.net/mtg-decks/burn-deck/")
@@ -716,7 +690,6 @@ class TestTappedoutTokens:
         ]
 
 
-@pytest.mark.network
 class TestManaboxFetch:
     def _mock_resp(self, text):
         resp = MagicMock()
@@ -725,7 +698,7 @@ class TestManaboxFetch:
         return resp
 
     def test_extracts_main_cards(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MANABOX_HTML)):
             result = fetch_deck("https://manabox.app/decks/abc123")
         main = [c for c in result.cards if c.zone == "main"]
         assert len(main) == 1
@@ -735,7 +708,7 @@ class TestManaboxFetch:
         assert main[0].quantity == 2
 
     def test_extracts_sideboard_cards(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MANABOX_HTML)):
             result = fetch_deck("https://manabox.app/decks/abc123")
         side = [c for c in result.cards if c.zone == "side"]
         assert len(side) == 1
@@ -743,13 +716,13 @@ class TestManaboxFetch:
         assert side[0].set_code == "m21"
 
     def test_extracts_deck_name(self):
-        with patch("src.deck_importer.requests.get", return_value=self._mock_resp(_MANABOX_HTML)):
+        with patch("src.deck_importer.http_get", return_value=self._mock_resp(_MANABOX_HTML)):
             result = fetch_deck("https://manabox.app/decks/abc123")
         assert result.name == "Manabox Test"
 
     def test_raises_on_missing_data(self):
         with patch(
-            "src.deck_importer.requests.get", return_value=self._mock_resp("<html>no data</html>")
+            "src.deck_importer.http_get", return_value=self._mock_resp("<html>no data</html>")
         ):
             with pytest.raises(DeckImportError):
                 fetch_deck("https://manabox.app/decks/abc123")
@@ -786,11 +759,10 @@ class TestManaboxHelpers:
         assert _manabox_extract_props("<html>no data</html>") == ""
 
 
-@pytest.mark.network
 class TestSideboardFiltering:
     def test_main_and_side_zones_returned(self):
         with patch(
-            "src.deck_importer.requests.get",
+            "src.deck_importer.http_get",
             return_value=MagicMock(json=lambda: _MOXFIELD_FIXTURE, raise_for_status=lambda: None),
         ):
             result = fetch_deck("https://www.moxfield.com/decks/X")

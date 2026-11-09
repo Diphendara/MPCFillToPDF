@@ -51,7 +51,6 @@ def test_url_adapters_classify_each_supported_builder():
     assert _adapter_for_host("unsupported.example") is None
 
 
-@pytest.mark.network
 class TestYdkeParsing:
     def test_decode_ydke_part_decodes_little_endian_card_ids(self):
         assert _decode_ydke_part(_encode(46986414, 89631139)) == [46986414, 89631139]
@@ -71,7 +70,7 @@ class TestYdkeParsing:
                 {"id": 4, "name": "Delta"},
             ]
         }
-        with patch("src.ygo_scraper.requests.get", return_value=response):
+        with patch("src.ygo_scraper.http_get", return_value=response):
             deck = parse_ydke(value, name="Prueba")
         assert deck.name == "Prueba"
         assert {(card.card_id, card.zone): card.quantity for card in deck.cards} == {
@@ -149,7 +148,6 @@ class TestPublicDeckPages:
         }
 
 
-@pytest.mark.network
 class TestEdisonFormat:
     def test_parse_ydk_keeps_main_extra_and_side_quantities(self):
         content = "#created by Edison\n#main\n1\n1\n#extra\n2\n!side\n3\n3\n"
@@ -167,7 +165,7 @@ class TestEdisonFormat:
         source_url = "https://edisonformat.net/deckbuilder?event=structure&deck=Hero%20Frog"
         response = MagicMock()
         response.text = "#main\n1\n#extra\n!side\n"
-        with patch("src.ygo_scraper.requests.get", return_value=response) as get:
+        with patch("src.ygo_scraper.http_get", return_value=response) as get:
             with patch("src.ygo_scraper._fetch_names", return_value={1: "Alpha"}):
                 deck = scrape_deck(source_url)
         assert deck.name == "Hero Frog"
@@ -328,7 +326,7 @@ class TestScrapeDeckRouting:
         """A raw ydke:// string is parsed directly without any HTTP call."""
         packed = struct.pack("<I", 89631139)
         ydke = "ydke://" + base64.b64encode(packed).decode() + "!!!"
-        with patch("src.ygo_scraper.requests.get") as get:
+        with patch("src.ygo_scraper.http_get") as get:
             with patch("src.ygo_scraper._fetch_names", return_value={89631139: "Blue-Eyes"}):
                 deck = scrape_deck(ydke)
         get.assert_not_called()
