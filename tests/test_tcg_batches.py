@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from src.lorcana_scraper import LocanaDeck, LorcanaCard
+from src.op_scraper import OPCard, OPDeck
 from src.rb_scraper import RBCard, RBDeck
 from src.tcg_batches import (
     LorcanaBatchAdapter,
@@ -12,6 +14,7 @@ from src.tcg_batches import (
     RiftboundBatchAdapter,
     YugiohBatchAdapter,
 )
+from src.ygo_scraper import YGOCard, YGODeck
 
 
 def _make_rb_card(
@@ -206,6 +209,11 @@ class TestRiftboundBatchAdapter:
             assert mock_expand.call_count == 2
 
 
+def _make_ygo_card(card_id: int, name: str, quantity: int = 1, zone: str = "main") -> YGOCard:
+    """Helper to create a Yu-Gi-Oh! card for testing."""
+    return YGOCard(card_id=card_id, name=name, quantity=quantity, zone=zone)
+
+
 class TestYugiohBatchAdapter:
     """Tests for YugiohBatchAdapter."""
 
@@ -220,6 +228,130 @@ class TestYugiohBatchAdapter:
         batch = adapter.prepare()
         assert batch.name == "yugioh_proxies"
         assert batch.fronts == []
+
+    def test_sideboard_excluded_when_include_side_false(self, tmp_path: Path) -> None:
+        """Side deck cards are not expanded when include_side=False."""
+        deck = YGODeck(
+            name="Test",
+            deck_id="d1",
+            cards=[
+                _make_ygo_card(1, "Blue-Eyes White Dragon", 3, "main"),
+                _make_ygo_card(2, "Effect Veiler", 2, "side"),
+            ],
+        )
+        adapter = YugiohBatchAdapter(
+            decks=((deck, False),),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.ygo_download") as mock_download,
+            patch("src.tcg_batches.ygo_expand") as mock_expand,
+            patch("src.tcg_batches.get_ygo_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = []
+            mock_back.return_value = tmp_path / "back.png"
+            adapter.prepare()
+            include_side = mock_expand.call_args[0][2]
+            assert include_side is False
+
+    def test_sideboard_included_when_include_side_true(self, tmp_path: Path) -> None:
+        """Side deck cards are expanded when include_side=True."""
+        deck = YGODeck(
+            name="Test",
+            deck_id="d1",
+            cards=[
+                _make_ygo_card(1, "Blue-Eyes White Dragon", 3, "main"),
+                _make_ygo_card(2, "Effect Veiler", 2, "side"),
+            ],
+        )
+        adapter = YugiohBatchAdapter(
+            decks=((deck, True),),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.ygo_download") as mock_download,
+            patch("src.tcg_batches.ygo_expand") as mock_expand,
+            patch("src.tcg_batches.get_ygo_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = []
+            mock_back.return_value = tmp_path / "back.png"
+            adapter.prepare()
+            include_side = mock_expand.call_args[0][2]
+            assert include_side is True
+
+    def test_selected_card_ids_filtering(self, tmp_path: Path) -> None:
+        """Only selected cards are downloaded when selected_card_ids is set."""
+        deck = YGODeck(
+            name="Test",
+            deck_id="d1",
+            cards=[
+                _make_ygo_card(1, "Blue-Eyes White Dragon", 1),
+                _make_ygo_card(2, "Dark Magician", 1),
+            ],
+        )
+        deck.selected_card_ids = {1}
+        adapter = YugiohBatchAdapter(
+            decks=((deck, True),),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.ygo_download") as mock_download,
+            patch("src.tcg_batches.ygo_expand") as mock_expand,
+            patch("src.tcg_batches.get_ygo_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = []
+            mock_back.return_value = tmp_path / "back.png"
+            adapter.prepare()
+            filtered_deck = mock_download.call_args[0][0]
+            assert len(filtered_deck.cards) == 1
+            assert filtered_deck.cards[0].card_id == 1
+
+    def test_multiple_decks_combined(self, tmp_path: Path) -> None:
+        """Multiple decks are downloaded and expanded into one batch."""
+        deck1 = YGODeck(name="D1", deck_id="d1", cards=[_make_ygo_card(1, "Card 1")])
+        deck2 = YGODeck(name="D2", deck_id="d2", cards=[_make_ygo_card(2, "Card 2")])
+        adapter = YugiohBatchAdapter(
+            decks=((deck1, True), (deck2, True)),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.ygo_download") as mock_download,
+            patch("src.tcg_batches.ygo_expand") as mock_expand,
+            patch("src.tcg_batches.get_ygo_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = [Path("f1.png")]
+            mock_back.return_value = tmp_path / "back.png"
+            batch = adapter.prepare()
+            assert batch.name == "yugioh_proxies"
+            assert mock_download.call_count == 2
+            assert mock_expand.call_count == 2
+
+
+def _make_op_card(
+    card_id: str,
+    name: str,
+    quantity: int = 1,
+    is_leader: bool = False,
+) -> OPCard:
+    """Helper to create a One Piece card for testing."""
+    return OPCard(card_id=card_id, name=name, quantity=quantity, is_leader=is_leader, colors=[])
+
+
+def _make_op_deck(name: str, cards: list[OPCard], slug: str = "test-deck") -> OPDeck:
+    """Helper to create a One Piece deck for testing."""
+    return OPDeck(name=name, slug=slug, cards=cards)
 
 
 class TestOnePieceBatchAdapter:
@@ -237,6 +369,92 @@ class TestOnePieceBatchAdapter:
         assert batch.name == "One Piece"
         assert batch.fronts == []
 
+    def test_selected_card_ids_filtering(self, tmp_path: Path) -> None:
+        """Only selected cards are downloaded when selected_card_ids is set."""
+        deck = _make_op_deck(
+            "Test",
+            [
+                _make_op_card("OP01-001", "Zoro"),
+                _make_op_card("OP01-002", "Nami"),
+            ],
+        )
+        deck.selected_card_ids = {"OP01-001"}
+        adapter = OnePieceBatchAdapter(
+            decks=(deck,),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.op_download") as mock_download,
+            patch("src.tcg_batches.op_expand") as mock_expand,
+            patch("src.tcg_batches.get_op_backs") as mock_backs,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = ([], [])
+            mock_backs.return_value = (tmp_path / "std.png", tmp_path / "leader.png")
+            adapter.prepare()
+            filtered_deck = mock_download.call_args[0][0]
+            assert len(filtered_deck.cards) == 1
+            assert filtered_deck.cards[0].card_id == "OP01-001"
+
+    def test_leader_back_resolved_per_deck(self, tmp_path: Path) -> None:
+        """Decks with a leader get the leader-specific back for expansion."""
+        leader = _make_op_card("OP01-000", "Luffy", 1, is_leader=True)
+        deck = _make_op_deck("Test", [leader, _make_op_card("OP01-001", "Zoro")])
+        adapter = OnePieceBatchAdapter(
+            decks=(deck,),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.op_download") as mock_download,
+            patch("src.tcg_batches.op_expand") as mock_expand,
+            patch("src.tcg_batches.get_op_backs") as mock_backs,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = ([], [])
+            std_back = tmp_path / "std.png"
+            leader_back = tmp_path / "leader.png"
+            mock_backs.return_value = (std_back, leader_back)
+            adapter.prepare()
+            resolved_leader_back = mock_expand.call_args[0][2]
+            assert resolved_leader_back == leader_back
+
+    def test_multiple_decks_combined(self, tmp_path: Path) -> None:
+        """Multiple decks are downloaded and expanded into one batch."""
+        deck1 = _make_op_deck("D1", [_make_op_card("OP01-001", "Zoro")], slug="d1")
+        deck2 = _make_op_deck("D2", [_make_op_card("OP01-002", "Nami")], slug="d2")
+        adapter = OnePieceBatchAdapter(
+            decks=(deck1, deck2),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.op_download") as mock_download,
+            patch("src.tcg_batches.op_expand") as mock_expand,
+            patch("src.tcg_batches.get_op_backs") as mock_backs,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = ([Path("f1.png")], [None])
+            mock_backs.return_value = (tmp_path / "std.png", tmp_path / "leader.png")
+            batch = adapter.prepare()
+            assert batch.name == "One Piece"
+            assert mock_download.call_count == 2
+            assert mock_expand.call_count == 2
+
+
+def _make_lorcana_card(card_id: str, name: str, quantity: int = 1) -> LorcanaCard:
+    """Helper to create a Lorcana card for testing."""
+    return LorcanaCard(
+        card_id=card_id,
+        name=name,
+        quantity=quantity,
+        image_url=f"https://example.com/{card_id}.webp",
+    )
+
 
 class TestLorcanaBatchAdapter:
     """Tests for LorcanaBatchAdapter."""
@@ -252,3 +470,56 @@ class TestLorcanaBatchAdapter:
         batch = adapter.prepare()
         assert batch.name == "Lorcana"
         assert batch.fronts == []
+
+    def test_selected_card_ids_filtering(self, tmp_path: Path) -> None:
+        """Only selected cards are downloaded when selected_card_ids is set."""
+        deck = LocanaDeck(
+            deck_id="d1",
+            name="Test",
+            cards=[
+                _make_lorcana_card("1", "Elsa - Snow Queen"),
+                _make_lorcana_card("2", "Mickey Mouse"),
+            ],
+        )
+        deck.selected_card_ids = {"1"}
+        adapter = LorcanaBatchAdapter(
+            decks=(deck,),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.lorcana_download") as mock_download,
+            patch("src.tcg_batches.lorcana_expand") as mock_expand,
+            patch("src.tcg_batches.get_lorcana_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = ([], [])
+            mock_back.return_value = tmp_path / "back.png"
+            adapter.prepare()
+            filtered_deck = mock_download.call_args[0][0]
+            assert len(filtered_deck.cards) == 1
+            assert filtered_deck.cards[0].card_id == "1"
+
+    def test_multiple_decks_combined(self, tmp_path: Path) -> None:
+        """Multiple decks are downloaded and expanded into one batch."""
+        deck1 = LocanaDeck(deck_id="d1", name="D1", cards=[_make_lorcana_card("1", "Elsa")])
+        deck2 = LocanaDeck(deck_id="d2", name="D2", cards=[_make_lorcana_card("2", "Mickey")])
+        adapter = LorcanaBatchAdapter(
+            decks=(deck1, deck2),
+            work_dir=tmp_path,
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+        with (
+            patch("src.tcg_batches.lorcana_download") as mock_download,
+            patch("src.tcg_batches.lorcana_expand") as mock_expand,
+            patch("src.tcg_batches.get_lorcana_back") as mock_back,
+        ):
+            mock_download.return_value = {}
+            mock_expand.return_value = ([Path("f1.png")], [None])
+            mock_back.return_value = tmp_path / "back.png"
+            batch = adapter.prepare()
+            assert batch.name == "Lorcana"
+            assert mock_download.call_count == 2
+            assert mock_expand.call_count == 2
