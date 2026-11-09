@@ -242,7 +242,7 @@ class TestDownloadImagesCancellation:
 
         mock_resp = MagicMock()
         mock_resp.content = b"fake"
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_resp):
+        with patch("src.lorcana_scraper.http_get", return_value=mock_resp):
             with pytest.raises(Cancelled):
                 download_images(deck, tmp_path, cancel_event=cancel)
 
@@ -252,7 +252,6 @@ class TestDownloadImagesCancellation:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeLorcanaGg:
     def _mock_deck_response(self) -> dict:
         return {
@@ -283,7 +282,7 @@ class TestScrapeLorcanaGg:
         cards_resp = MagicMock()
         cards_resp.json.return_value = self._mock_cards_response()
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[deck_resp, cards_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[deck_resp, cards_resp]):
             with patch("src.lorcana_scraper._dotgg_cache", None):
                 with patch("src.lorcana_scraper._dotgg_name_cache", None):
                     deck = _scrape_lorcana_gg("https://lorcana.gg/decks/robin-hood-copy-eissv/")
@@ -300,7 +299,7 @@ class TestScrapeLorcanaGg:
         cards_resp = MagicMock()
         cards_resp.json.return_value = self._mock_cards_response()
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[deck_resp, cards_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[deck_resp, cards_resp]):
             with patch("src.lorcana_scraper._dotgg_cache", None):
                 with patch("src.lorcana_scraper._dotgg_name_cache", None):
                     deck = _scrape_lorcana_gg("https://lorcana.gg/decks/robin-hood-copy-eissv/")
@@ -320,7 +319,7 @@ class TestScrapeLorcanaGg:
         resp = MagicMock()
         resp.text = ""
 
-        with patch("src.lorcana_scraper.requests.get", return_value=resp):
+        with patch("src.lorcana_scraper.http_get", return_value=resp):
             with pytest.raises(ValueError, match="disponible"):
                 _scrape_lorcana_gg("https://lorcana.gg/decks/nonexistent/")
 
@@ -337,7 +336,7 @@ class TestScrapeLorcanaGg:
         cards_resp = MagicMock()
         cards_resp.json.return_value = self._mock_cards_response()
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[deck_resp, cards_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[deck_resp, cards_resp]):
             with patch("src.lorcana_scraper._dotgg_cache", None):
                 with patch("src.lorcana_scraper._dotgg_name_cache", None):
                     deck = _scrape_lorcana_gg("https://lorcana.gg/decks/test/")
@@ -357,7 +356,7 @@ class TestScrapeLorcanaGg:
         cards_resp = MagicMock()
         cards_resp.json.return_value = self._mock_cards_response()
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[deck_resp, cards_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[deck_resp, cards_resp]):
             with patch("src.lorcana_scraper._dotgg_cache", None):
                 with patch("src.lorcana_scraper._dotgg_name_cache", None):
                     deck = _scrape_lorcana_gg("https://lorcana.gg/decks/test/")
@@ -371,7 +370,7 @@ class TestScrapeLorcanaGg:
         deck_resp.text = '{"humanname":"X","deck":{}}'
         deck_resp.json.return_value = {"humanname": "X", "deck": {}}
 
-        with patch("src.lorcana_scraper.requests.get", return_value=deck_resp):
+        with patch("src.lorcana_scraper.http_get", return_value=deck_resp):
             with patch("src.lorcana_scraper._load_dotgg_card_db", return_value=({}, {})):
                 with pytest.raises(ValueError, match="cartas"):
                     _scrape_lorcana_gg("https://lorcana.gg/decks/empty-deck/")
@@ -383,7 +382,7 @@ class TestScrapeLorcanaGg:
         deck_resp.text = '{"humanname":"X","deck":{"001-001":"4x"}}'
         deck_resp.json.return_value = {"humanname": "X", "deck": {"001-001": "4x"}}
 
-        with patch("src.lorcana_scraper.requests.get", return_value=deck_resp):
+        with patch("src.lorcana_scraper.http_get", return_value=deck_resp):
             with patch(
                 "src.lorcana_scraper._load_dotgg_card_db",
                 return_value=({"001-001": {"name": "Ariel"}}, {}),
@@ -413,7 +412,6 @@ def _inkdecks_html(cards: list[tuple[int, str, str, str]], deck_name: str = "Tes
     return f"<html><h1>{deck_name}</h1><table>{rows}</table></html>"
 
 
-@pytest.mark.network
 class TestScrapeInkdecks:
     def _api_json(self) -> dict:
         return {
@@ -429,7 +427,7 @@ class TestScrapeInkdecks:
         resp.status_code = 200
         resp.json.return_value = self._api_json()
 
-        with patch("src.lorcana_scraper.requests.get", return_value=resp):
+        with patch("src.lorcana_scraper.http_get", return_value=resp):
             deck = _scrape_inkdecks(
                 "https://inkdecks.com/lorcana-metagame/deck-sapphire-amethyst-515323"
             )
@@ -450,7 +448,7 @@ class TestScrapeInkdecks:
             deck_name="HTML Deck",
         )
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[api_resp, html_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[api_resp, html_resp]):
             deck = _scrape_inkdecks(
                 "https://inkdecks.com/lorcana-metagame/deck-sapphire-amethyst-515323"
             )
@@ -475,7 +473,7 @@ class TestScrapeInkdecks:
         )
 
         with patch(
-            "src.lorcana_scraper.requests.get",
+            "src.lorcana_scraper.http_get",
             side_effect=[requests.ConnectionError("connection refused"), html_resp],
         ):
             deck = _scrape_inkdecks("https://inkdecks.com/lorcana-metagame/deck-test-515323")
@@ -494,7 +492,7 @@ class TestScrapeInkdecks:
         html_resp = MagicMock()
         html_resp.raise_for_status.side_effect = mock_http_error
 
-        with patch("src.lorcana_scraper.requests.get", side_effect=[api_resp, html_resp]):
+        with patch("src.lorcana_scraper.http_get", side_effect=[api_resp, html_resp]):
             with pytest.raises(ValueError, match="inkdecks"):
                 _scrape_inkdecks("https://inkdecks.com/lorcana-metagame/deck-test-515323")
 
@@ -621,7 +619,6 @@ class TestParseInkdecksHtml:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestDownloadImagesSuccess:
     def test_downloads_and_returns_map(self, tmp_path):
         card = LorcanaCard(
@@ -635,7 +632,7 @@ class TestDownloadImagesSuccess:
         mock_resp = MagicMock()
         mock_resp.content = b"fake_image_bytes"
 
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_resp):
+        with patch("src.scraper_utils.http_get", return_value=mock_resp):
             image_map = download_images(deck, tmp_path)
 
         assert "001-001" in image_map
@@ -654,7 +651,7 @@ class TestDownloadImagesSuccess:
         mock_resp = MagicMock()
         mock_resp.content = b"img"
 
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_resp) as mock_get:
+        with patch("src.scraper_utils.http_get", return_value=mock_resp) as mock_get:
             download_images(deck, tmp_path)
 
         # Only one HTTP request despite two card entries
@@ -666,7 +663,7 @@ class TestDownloadImagesSuccess:
         cached = tmp_path / "001-001.webp"
         cached.write_bytes(b"cached")
 
-        with patch("src.lorcana_scraper.requests.get") as mock_get:
+        with patch("src.scraper_utils.http_get") as mock_get:
             image_map = download_images(deck, tmp_path)
 
         mock_get.assert_not_called()
@@ -683,21 +680,24 @@ class TestDownloadImagesSuccess:
         mock_resp.content = b"img"
 
         progress_calls: list[tuple[int, int]] = []
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_resp):
+        with patch("src.scraper_utils.http_get", return_value=mock_resp):
             download_images(deck, tmp_path, progress_cb=lambda d, t: progress_calls.append((d, t)))
 
         assert len(progress_calls) == 2
         assert progress_calls[-1] == (2, 2)
 
-    def test_http_error_propagates(self, tmp_path):
+    def test_http_error_surfaces_as_download_error(self, tmp_path):
+        """A failing URL is retried and surfaces as ImageDownloadError."""
+        from src.scraper_utils import ImageDownloadError
+
         card = LorcanaCard("001-001", "Ariel", 1, "https://example.com/001-001.webp")
         deck = LocanaDeck(deck_id="x", name="X", cards=[card])
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
 
-        with patch("src.lorcana_scraper.requests.get", return_value=mock_resp):
-            with pytest.raises(requests.HTTPError):
+        with patch("src.scraper_utils.http_get", return_value=mock_resp):
+            with pytest.raises(ImageDownloadError, match="No se pudieron descargar"):
                 download_images(deck, tmp_path)
 
 
@@ -706,7 +706,6 @@ class TestDownloadImagesSuccess:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestScrapeLorcanaGgEdgeCases:
     def test_non_json_response_raises_friendly_error(self):
         from src.lorcana_scraper import _scrape_lorcana_gg
@@ -715,7 +714,7 @@ class TestScrapeLorcanaGgEdgeCases:
         resp.text = "<html>error page</html>"
         resp.json.side_effect = ValueError("not JSON")
 
-        with patch("src.lorcana_scraper.requests.get", return_value=resp):
+        with patch("src.lorcana_scraper.http_get", return_value=resp):
             with pytest.raises(ValueError, match="JSON válido"):
                 _scrape_lorcana_gg("https://lorcana.gg/decks/test-slug/")
 
@@ -725,7 +724,6 @@ class TestScrapeLorcanaGgEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.network
 class TestLoadDotggCardDb:
     def _reset_cache(self):
         import src.lorcana_scraper as mod
@@ -748,7 +746,7 @@ class TestLoadDotggCardDb:
         try:
             resp = MagicMock()
             resp.json.return_value = {"unexpected_key": "no names or data here"}
-            with patch("src.lorcana_scraper.requests.get", return_value=resp):
+            with patch("src.lorcana_scraper.http_get", return_value=resp):
                 with pytest.raises(ValueError, match="formato"):
                     _load_dotgg_card_db()
         finally:
@@ -763,7 +761,7 @@ class TestLoadDotggCardDb:
         try:
             resp = MagicMock()
             resp.json.side_effect = ValueError("not json")
-            with patch("src.lorcana_scraper.requests.get", return_value=resp):
+            with patch("src.lorcana_scraper.http_get", return_value=resp):
                 with pytest.raises(ValueError, match="formato"):
                     _load_dotgg_card_db()
         finally:
@@ -781,7 +779,7 @@ class TestLoadDotggCardDb:
                 "names": ["id", "name"],
                 "data": [["001-001", "Ariel"], ["001-002", "Elsa"]],
             }
-            with patch("src.lorcana_scraper.requests.get", return_value=resp):
+            with patch("src.lorcana_scraper.http_get", return_value=resp):
                 id_to_card, name_to_id = _load_dotgg_card_db()
 
             assert "001-001" in id_to_card
