@@ -523,3 +523,118 @@ class TestLorcanaBatchAdapter:
             assert batch.name == "Lorcana"
             assert mock_download.call_count == 2
             assert mock_expand.call_count == 2
+
+
+class _FakeMtgDeck:
+    """Minimal MtgDeck protocol implementation for tests."""
+
+    def __init__(self, cards, back_path=None, selected=None, include_side=True):
+        self.cards = cards
+        self.back_path = back_path
+        self._selected = selected
+        self._include_side = include_side
+
+    def includes(self, card):
+        if self._selected is not None and card.name not in self._selected:
+            return False
+        if not self._include_side and card.zone == "side":
+            return False
+        return True
+
+
+def _make_mtg_card(name, set_code="neo", quantity=1, zone="main"):
+    from src.deck_importer import DeckCard
+
+    return DeckCard(
+        name=name, set_code=set_code, collector_number="1", quantity=quantity, zone=zone
+    )
+
+
+class TestMagicBatchAdapter:
+    """Tests for MagicBatchAdapter.prepare."""
+
+    def _adapter(self, tmp_path, decks):
+        from src.tcg_batches import MagicBatchAdapter
+
+        return MagicBatchAdapter(
+            decks=tuple(decks),
+            work_dir=tmp_path,
+            default_back=tmp_path / "default_back.png",
+            local_backs=(tmp_path / "local_back.png",),
+            cancel_event=None,
+            report_progress=MagicMock(),
+        )
+
+    def test_empty_decks_returns_empty_batch(self, tmp_path: Path) -> None:
+        batch = self._adapter(tmp_path, []).prepare()
+        assert batch.name == "magic_url"
+        assert batch.fronts == []
+
+    def test_single_deck_expands_quantities(self, tmp_path: Path) -> None:
+        deck = _FakeMtgDeck([_make_mtg_card("Bolt", quantity=2), _make_mtg_card("Bear")])
+        adapter = self._adapter(tmp_path, [deck])
+
+        with patch("src.tcg_batches.scryfall_download") as dl:
+            dl.return_value = [
+                (deck.cards[0], tmp_path / "bolt.jpg", None),
+                (deck.cards[1], tmp_path / "bear.jpg", None),
+            ]
+            batch = adapter.prepare()
+
+        assert batch.fronts == [tmp_path / "bolt.jpg", tmp_path / "bolt.jpg", tmp_path / "bear.jpg"]
+        assert all(b == tmp_path / "default_back.png" for b in batch.backs)
+
+    def test_sideboard_excluded_when_deck_excludes_it(self, tmp_path: Path) -> None:
+        deck = _FakeMtgDeck(
+            [_make_mtg_card("Bolt"), _make_mtg_card("Sidecard", zone="side")],
+            include_side=False,
+        )
+        adapter = self._adapter(tmp_path, [deck])
+
+        with patch("src.tcg_batches.scryfall_download") as dl:
+            dl.return_value = [(deck.cards[0], tmp_path / "bolt.jpg", None)]
+            batch = adapter.prepare()
+
+        assert len(batch.fronts) == 1
+        # Only the mainboard card was sent to download
+        assert [c.name for c in dl.call_args.args[0]] == ["Bolt"]
+
+    def test_multiple_decks_combined_and_sorted(self, tmp_path: Path) -> None:
+        deck1 = _FakeMtgDeck([_make_mtg_card("Zebra")])
+        deck2 = _FakeMtgDeck([_make_mtg_card("Antelope")])
+        adapter = self._adapter(tmp_path, [deck1, deck2])
+
+        with patch("src.tcg_batches.scryfall_download") as dl:
+            dl.return_value = [
+                (deck2.cards[0], tmp_path / "antelope.jpg", None),
+                (deck1.cards[0], tmp_path / "zebra.jpg", None),
+            ]
+            batch = adapter.prepare()
+
+        # Cards are sorted by name across decks: Antelope before Zebra
+        assert batch.fronts == [tmp_path / "antelope.jpg", tmp_path / "zebra.jpg"]
+
+    def test_local_deck_back_preferred_over_default(self, tmp_path: Path) -> None:
+        local_back = tmp_path / "local_back.png"
+        deck = _FakeMtgDeck([_make_mtg_card("Bolt")], back_path=local_back)
+        adapter = self._adapter(tmp_path, [deck])
+
+        with patch("src.tcg_batches.scryfall_download") as dl:
+            dl.return_value = [(deck.cards[0], tmp_path / "bolt.jpg", None)]
+            batch = adapter.prepare()
+
+        assert batch.backs == [local_back]
+        # Local backs are not part of the crop map
+        assert local_back not in batch.crop_map
+
+    def test_downloaded_mdfc_back_wins_over_deck_back(self, tmp_path: Path) -> None:
+        local_back = tmp_path / "local_back.png"
+        deck = _FakeMtgDeck([_make_mtg_card("Bolt")], back_path=local_back)
+        adapter = self._adapter(tmp_path, [deck])
+        mdfc_back = tmp_path / "mdfc_back.jpg"
+
+        with patch("src.tcg_batches.scryfall_download") as dl:
+            dl.return_value = [(deck.cards[0], tmp_path / "bolt.jpg", mdfc_back)]
+            batch = adapter.prepare()
+
+        assert batch.backs == [mdfc_back]

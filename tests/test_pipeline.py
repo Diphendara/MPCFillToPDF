@@ -795,3 +795,94 @@ class TestRunDeckUrl:
         dl_events = [(s, d, t) for s, d, t in events if s == "download"]
         assert dl_events, "No download events fired"
         assert dl_events[0][1] == 0
+
+
+class TestPipelineRemainingBranches:
+    """Offline tests for the remaining uncovered branches in pipeline.py."""
+
+    def _plan(self, tmp_path):
+        xml = _one_card_xml(tmp_path)
+        reports = analyze([xml])
+        return make_plan(reports)
+
+    def test_run_plan_cancel_during_crop_raises_cancelled(self, tmp_path):
+        """A cancel event set mid-crop aborts the crop phase with Cancelled."""
+        cancel = threading.Event()
+
+        def _cancel_midway(raw, bled, crop, *trim):
+            cancel.set()
+            return _img(raw)
+
+        with (
+            patch("src.pipeline.download_all", side_effect=_fake_download_all(tmp_path / "raw")),
+            patch("src.pipeline.process_for_pdf", side_effect=_cancel_midway),
+        ):
+            with pytest.raises(Cancelled):
+                run_plan(
+                    self._plan(tmp_path).jobs,
+                    tmp_path / "out",
+                    tmp_path / "work",
+                    cancel_event=cancel,
+                )
+
+    def test_run_partial_error_gets_xml_context(self, tmp_path):
+        """DownloadPartialError is annotated with per-XML context before re-raising."""
+        from src.downloader import DownloadPartialError
+
+        xml = _one_card_xml(tmp_path)
+        partial = DownloadPartialError([("FRONT01", "card.jpg")], [])
+
+        with patch("src.pipeline.download_all", side_effect=partial):
+            with pytest.raises(DownloadPartialError) as exc_info:
+                run(xml, tmp_path / "out", tmp_path / "work")
+
+        assert "FRONT01" in exc_info.value.xml_context
+
+    def test_run_single_error_gets_xml_context(self, tmp_path):
+        """DownloadPermissionError carries the XML name and position."""
+        from src.downloader import DownloadPermissionError
+
+        xml = _one_card_xml(tmp_path)
+        err = DownloadPermissionError("FRONT01", "card.jpg")
+
+        with patch("src.pipeline.download_all", side_effect=err):
+            with pytest.raises(DownloadPermissionError) as exc_info:
+                run(xml, tmp_path / "out", tmp_path / "work")
+
+        assert exc_info.value.xml_name == "deck.xml"
+        assert exc_info.value.position == 1
+
+    def test_run_merged_without_xml_or_fronts_raises(self, tmp_path):
+        from src.pipeline import run_merged
+
+        with pytest.raises(ValueError, match="al menos un XML"):
+            run_merged([], tmp_path / "out", "merged", tmp_path / "work")
+
+    def test_run_merged_fronts_without_cardback_raises(self, tmp_path):
+        from src.pipeline import run_merged
+
+        front = make_rgb_image(tmp_path / "f.jpg")
+        with pytest.raises(ValueError, match="cardback"):
+            run_merged(
+                [],
+                tmp_path / "out",
+                "merged",
+                tmp_path / "work",
+                extra_fronts=[front],
+            )
+
+    def test_run_merged_extra_fronts_require_xml_cardback(self, tmp_path):
+        """Without XMLs, extra fronts still need a cardback — ValueError."""
+        from src.pipeline import run_merged
+
+        front = make_rgb_image(tmp_path / "f.jpg")
+        back = make_rgb_image(tmp_path / "b.jpg")
+        with pytest.raises(ValueError, match="cardback"):
+            run_merged(
+                [],
+                tmp_path / "out",
+                "merged",
+                tmp_path / "work",
+                extra_fronts=[front],
+                extra_backs=[back],
+            )
