@@ -11,9 +11,15 @@ from src.ygo_scraper import (
     YGOCard,
     YGODeck,
     _adapter_for_host,
+    _card_rows,
     _decode_ydke_part,
+    _fetch_cards_by_names,
+    _fetch_names,
     _parse_meta_page,
+    _parse_shared_deck_page,
     _parse_ygoprodeck_page,
+    _scrape_legacy_deck,
+    download_images,
     expand_deck,
     get_ygo_back,
     parse_ydk,
@@ -168,3 +174,179 @@ class TestEdisonFormat:
         assert (
             get.call_args.args[0] == "https://edisonformat.net/data/ydk/structure/Hero%20Frog.ydk"
         )
+
+
+class TestFetchNames:
+    """Tests for _fetch_names batching via the YGOPRODeck API."""
+
+    def test_batches_ids_in_groups_of_40(self):
+        """More than 40 ids trigger a second API call."""
+        ids = list(range(1, 81))  # 80 ids -> 2 batches
+        responses = []
+        for batch in (ids[:40], ids[40:]):
+            resp = MagicMock()
+            resp.json.return_value = {
+                "data": [{"id": card_id, "name": f"Card {card_id}"} for card_id in batch]
+            }
+            responses.append(resp)
+        with patch("src.ygo_scraper.http_get", side_effect=responses) as get:
+            names = _fetch_names(ids)
+        assert get.call_count == 2
+        assert len(names) == 80
+        assert names[1] == "Card 1"
+        assert names[80] == "Card 80"
+
+    def test_empty_ids_no_api_call(self):
+        """An empty id list skips the API entirely."""
+        with patch("src.ygo_scraper.http_get") as get:
+            assert _fetch_names([]) == {}
+        get.assert_not_called()
+
+
+class TestFetchCardsByNames:
+    """Tests for _fetch_cards_by_names name resolution."""
+
+    def test_resolves_names_casefolded(self):
+        """Names are keyed casefolded with (id, canonical name) values."""
+        resp = MagicMock()
+        resp.json.return_value = {
+            "data": [
+                {"id": 89631139, "name": "Blue-Eyes White Dragon"},
+                {"id": 46986414, "name": "Dark Magician"},
+            ]
+        }
+        with patch("src.ygo_scraper.http_get", return_value=resp) as get:
+            resolved = _fetch_cards_by_names(["blue-eyes white dragon", "Dark Magician"])
+        assert get.call_count == 1
+        assert resolved["blue-eyes white dragon"] == (89631139, "Blue-Eyes White Dragon")
+        assert resolved["dark magician"] == (46986414, "Dark Magician")
+
+    def test_batches_names_in_groups_of_20(self):
+        """More than 20 names trigger a second API call."""
+        names = [f"Card {i}" for i in range(41)]  # 41 names -> 3 batches
+        responses = []
+        for batch in (names[:20], names[20:40], names[40:]):
+            resp = MagicMock()
+            resp.json.return_value = {
+                "data": [
+                    {"id": i, "name": name}
+                    for i, name in enumerate(batch, start=1)
+                    if name in batch
+                ]
+            }
+            responses.append(resp)
+        with patch("src.ygo_scraper.http_get", side_effect=responses) as get:
+            _fetch_cards_by_names(names)
+        assert get.call_count == 3
+
+
+class TestCardRows:
+    """Tests for _card_rows quantity aggregation."""
+
+    def test_aggregates_repeated_ids_into_quantities(self):
+        """Repeated ids in a zone collapse into one card with a quantity."""
+        parts = [("main", [1, 1, 2]), ("side", [3])]
+        names = {1: "Alpha", 2: "Beta", 3: "Gamma"}
+        cards = _card_rows(parts, names)
+        by_id = {c.card_id: c for c in cards}
+        assert by_id[1].quantity == 2
+        assert by_id[1].zone == "main"
+        assert by_id[2].quantity == 1
+        assert by_id[3].zone == "side"
+
+    def test_unknown_id_falls_back_to_string_id(self):
+        """Ids without a resolved name use the id as the card name."""
+        cards = _card_rows([("main", [99])], {})
+        assert cards[0].name == "99"
+
+
+class TestSharedDeckPage:
+    """Tests for _parse_shared_deck_page YDKE extraction."""
+
+    def test_embedded_ydke_wins_over_card_links(self):
+        """A page exposing ydke:// is parsed via parse_ydke, not card links."""
+        card_id = 89631139
+        packed = struct.pack("<I", card_id)
+        ydke = "ydke://" + base64.b64encode(packed).decode() + "!!!"
+        page_html = f'<div data-deck="{ydke}"><a href="/card/1">Alpha</a></div>'
+        with patch("src.ygo_scraper._fetch_names", return_value={card_id: "Blue-Eyes"}):
+            deck = _parse_shared_deck_page(page_html, "https://yugiohmeta.com/decks/top-deck")
+        assert deck.name == "top-deck"
+        assert deck.cards[0].card_id == card_id
+
+    def test_page_without_ydke_falls_back_to_card_links(self):
+        """A page without ydke:// falls back to _parse_meta_page parsing."""
+        page_html = '<a href="https://db.ygoprodeck.com/card/1">Alpha</a>'
+        with patch("src.ygo_scraper._parse_meta_page", wraps=_parse_meta_page) as meta:
+            # _parse_meta_page raises when the page has no deck cards, which
+            # proves the fallback path was taken instead of YDKE parsing.
+            with pytest.raises(ValueError, match="No se encontraron cartas"):
+                _parse_shared_deck_page(page_html, "https://yugiohmeta.com/decks/x")
+        meta.assert_called_once()
+
+
+class TestDownloadImages:
+    """Tests for download_images URL mapping."""
+
+    def test_downloads_unique_ids_once(self, tmp_path):
+        """Each unique card id is downloaded exactly once with int keys."""
+        deck = YGODeck(
+            name="Test",
+            deck_id="d1",
+            cards=[
+                YGOCard(card_id=1, name="Alpha", quantity=3, zone="main"),
+                YGOCard(card_id=1, name="Alpha", quantity=2, zone="extra"),
+                YGOCard(card_id=2, name="Beta", quantity=1, zone="main"),
+            ],
+        )
+        downloaded = {"1": tmp_path / "1.jpg", "2": tmp_path / "2.jpg"}
+        with (
+            patch("src.ygo_scraper.download_url_images", return_value=downloaded) as dl,
+        ):
+            result = download_images(deck, tmp_path)
+        url_map = dl.call_args.args[0]
+        assert set(url_map) == {"1", "2"}  # deduplicated
+        assert result == {1: tmp_path / "1.jpg", 2: tmp_path / "2.jpg"}
+
+
+class TestScrapeDeckRouting:
+    """Tests for scrape_deck URL routing."""
+
+    def test_edison_host_routed_to_edison_scraper(self):
+        """edisonformat.net URLs use the Edison scraper."""
+        with patch("src.ygo_scraper._scrape_edison_deck") as edison:
+            scrape_deck("https://edisonformat.net/deckbuilder?event=a&deck=b")
+        edison.assert_called_once()
+
+    def test_other_hosts_routed_to_supported_scraper(self):
+        """Non-Edison URLs use the generic supported-builders scraper."""
+        with patch("src.ygo_scraper._scrape_supported_deck") as supported:
+            scrape_deck("https://ygoprodeck.com/decks/abc")
+        supported.assert_called_once()
+
+    def test_ydke_string_bypasses_routing(self):
+        """A raw ydke:// string is parsed directly without any HTTP call."""
+        packed = struct.pack("<I", 89631139)
+        ydke = "ydke://" + base64.b64encode(packed).decode() + "!!!"
+        with patch("src.ygo_scraper.requests.get") as get:
+            with patch("src.ygo_scraper._fetch_names", return_value={89631139: "Blue-Eyes"}):
+                deck = scrape_deck(ydke)
+        get.assert_not_called()
+        assert deck.cards[0].name == "Blue-Eyes"
+
+
+class TestLegacyDeckErrors:
+    """Tests for _scrape_legacy_deck error paths."""
+
+    def test_unsupported_url_raises(self):
+        """A non-YGOPRODeck URL raises a helpful error."""
+        with pytest.raises(ValueError, match="YGOPRODeck"):
+            _scrape_legacy_deck("https://example.com/decks/abc")
+
+    def test_page_without_ydke_raises(self):
+        """A YGOPRODeck page without an embedded YDKE raises."""
+        resp = MagicMock()
+        resp.text = "<html>no deck here</html>"
+        with patch("src.ygo_scraper.http_get", return_value=resp):
+            with pytest.raises(ValueError, match="Export Deck"):
+                _scrape_legacy_deck("https://ygoprodeck.com/decks/abc")
