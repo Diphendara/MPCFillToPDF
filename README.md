@@ -231,12 +231,12 @@ El workflow de build se ejecuta al hacer push a `main`, construye para Windows, 
 
 ```sh
 python -m pip install pytest ruff
-python -m pytest tests/ --ignore=tests/test_downloader.py -m "not network" -q
+python -m pytest tests/ -m "not network" -q
 python -m ruff check .
 python -m ruff format --check .
 ```
 
-El comando de pytest coincide con la selección usada por CI y los hooks. `pytest.ini` excluye por defecto las pruebas marcadas `network`; para incluirlas hay que indicar `-m network` o cambiar la selección. El comando anterior también excluye todo `test_downloader.py`, incluidas sus pruebas con mocks. Puedes ejecutarlas por separado con `python -m pytest tests/test_downloader.py -m "not network"`.
+El comando de pytest coincide con la selección usada por CI y los hooks. `pytest.ini` excluye por defecto las pruebas marcadas `network`; para incluirlas hay que indicar `-m network` o cambiar la selección. Todos los tests offline (incluidos los de `test_downloader.py`, con HTTP simulado) forman parte de la ejecución normal.
 
 Los tests de integración usan imágenes pequeñas reales para recorte y generación de PDF, con las descargas simuladas. Los tests de GUI se omiten si Tkinter no puede abrir una pantalla; CI los ejecuta con Xvfb. CI prueba Python 3.10, 3.11, 3.12 y 3.13 en Ubuntu.
 

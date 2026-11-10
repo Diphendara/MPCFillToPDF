@@ -31,8 +31,7 @@ jobs:
 
       - name: Run tests, including Tkinter under a virtual display
         run: |
-          xvfb-run -a pytest tests/ --ignore=tests/test_downloader.py -m "not network" -v --tb=short
-          xvfb-run -a pytest tests/test_downloader.py -m "not network" -v --tb=short
+          xvfb-run -a pytest tests/ -m "not network" -v --tb=short
 
       - name: Lint and format
         run: |
